@@ -72,7 +72,8 @@ SITE: vitaflowoficial.com
 INSTAGRAM: @vitaflow.py`;
 
 async function enviarWhatsApp(to, body) {
-  await fetch(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
+  console.log('Enviando WhatsApp para:', to);
+  const res = await fetch(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
@@ -85,6 +86,9 @@ async function enviarWhatsApp(to, body) {
       text: { body }
     })
   });
+  const data = await res.json();
+  console.log('Resposta WhatsApp:', JSON.stringify(data));
+  return data;
 }
 
 async function enviarTelegram(texto) {
@@ -96,6 +100,9 @@ async function enviarTelegram(texto) {
 }
 
 exports.handler = async (event) => {
+  console.log('Método:', event.httpMethod);
+  console.log('Body:', event.body);
+
   if (event.httpMethod === 'GET') {
     const params = event.queryStringParameters;
     if (params['hub.verify_token'] === VERIFY_TOKEN && params['hub.challenge']) {
@@ -107,14 +114,23 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'POST') {
     try {
       const body = JSON.parse(event.body);
-      const message = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+      console.log('Body parseado:', JSON.stringify(body));
+
+      const entry = body.entry?.[0];
+      const changes = entry?.changes?.[0];
+      const value = changes?.value;
+      const message = value?.messages?.[0];
+
+      console.log('Message:', JSON.stringify(message));
 
       if (!message || message.type !== 'text') {
+        console.log('Ignorando — sem mensagem de texto');
         return { statusCode: 200, body: 'ok' };
       }
 
       const from = message.from;
       const text = message.text.body;
+      console.log('De:', from, '| Texto:', text);
 
       const palavrasProduto = ['tem', 'disponível', 'disponivel', 'preço', 'preco', 'valor', 'quanto', 'vende', 'mg', 'peptideo', 'peptídeo'];
       const perguntaProduto = palavrasProduto.some(p => text.toLowerCase().includes(p));
@@ -127,6 +143,7 @@ exports.handler = async (event) => {
         }
       }
 
+      console.log('Chamando Claude...');
       const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -143,9 +160,13 @@ exports.handler = async (event) => {
       });
 
       const claudeData = await claudeRes.json();
+      console.log('Resposta Claude:', JSON.stringify(claudeData));
+
       let reply = claudeData.content?.[0]?.text || 'Desculpe, não consegui processar sua mensagem.';
       const escalar = reply.includes('[ESCALAR_HUMANO]');
       reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
+
+      console.log('Reply:', reply);
 
       await enviarWhatsApp(from, reply);
 
@@ -156,7 +177,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'ok' };
 
     } catch (err) {
-      console.error(err);
+      console.error('Erro geral:', err);
       return { statusCode: 200, body: 'ok' };
     }
   }
