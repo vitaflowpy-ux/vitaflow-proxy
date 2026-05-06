@@ -1,28 +1,70 @@
 const VERIFY_TOKEN = 'vitaflow2024';
-const WHATSAPP_TOKEN = 'EAGB6ZA80DXwgBRaug5sHnAsYpVUz2kno30ZBSNvHzhVeDhO5XdrNWcpBJyIPxcAYeWQ9uF9vSomjdu3eZA0lWllXKS8mBVVlbvSje2SUoHmk8KIsZBQgBgFpQaUx57daUpKkbOARfb9TRPTj3GAs4ZC0rRkjYB5f9KvKQ6ZBUNlz7ZC2xZCuod6k0CZBBicfeYyymopoAZBsBZAuZByz424vZCo8mEZASfNeWSQaHAMgFeGDTbs4WSfBJKvI1ZAhH338sdURgRiEjD88ZA4XlnmzFF5t27GFZBA4kVi41Jza4LqxQb4QZD';
+const WHATSAPP_TOKEN = 'EAGB6ZA80DXwgBReDmlbkWZC6I58JNZB96ZAZAsiRWIbsIc6tZBwM1r3QaEzoL3q9ZAPDuCEF94BxUEVwA6nPmqtqH3yEqbQgRHZBTC7az8ZAnoQDyvSKMqhpsnLbhGZAV72yJYYo9eKNoH73NZBo6xXRWUTeBjUbaid0YGpWNJVKyF9zGaUZANxwCkibInmaimFweYZBWUwZDZD';
 const PHONE_NUMBER_ID = '1005147169358134';
+const SHOPIFY_STORE = 'vitaflow-7352';
 
-const SYSTEM_PROMPT = `Você é a assistente virtual da VitaFlow, loja especializada em peptídeos, hormônios e GH. Atendemos Brasil, Paraguai e Argentina.
+async function buscarProdutos(query) {
+  try {
+    const res = await fetch(
+      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json?title=${encodeURIComponent(query)}&limit=5&status=active`,
+      { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN } }
+    );
+    const data = await res.json();
+    if (!data.products || data.products.length === 0) return null;
+    return data.products.map(p => {
+      const preco = p.variants?.[0]?.price || '0';
+      const disponivel = p.variants?.some(v => v.inventory_quantity > 0 || v.inventory_management === null);
+      return `• ${p.title} — R$ ${preco} — ${disponivel ? 'Disponível ✅' : 'Indisponível ❌'}`;
+    }).join('\n');
+  } catch (err) {
+    return null;
+  }
+}
+
+const SYSTEM_PROMPT = `Você é a Athena, assistente virtual da VitaFlow, loja especializada em peptídeos, hormônios e GH. Atendemos Brasil, Paraguai e Argentina.
 
 IDENTIDADE:
-- Nome: Via (assistente da VitaFlow)
 - Tom: profissional, direto e acolhedor
 - Idioma: português brasileiro
 
-PRODUTOS:
-- Peptídeos: BPC-157, TB-500, Retatrutida, Tirzepatida, Semaglutida, AOD-9604, GHRP-2, GHRP-6, CJC-1295, Ipamorelin, SS-31, Klow, entre outros
-- Hormônios: Testosterona (Cipionato, Enantato), Trembolona, Boldenona, Oxandrolona, entre outros
-- GH: Somatropina, fragmentos de GH
+CAPACIDADES:
+- Você consegue consultar o catálogo atualizado da loja em tempo real
+- Quando o cliente perguntar sobre um produto específico, use os dados do catálogo consultado
+- Para ver todos os produtos: vitaflowoficial.com
 
 REGRAS:
-- Nunca invente preços — diga que os preços estão no site vitaflowoficial.com
-- Para compras, direcione para: vitaflowoficial.com
+- Nunca invente preços ou disponibilidade — use apenas os dados consultados do catálogo
+- Para finalizar compras, direcione para: vitaflowoficial.com
 - Se o cliente quiser falar com humano, diga que vai transferir e encerre com: [ESCALAR_HUMANO]
 - Não discuta assuntos fora do escopo da VitaFlow
-- Seja breve e objetivo nas respostas
+- Seja breve e objetivo
 
 SITE: vitaflowoficial.com
 INSTAGRAM: @vitaflow.py`;
+
+async function enviarWhatsApp(to, body) {
+  await fetch(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { body }
+    })
+  });
+}
+
+async function enviarTelegram(texto) {
+  await fetch('https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: '8660563352', text: texto })
+  });
+}
 
 exports.handler = async (event) => {
   if (event.httpMethod === 'GET') {
@@ -45,7 +87,17 @@ exports.handler = async (event) => {
       const from = message.from;
       const text = message.text.body;
 
-      // Chama Claude via fetch direto
+      const palavrasProduto = ['tem', 'disponível', 'disponivel', 'preço', 'preco', 'valor', 'quanto', 'vende', 'mg', 'peptideo', 'peptídeo'];
+      const perguntaProduto = palavrasProduto.some(p => text.toLowerCase().includes(p));
+
+      let contextoProdutos = '';
+      if (perguntaProduto) {
+        const produtos = await buscarProdutos(text);
+        if (produtos) {
+          contextoProdutos = `\n\nDados atuais do catálogo VitaFlow:\n${produtos}`;
+        }
+      }
+
       const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -56,7 +108,7 @@ exports.handler = async (event) => {
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1000,
-          system: SYSTEM_PROMPT,
+          system: SYSTEM_PROMPT + contextoProdutos,
           messages: [{ role: 'user', content: text }]
         })
       });
@@ -66,31 +118,10 @@ exports.handler = async (event) => {
       const escalar = reply.includes('[ESCALAR_HUMANO]');
       reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
 
-      // Envia resposta via WhatsApp
-      await fetch(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: from,
-          type: 'text',
-          text: { body: reply }
-        })
-      });
+      await enviarWhatsApp(from, reply);
 
-      // Notifica no Telegram se precisar escalar
       if (escalar) {
-        await fetch('https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: '8660563352',
-            text: `🔔 CLIENTE QUER FALAR COM HUMANO\n\n📱 Número: +${from}\n💬 Última mensagem: ${text}`
-          })
-        });
+        await enviarTelegram(`🔔 CLIENTE QUER FALAR COM HUMANO\n\n📱 Número: +${from}\n💬 Última mensagem: ${text}`);
       }
 
       return { statusCode: 200, body: 'ok' };
