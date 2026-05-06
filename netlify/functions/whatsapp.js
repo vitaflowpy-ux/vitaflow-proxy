@@ -6,17 +6,46 @@ const SHOPIFY_STORE = 'vitaflow-7352';
 async function buscarProdutos(query) {
   try {
     const res = await fetch(
-      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json?title=${encodeURIComponent(query)}&limit=5&status=active`,
-      { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN } }
+      `https://${SHOPIFY_STORE}.myshopify.com/api/2024-01/graphql.json`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
+        },
+        body: JSON.stringify({
+          query: `{
+            products(first: 5, query: "${query}") {
+              edges {
+                node {
+                  title
+                  availableForSale
+                  variants(first: 1) {
+                    edges {
+                      node {
+                        price { amount }
+                        availableForSale
+                        quantityAvailable
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`
+        })
+      }
     );
     const data = await res.json();
-    if (!data.products || data.products.length === 0) return null;
-    return data.products.map(p => {
-      const preco = p.variants?.[0]?.price || '0';
-      const disponivel = p.variants?.some(v => v.inventory_quantity > 0 || v.inventory_management === null);
-      return `• ${p.title} — R$ ${preco} — ${disponivel ? 'Disponível ✅' : 'Indisponível ❌'}`;
+    const produtos = data?.data?.products?.edges;
+    if (!produtos || produtos.length === 0) return null;
+    return produtos.map(({ node: p }) => {
+      const preco = p.variants?.edges?.[0]?.node?.price?.amount || '0';
+      const disponivel = p.availableForSale;
+      return `• ${p.title} — R$ ${parseFloat(preco).toFixed(2)} — ${disponivel ? 'Disponível ✅' : 'Indisponível ❌'}`;
     }).join('\n');
   } catch (err) {
+    console.error('Erro Shopify:', err);
     return null;
   }
 }
