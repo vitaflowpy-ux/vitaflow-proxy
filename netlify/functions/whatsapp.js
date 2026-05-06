@@ -1,5 +1,3 @@
-const Anthropic = require('@anthropic-ai/sdk');
-
 const VERIFY_TOKEN = 'vitaflow2024';
 const WHATSAPP_TOKEN = 'EAGB6ZA80DXwgBRVunQ40uUZCGPZCxVIQ3D2LSFSDqtad1IQUvTp4Lgn4rPNX7T451mACK1n1FBhLsdtoQEteiashi7DVpq1FagWjVoWbiERmK7uveHKcKROSByjFZB0z5NMEnOb8gB4rZCXnBx56vBWyXI5T03PWdA5Qh2C38O8nkPJHlDvBhbobRP5NRyRTbBUMDiyMZB06ZCHiZAdoG8TwdwD36ZALrGdRpdSWeDPMzsbMbxyQwVDTn4NySxkNZAVniDE1GgbZCQcf5OGqwuZBuh45aKq5glyFsgIby7OptswZD';
 const PHONE_NUMBER_ID = '1005147169358134';
@@ -18,7 +16,7 @@ PRODUTOS:
 
 REGRAS:
 - Nunca invente preços — diga que os preços estão no site vitaflowoficial.com
-- Para compras, gere o link do site: vitaflowoficial.com
+- Para compras, direcione para: vitaflowoficial.com
 - Se o cliente quiser falar com humano, diga que vai transferir e encerre com: [ESCALAR_HUMANO]
 - Não discuta assuntos fora do escopo da VitaFlow
 - Seja breve e objetivo nas respostas
@@ -27,7 +25,6 @@ SITE: vitaflowoficial.com
 INSTAGRAM: @vitaflow.py`;
 
 exports.handler = async (event) => {
-  // Verificação do webhook pela Meta
   if (event.httpMethod === 'GET') {
     const params = event.queryStringParameters;
     if (params['hub.verify_token'] === VERIFY_TOKEN && params['hub.challenge']) {
@@ -36,14 +33,10 @@ exports.handler = async (event) => {
     return { statusCode: 403, body: 'Token inválido' };
   }
 
-  // Recebe mensagens
   if (event.httpMethod === 'POST') {
     try {
       const body = JSON.parse(event.body);
-      const entry = body.entry?.[0];
-      const changes = entry?.changes?.[0];
-      const value = changes?.value;
-      const message = value?.messages?.[0];
+      const message = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
       if (!message || message.type !== 'text') {
         return { statusCode: 200, body: 'ok' };
@@ -52,16 +45,24 @@ exports.handler = async (event) => {
       const from = message.from;
       const text = message.text.body;
 
-      // Chama Claude
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const response = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: text }]
+      // Chama Claude via fetch direto
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: text }]
+        })
       });
 
-      let reply = response.content[0].text;
+      const claudeData = await claudeRes.json();
+      let reply = claudeData.content?.[0]?.text || 'Desculpe, não consegui processar sua mensagem.';
       const escalar = reply.includes('[ESCALAR_HUMANO]');
       reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
 
@@ -80,9 +81,9 @@ exports.handler = async (event) => {
         })
       });
 
-      // Se precisar escalar, notifica no Telegram
+      // Notifica no Telegram se precisar escalar
       if (escalar) {
-        await fetch(`https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage`, {
+        await fetch('https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
