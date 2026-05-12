@@ -1,7 +1,8 @@
-const VERIFY_TOKEN = 'vitaflow2024';
-const WHATSAPP_TOKEN = 'EAGB6ZA80DXwgBRYscmVS6vBcWfpWUJOhhJMhrpAYiCb4kelXCVFJR2ZCaEWIgEnV8yvjVSmWhe7ioKX9ac6REa1KeZCbcGDDkRq8jZBT9TMdHmtn3KnJX6vQe6ZCcwMqnZA8NhNqUT6xkZBZC2bIZBd5CgPIXYO1ywKs5eWhXwJqqgZAoynBz6aZBdsCidZAEpclxLgHq7kfczViXkEp5ZAI2y3SXNiJI6vDvKtxUZCS9n3GdNzmo1pXfmz9rnBnVbwSypxEqpPCBT1bY7OcUQsxzmyd9lL9QcKW1HSZCfvwOFFklYZD';
-const PHONE_NUMBER_ID = '1005147169358134';
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'vitaflow2024';
+const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_ID || '1092129093990046';
 const SHOPIFY_STORE = 'vitaflow-7352';
+const INFINITEPAY_TAG = 'vitaflowoficial';
 
 async function buscarProdutos(query) {
   try {
@@ -50,6 +51,32 @@ async function buscarProdutos(query) {
   }
 }
 
+async function gerarLinkInfinitePay(produto, valor) {
+  try {
+    const res = await fetch('https://api.checkout.infinitepay.io/links', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        handle: INFINITEPAY_TAG,
+        redirect_url: 'https://vitaflowoficial.com/pages/obrigado',
+        items: [{
+          quantity: 1,
+          price: Math.round(valor * 100), // em centavos
+          description: produto
+        }]
+      })
+    });
+    const data = await res.json();
+    console.log('InfinitePay response:', JSON.stringify(data));
+    return data?.url || null;
+  } catch (err) {
+    console.error('Erro InfinitePay:', err);
+    return null;
+  }
+}
+
 const SYSTEM_PROMPT = `Você é a Athena, assistente virtual da VitaFlow, loja especializada em peptídeos, hormônios e GH. Atendemos Brasil, Paraguai e Argentina.
 
 IDENTIDADE:
@@ -61,9 +88,16 @@ CAPACIDADES:
 - Quando o cliente perguntar sobre um produto específico, use os dados do catálogo consultado
 - Para ver todos os produtos: vitaflowoficial.com
 
+GERAÇÃO DE LINK DE PAGAMENTO:
+- Quando o cliente confirmar que quer comprar um produto específico e souber o valor, responda EXATAMENTE neste formato:
+  [GERAR_PAGAMENTO:nome do produto:valor numérico]
+  Exemplo: [GERAR_PAGAMENTO:BPC-157 5mg:89.90]
+- Só gere o link quando o cliente confirmar claramente que quer comprar e você tiver o produto e valor definidos
+- Não gere link para dúvidas ou consultas de preço
+
 REGRAS:
 - Nunca invente preços ou disponibilidade — use apenas os dados consultados do catálogo
-- Para finalizar compras, direcione para: vitaflowoficial.com
+- Para finalizar compras também pode direcionar para: vitaflowoficial.com
 - Se o cliente quiser falar com humano, diga que vai transferir e encerre com: [ESCALAR_HUMANO]
 - Não discuta assuntos fora do escopo da VitaFlow
 - Seja breve e objetivo
@@ -101,7 +135,6 @@ async function enviarTelegram(texto) {
 
 exports.handler = async (event) => {
   console.log('Método:', event.httpMethod);
-  console.log('Body:', event.body);
 
   if (event.httpMethod === 'GET') {
     const params = event.queryStringParameters;
@@ -114,17 +147,9 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'POST') {
     try {
       const body = JSON.parse(event.body);
-      console.log('Body parseado:', JSON.stringify(body));
-
-      const entry = body.entry?.[0];
-      const changes = entry?.changes?.[0];
-      const value = changes?.value;
-      const message = value?.messages?.[0];
-
-      console.log('Message:', JSON.stringify(message));
+      const message = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
       if (!message || message.type !== 'text') {
-        console.log('Ignorando — sem mensagem de texto');
         return { statusCode: 200, body: 'ok' };
       }
 
@@ -132,6 +157,7 @@ exports.handler = async (event) => {
       const text = message.text.body;
       console.log('De:', from, '| Texto:', text);
 
+      // Busca produtos se pergunta for sobre catálogo
       const palavrasProduto = ['tem', 'disponível', 'disponivel', 'preço', 'preco', 'valor', 'quanto', 'vende', 'mg', 'peptideo', 'peptídeo'];
       const perguntaProduto = palavrasProduto.some(p => text.toLowerCase().includes(p));
 
@@ -143,7 +169,7 @@ exports.handler = async (event) => {
         }
       }
 
-      console.log('Chamando Claude...');
+      // Chama Claude
       const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -160,13 +186,26 @@ exports.handler = async (event) => {
       });
 
       const claudeData = await claudeRes.json();
-      console.log('Resposta Claude:', JSON.stringify(claudeData));
-
       let reply = claudeData.content?.[0]?.text || 'Desculpe, não consegui processar sua mensagem.';
+
+      // Verifica se precisa escalar para humano
       const escalar = reply.includes('[ESCALAR_HUMANO]');
       reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
 
-      console.log('Reply:', reply);
+      // Verifica se precisa gerar link de pagamento
+      const matchPagamento = reply.match(/\[GERAR_PAGAMENTO:(.+?):(\d+\.?\d*)\]/);
+      if (matchPagamento) {
+        const nomeProduto = matchPagamento[1];
+        const valor = parseFloat(matchPagamento[2]);
+        reply = reply.replace(matchPagamento[0], '').trim();
+
+        const link = await gerarLinkInfinitePay(nomeProduto, valor);
+        if (link) {
+          reply += `\n\n💳 *Link de pagamento:*\n${link}\n\nPague com Pix ou cartão em até 12x. ✅`;
+        } else {
+          reply += `\n\nPara finalizar sua compra acesse: vitaflowoficial.com`;
+        }
+      }
 
       await enviarWhatsApp(from, reply);
 
