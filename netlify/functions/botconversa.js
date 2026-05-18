@@ -28,9 +28,10 @@ APRESENTAÇÃO DE PRODUTOS:
 - Se um produto estiver indisponível, simplesmente não o liste e sugira uma alternativa similar disponível se houver
 
 TABELA DE PREÇOS / CATEGORIAS:
-- Quando o cliente pedir tabela completa ou tabela de uma categoria, pergunte qual categoria quer ver:
-  • Mais Vendidos • Peptídeos • Hormônios • GH • Promoções • Outros
-- Após o cliente escolher, liste com preços e disponibilidade
+- Quando o cliente pedir tabela completa, lista de produtos ou mencionar uma categoria (Mais Vendidos, Peptídeos, Hormônios, GH, Promoções, Outros), liste IMEDIATAMENTE todos os produtos disponíveis dessa categoria
+- NUNCA pergunte o objetivo do cliente antes de mostrar a lista — mostre sempre direto
+- NUNCA pergunte qual categoria o cliente quer se ele já mencionou uma — busque e liste imediatamente
+- Se o cliente pedir "lista completa" sem especificar categoria, pergunte qual das categorias quer ver: Mais Vendidos • Peptídeos • Hormônios • GH • Promoções • Outros
 - Nunca diga que não trabalha com tabela — sempre ofereça a lista da categoria escolhida
 
 PROTOCOLOS E DOSAGENS:
@@ -321,8 +322,18 @@ exports.handler = async (event) => {
     // Detecta coleção ou busca por produto
     const colecoes = ['mais vendidos', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
     const mensagemLower = mensagem.toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // normaliza acentos para detecção de coleção
-    const colecaoDetectada = colecoes.find(c => mensagemLower.includes(c));
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    let colecaoDetectada = colecoes.find(c => mensagemLower.includes(c));
+
+    // Se não detectou coleção diretamente, verifica se o histórico tinha menção a uma coleção
+    // e o cliente respondeu com confirmação ("sim", "lista completa", "quero ver", etc.)
+    const confirmacoes = ['sim', 'lista', 'quero ver', 'mostra', 'mostre', 'ver tudo', 'completa', 'todas', 'todos'];
+    const ehConfirmacao = confirmacoes.some(c => mensagemLower.includes(c));
+    if (!colecaoDetectada && ehConfirmacao && history.length > 0) {
+      const ultimaResposta = history.filter(h => h.role === 'assistant').slice(-1)[0]?.content || '';
+      const ultimaRespostaNorm = ultimaResposta.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      colecaoDetectada = colecoes.find(c => ultimaRespostaNorm.includes(c));
+    }
 
     let contextoProdutos = '';
     if (colecaoDetectada) {
