@@ -165,7 +165,7 @@ async function buscarPorColecao(handle) {
         'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
       },
       body: JSON.stringify({
-        query: `{ collectionByHandle(handle: "${handle}") { title products(first: 250) { edges { node { title availableForSale variants(first: 5) { edges { node { title price { amount } availableForSale } } } } } } } }`
+        query: `{ collectionByHandle(handle: "${handle}") { title products(first: 100) { edges { node { title availableForSale variants(first: 3) { edges { node { title price { amount } availableForSale } } } } } } } }`
       })
     });
     const data = await res.json();
@@ -387,7 +387,11 @@ exports.handler = async (event) => {
           'hormonios': 'HORMÔNIOS', 'gh': 'GH', 'promocoes': 'PROMOÇÕES', 'outros': 'OUTROS'
         };
         const nomeExibicao = nomesColecao[handleColecao] || handleColecao.toUpperCase();
-        const linhas = produtos.split('\n').filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+        const todasLinhas = produtos.split('\n').filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+        const limite = 30;
+        const linhas = todasLinhas.slice(0, limite);
+        const temMais = todasLinhas.length > limite;
+
         const listaFormatada = linhas.map((linha, i) => {
           const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
           const emoji = i < 10 ? emojisNum[i] : `${i+1}.`;
@@ -397,7 +401,11 @@ exports.handler = async (event) => {
           return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
         }).join('\n');
 
-        const reply = `Aqui estão todos os produtos de *${nomeExibicao}* disponíveis! 💪\n\n${listaFormatada}\n\nQual te interessa? É só me dizer o nome ou número que te passo mais detalhes e geramos o link de pagamento! 🚀`;
+        const rodape = temMais
+          ? `\n\n_Mostrando ${limite} de ${todasLinhas.length} produtos. Para buscar um específico, me diga o nome!_`
+          : '';
+
+        const reply = `Aqui estão os produtos de *${nomeExibicao}* disponíveis! 💪\n\n${listaFormatada}${rodape}\n\nQual te interessa? É só me dizer o nome ou número que te passo mais detalhes e geramos o link de pagamento! 🚀`;
         history.push({ role: 'user', content: mensagem });
         history.push({ role: 'assistant', content: reply });
         if (history.length > 10) history.splice(0, history.length - 10);
