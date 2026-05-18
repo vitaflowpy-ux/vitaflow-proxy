@@ -84,11 +84,6 @@ FLUXO PÓS-VENDA:
 - Quando tiver TODOS os dados, responda EXATAMENTE neste formato em uma linha:
   [DADOS_CLIENTE:nome|cpf|telefone|email|endereco|complemento|bairro|cidade|estado|cep]
 
-CUPONS E DESCONTOS:
-- Se o cliente mencionar que é sua PRIMEIRA COMPRA e perguntar sobre desconto ou cupom: aplique 5% de desconto APENAS nos produtos, NUNCA no frete. Informe o valor com desconto e prossiga normalmente
-- Se o cliente mencionar qualquer outro tipo de cupom ou desconto (que não seja primeira compra): diga que vai verificar com a equipe e encerre com: [ESCALAR_HUMANO]
-- Nunca aplique desconto sem o cliente mencionar explicitamente
-
 REGRAS:
 - Nunca invente preços ou disponibilidade — use apenas os dados do catálogo
 - Se o cliente quiser falar com humano, diga que vai transferir e encerre com: [ESCALAR_HUMANO]
@@ -98,6 +93,20 @@ SITE: vitaflowoficial.com
 INSTAGRAM: @vitaflow.py`;
 
 const sessionHistory = {};
+
+// FIX 1: Remove quaisquer tags XML que o modelo possa ter incluído na resposta
+function limparTagsXML(texto) {
+  return texto.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '').replace(/<[^>]+>/g, '').trim();
+}
+
+// FIX 2: Normaliza acentos para busca no Shopify (GraphQL não lida bem com caracteres especiais)
+function normalizarParaBusca(termo) {
+  return termo
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // remove diacríticos
+    .replace(/['"]/g, '')            // remove aspas que quebram a query GraphQL
+    .trim();
+}
 
 async function extrairTermoBusca(mensagem) {
   try {
@@ -111,12 +120,13 @@ async function extrairTermoBusca(mensagem) {
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 50,
-        system: 'Você é um especialista em produtos farmacêuticos e suplementos esportivos. Extraia o nome do produto mencionado pelo cliente, corrigindo erros de digitação e expandindo abreviações comuns (ex: "reta" = "retatrutida", "sema" = "semaglutida", "bpc" = "BPC-157", "tb500" = "TB-500"). Responda APENAS com o nome do produto corrigido e completo, sem explicações. Se não houver produto específico, responda "nenhum".',
+        system: 'Você é um especialista em produtos farmacêuticos e suplementos esportivos. Extraia o nome do produto mencionado pelo cliente, corrigindo erros de digitação e expandindo abreviações comuns (ex: "reta" = "retatrutida", "sema" = "semaglutida", "bpc" = "BPC-157", "tb500" = "TB-500"). Responda APENAS com o nome do produto corrigido e completo, sem explicações, sem tags XML, sem formatação. Se não houver produto específico, responda "nenhum".',
         messages: [{ role: 'user', content: mensagem }]
       })
     });
     const data = await res.json();
-    const termo = data.content?.[0]?.text?.trim() || 'nenhum';
+    // FIX 1 aplicado aqui também — caso o Haiku retorne tags XML
+    const termo = limparTagsXML(data.content?.[0]?.text?.trim() || 'nenhum');
     return termo.toLowerCase() === 'nenhum' ? null : termo;
   } catch (err) {
     console.error('Erro ao extrair termo:', err);
@@ -145,18 +155,7 @@ async function buscarPorColecao(colecao) {
     const data = await res.json();
     const produtos = data?.data?.collectionByHandle?.products?.edges;
     if (!produtos || produtos.length === 0) return null;
-    return produtos.map(({ node: p }) => {
-      const variants = p.variants?.edges || [];
-      if (variants.length === 1) {
-        const preco = variants[0]?.node?.price?.amount || '0';
-        return `• ${p.title} — R$ ${parseFloat(preco).toFixed(2)} — ${p.availableForSale ? 'Disponível' : 'Indisponível'}`;
-      } else {
-        const variantesTexto = variants.map(({ node: v }) =>
-          `  - ${v.title}: R$ ${parseFloat(v.price?.amount || 0).toFixed(2)} — ${v.availableForSale ? 'Disponível' : 'Indisponível'}`
-        ).join('\n');
-        return `• ${p.title}:\n${variantesTexto}`;
-      }
-    }).join('\n');
+    return formatarProdutos(produtos);
   } catch (err) {
     console.error('Erro busca coleção:', err);
     return null;
@@ -165,6 +164,9 @@ async function buscarPorColecao(colecao) {
 
 async function buscarProdutos(termo) {
   try {
+    // FIX 2: normaliza o termo antes de enviar na query GraphQL
+    const termoNormalizado = normalizarParaBusca(termo);
+
     const res = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/api/2024-01/graphql.json`, {
       method: 'POST',
       headers: {
@@ -172,28 +174,33 @@ async function buscarProdutos(termo) {
         'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
       },
       body: JSON.stringify({
-        query: `{ products(first: 20, query: "${termo}") { edges { node { title availableForSale variants(first: 5) { edges { node { title price { amount } availableForSale } } } } } } }`
+        query: `{ products(first: 20, query: "${termoNormalizado}") { edges { node { title availableForSale variants(first: 5) { edges { node { title price { amount } availableForSale } } } } } } }`
       })
     });
     const data = await res.json();
     const produtos = data?.data?.products?.edges;
     if (!produtos || produtos.length === 0) return null;
-    return produtos.map(({ node: p }) => {
-      const variants = p.variants?.edges || [];
-      if (variants.length === 1) {
-        const preco = variants[0]?.node?.price?.amount || '0';
-        return `• ${p.title} — R$ ${parseFloat(preco).toFixed(2)} — ${p.availableForSale ? 'Disponível' : 'Indisponível'}`;
-      } else {
-        const variantesTexto = variants.map(({ node: v }) =>
-          `  - ${v.title}: R$ ${parseFloat(v.price?.amount || 0).toFixed(2)} — ${v.availableForSale ? 'Disponível' : 'Indisponível'}`
-        ).join('\n');
-        return `• ${p.title}:\n${variantesTexto}`;
-      }
-    }).join('\n');
+    return formatarProdutos(produtos);
   } catch (err) {
     console.error('Erro Shopify:', err);
     return null;
   }
+}
+
+// Função auxiliar extraída para evitar duplicação
+function formatarProdutos(produtos) {
+  return produtos.map(({ node: p }) => {
+    const variants = p.variants?.edges || [];
+    if (variants.length === 1) {
+      const preco = variants[0]?.node?.price?.amount || '0';
+      return `• ${p.title} — R$ ${parseFloat(preco).toFixed(2)} — ${p.availableForSale ? 'Disponível' : 'Indisponível'}`;
+    } else {
+      const variantesTexto = variants.map(({ node: v }) =>
+        `  - ${v.title}: R$ ${parseFloat(v.price?.amount || 0).toFixed(2)} — ${v.availableForSale ? 'Disponível' : 'Indisponível'}`
+      ).join('\n');
+      return `• ${p.title}:\n${variantesTexto}`;
+    }
+  }).join('\n');
 }
 
 async function gerarLinkInfinitePay(produto, valor) {
@@ -208,7 +215,6 @@ async function gerarLinkInfinitePay(produto, valor) {
       })
     });
     const data = await res.json();
-    console.log('InfinitePay response:', JSON.stringify(data));
     return data?.url || null;
   } catch (err) {
     console.error('Erro InfinitePay:', err);
@@ -283,7 +289,8 @@ exports.handler = async (event) => {
 
     // Detecta coleção ou busca por produto
     const colecoes = ['mais vendidos', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
-    const mensagemLower = mensagem.toLowerCase();
+    const mensagemLower = mensagem.toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // normaliza acentos para detecção de coleção
     const colecaoDetectada = colecoes.find(c => mensagemLower.includes(c));
 
     let contextoProdutos = '';
@@ -328,7 +335,8 @@ exports.handler = async (event) => {
     });
 
     const claudeData = await claudeRes.json();
-    let reply = claudeData.content?.[0]?.text || 'Desculpe, não consegui processar sua mensagem.';
+    // FIX 1 aplicado na resposta principal do Sonnet
+    let reply = limparTagsXML(claudeData.content?.[0]?.text || 'Desculpe, não consegui processar sua mensagem.');
     console.log('RESPOSTA CLAUDE:', reply.substring(0, 200));
 
     history.push({ role: 'assistant', content: reply });
@@ -362,11 +370,9 @@ exports.handler = async (event) => {
       const partes = matchDados[1].split('|');
       const [nome, cpf, telefone, email, endereco, complemento, bairro, cidade, estado, cep] = partes;
 
-      // 1. Gerar número do pedido
       const numeroPedido = await gerarNumeroPedido();
 
       if (numeroPedido) {
-        // 2. Salvar na planilha
         await salvarPedidoGAS({
           order_nsu: numeroPedido,
           paid_amount: 0,
@@ -376,15 +382,12 @@ exports.handler = async (event) => {
           items: [{ description: 'Pedido via Athena WhatsApp', quantity: 1, price: 0 }]
         });
 
-        // 3. Notificar equipe no Telegram
         await enviarTelegram(
           `🤖 *VENDA ATHENA!*\n\n📦 Pedido: ${numeroPedido}\n👤 Nome: ${nome}\n🪪 CPF: ${cpf}\n📱 Tel: ${telefone}\n📧 Email: ${email}\n🏠 End: ${endereco}${complemento ? ', ' + complemento : ''}\n🏘️ Bairro: ${bairro}\n🏙️ ${cidade} - ${estado}\n📮 CEP: ${cep}\n📱 WhatsApp: ${sessionId}`
         );
 
-        // 4. Mensagem de confirmação
         const msgConfirmacao = `Perfeito! Seu pedido *${numeroPedido}* foi confirmado! 🎉\n\nAcompanhe em tempo real:\n🔍 *vitaflowoficial.com/pages/rastrear-pedido*\n\nDigite o número do pedido: *${numeroPedido}*\n\nQualquer dúvida estou aqui! 😊`;
 
-        // 5. Aviso de filmagem
         const avisoFilmagem = `⚠️ *AVISO IMPORTANTE — VITAFLOW* ⚠️\n\nAntes de receber seu pedido, leia com atenção. 🙏\n\n📹 *1. FILME A ABERTURA DA EMBALAGEM*\nGrave um vídeo contínuo e sem cortes, desde a embalagem fechada até a retirada de todos os itens.\n\n✅ Mostre a caixa fechada antes de abrir\n✅ Não pause nem corte o vídeo\n✅ Filme todos os produtos ao retirar da caixa\n\n❗ Sem o vídeo não conseguimos abrir reclamação junto à transportadora.\n\n📍 *2. ALGUÉM PARA RECEBER*\nGaranta que haverá uma pessoa disponível no endereço no dia da entrega.\n\n💬 Qualquer problema, fale conosco imediatamente com o vídeo da abertura. 💪\n\n— *Equipe VitaFlow* 🧡`;
 
         return {
