@@ -326,7 +326,6 @@ exports.handler = async (event) => {
 
 
     // Detecção de coleção RESTRITIVA — só ativa se a mensagem for essencialmente a palavra da coleção
-    // ex: "peptídeos", "quero ver hormônios" → sim | "ghk-cu", "glow peptides" → não
     const mapaColecoes = {
       'mais vendidos': 'mais-vendidos',
       'mais vendido': 'mais-vendidos',
@@ -345,15 +344,30 @@ exports.handler = async (event) => {
       .replace(/ç/g, 'c')
       .trim();
 
-    // Só detecta coleção se a mensagem for curta e basicamente só a palavra-chave (até 4 palavras)
+    // Bypass direto para "tabela de produtos" / "ver categorias" — responde sem chamar Sonnet
+    const pedindoCategorias = ['tabela de produto', 'tabela completa', 'ver categoria', 'todas categoria', 'quais categoria', 'lista de produto', 'o que voce vende', 'o que voces vendem', 'o que tem'];
+    if (pedindoCategorias.some(p => mensagemLower.includes(p))) {
+      const replyCateg = `Temos as seguintes categorias disponíveis! 📋\n\nÉ só me dizer qual quer ver que listo todos os produtos com preços:\n\n1️⃣ *Mais Vendidos*\n2️⃣ *Peptídeos*\n3️⃣ *Hormônios*\n4️⃣ *GH*\n5️⃣ *Promoções*\n6️⃣ *Outros*\n\nQual categoria te interessa? 😊`;
+      history.push({ role: 'user', content: mensagem });
+      history.push({ role: 'assistant', content: replyCateg });
+      if (history.length > 10) history.splice(0, history.length - 10);
+      return { statusCode: 200, headers, body: JSON.stringify({ resposta: replyCateg, transferir: false, session_id: sessionId }) };
+    }
+
+    // GH: detecta só se for mensagem curta e "gh" não estiver dentro de outra palavra (ex: ghk)
     const palavrasMensagem = mensagemLower.split(/\s+/).filter(Boolean);
     let colecaoDetectada = null;
     let handleColecao = null;
-    if (palavrasMensagem.length <= 4) {
+
+    // Verifica GH separadamente — evita falso positivo com GHK, GHrp etc
+    if (palavrasMensagem.length <= 4 && palavrasMensagem.some(p => p === 'gh')) {
+      colecaoDetectada = 'gh';
+      handleColecao = 'gh';
+    }
+
+    if (!colecaoDetectada && palavrasMensagem.length <= 6) {
       for (const [palavra, handle] of Object.entries(mapaColecoes)) {
         if (mensagemLower.includes(palavra)) {
-          // GH é especial — só detecta se for exatamente "gh" ou "tabela gh" etc, não dentro de "ghk"
-          if (palavra === 'gh' && mensagemLower.replace(palavra, '').match(/[a-z]/)) continue;
           colecaoDetectada = palavra;
           handleColecao = handle;
           break;
