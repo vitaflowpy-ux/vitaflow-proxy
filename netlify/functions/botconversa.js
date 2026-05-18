@@ -10,31 +10,54 @@ IDENTIDADE:
 - NUNCA mencione Paraguai ou Argentina — se perguntado sobre entregas, diga apenas "entregamos para todo o Brasil"
 
 CAPACIDADES:
-- Você consegue consultar o catálogo atualizado da loja em tempo real
-- Quando o cliente perguntar sobre um produto específico, use os dados do catálogo consultado
-- Para ver todos os produtos: vitaflowoficial.com
+- Você consulta o catálogo atualizado da loja em tempo real
+- Quando receber dados do catálogo, use-os para responder com preços e disponibilidade reais
+- Se um produto não aparecer no catálogo consultado, diga que não encontrou e sugira acessar vitaflowoficial.com
 
 GERAÇÃO DE LINK DE PAGAMENTO:
-- Quando o cliente confirmar que quer comprar um produto específico e souber o valor, responda EXATAMENTE neste formato:
+- Quando o cliente confirmar que quer comprar um produto específico e você tiver o valor, responda EXATAMENTE neste formato:
   [GERAR_PAGAMENTO:nome do produto:valor numérico]
   Exemplo: [GERAR_PAGAMENTO:BPC-157 5mg:89.90]
-- Só gere o link quando o cliente confirmar claramente que quer comprar e você tiver o produto e valor definidos
+- Só gere o link quando o cliente confirmar claramente que quer comprar e você tiver produto e valor definidos
 - Não gere link para dúvidas ou consultas de preço
 
 REGRAS:
-- Nunca invente preços ou disponibilidade — use apenas os dados consultados do catálogo
-- Para finalizar compras também pode direcionar para: vitaflowoficial.com
+- Nunca invente preços ou disponibilidade — use apenas os dados do catálogo
 - Se o cliente quiser falar com humano, diga que vai transferir e encerre com: [ESCALAR_HUMANO]
 - Não discuta assuntos fora do escopo da VitaFlow
-- Seja breve e objetivo
+- Seja breve e objetivo — máximo 3 parágrafos
 
 SITE: vitaflowoficial.com
 INSTAGRAM: @vitaflow.py`;
 
-// Histórico em memória (persiste enquanto a função está quente)
 const sessionHistory = {};
 
-async function buscarProdutos(query) {
+async function extrairTermoBusca(mensagem) {
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 50,
+        system: 'Você extrai o nome do produto mencionado na mensagem do cliente. Responda APENAS com o nome do produto, sem explicações. Se não houver produto específico, responda "nenhum".',
+        messages: [{ role: 'user', content: mensagem }]
+      })
+    });
+    const data = await res.json();
+    const termo = data.content?.[0]?.text?.trim() || 'nenhum';
+    return termo.toLowerCase() === 'nenhum' ? null : termo;
+  } catch (err) {
+    console.error('Erro ao extrair termo:', err);
+    return null;
+  }
+}
+
+async function buscarProdutos(termo) {
   try {
     const res = await fetch(
       `https://${SHOPIFY_STORE}.myshopify.com/api/2024-01/graphql.json`,
@@ -46,17 +69,17 @@ async function buscarProdutos(query) {
         },
         body: JSON.stringify({
           query: `{
-            products(first: 5, query: "${query}") {
+            products(first: 20, query: "title:*${termo}*") {
               edges {
                 node {
                   title
                   availableForSale
-                  variants(first: 1) {
+                  variants(first: 5) {
                     edges {
                       node {
+                        title
                         price { amount }
                         availableForSale
-                        quantityAvailable
                       }
                     }
                   }
@@ -71,9 +94,16 @@ async function buscarProdutos(query) {
     const produtos = data?.data?.products?.edges;
     if (!produtos || produtos.length === 0) return null;
     return produtos.map(({ node: p }) => {
-      const preco = p.variants?.edges?.[0]?.node?.price?.amount || '0';
-      const disponivel = p.availableForSale;
-      return `• ${p.title} — R$ ${parseFloat(preco).toFixed(2)} — ${disponivel ? 'Disponível ✅' : 'Indisponível ❌'}`;
+      const variants = p.variants?.edges || [];
+      if (variants.length === 1) {
+        const preco = variants[0]?.node?.price?.amount || '0';
+        return `• ${p.title} — R$ ${parseFloat(preco).toFixed(2)} — ${p.availableForSale ? 'Disponível' : 'Indisponível'}`;
+      } else {
+        const variantesTexto = variants.map(({ node: v }) =>
+          `  - ${v.title}: R$ ${parseFloat(v.price?.amount || 0).toFixed(2)} — ${v.availableForSale ? 'Disponível' : 'Indisponível'}`
+        ).join('\n');
+        return `• ${p.title}:\n${variantesTexto}`;
+      }
     }).join('\n');
   } catch (err) {
     console.error('Erro Shopify:', err);
@@ -89,11 +119,7 @@ async function gerarLinkInfinitePay(produto, valor) {
       body: JSON.stringify({
         handle: INFINITEPAY_TAG,
         redirect_url: 'https://vitaflowoficial.com/pages/obrigado',
-        items: [{
-          quantity: 1,
-          price: Math.round(valor * 100),
-          description: produto
-        }]
+        items: [{ quantity: 1, price: Math.round(valor * 100), description: produto }]
       })
     });
     const data = await res.json();
@@ -124,13 +150,8 @@ exports.handler = async (event) => {
     'Content-Type': 'application/json',
   };
 
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
-  }
-
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
-  }
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
+  if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   try {
     const body = JSON.parse(event.body || '{}');
@@ -141,27 +162,27 @@ exports.handler = async (event) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Campo mensagem obrigatorio' }) };
     }
 
-    // Histórico da sessão
     if (!sessionHistory[sessionId]) sessionHistory[sessionId] = [];
     const history = sessionHistory[sessionId];
 
-    // Busca produtos se a mensagem mencionar produto/preço
-    const palavrasProduto = ['tem', 'disponível', 'disponivel', 'preço', 'preco', 'valor', 'quanto', 'vende', 'mg', 'peptideo', 'peptídeo', 'comprar', 'quero', 'produto'];
-    const perguntaProduto = palavrasProduto.some(p => mensagem.toLowerCase().includes(p));
+    // Passo 1: Claude Haiku extrai o nome do produto da mensagem
+    const termoBusca = await extrairTermoBusca(mensagem);
 
+    // Passo 2: busca na Shopify com o termo limpo
     let contextoProdutos = '';
-    if (perguntaProduto) {
-      const produtos = await buscarProdutos(mensagem);
+    if (termoBusca) {
+      const produtos = await buscarProdutos(termoBusca);
       if (produtos) {
-        contextoProdutos = `\n\nDados atuais do catálogo VitaFlow:\n${produtos}`;
+        contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATÁLOGO para "${termoBusca}":\n${produtos}`;
+      } else {
+        contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATÁLOGO para "${termoBusca}": nenhum produto encontrado.`;
       }
     }
 
-    // Adiciona mensagem ao histórico
+    // Passo 3: Claude Sonnet responde ao cliente
     history.push({ role: 'user', content: mensagem });
     if (history.length > 10) history.splice(0, history.length - 10);
 
-    // Chama Claude
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -180,13 +201,11 @@ exports.handler = async (event) => {
     const claudeData = await claudeRes.json();
     let reply = claudeData.content?.[0]?.text || 'Desculpe, não consegui processar sua mensagem.';
 
-    // Adiciona resposta ao histórico
     history.push({ role: 'assistant', content: reply });
 
     // Escalar para humano
     const escalar = reply.includes('[ESCALAR_HUMANO]');
     reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
-
     if (escalar) {
       await enviarTelegram(`🔔 CLIENTE QUER FALAR COM HUMANO\n\n📱 Número: ${sessionId}\n💬 Última mensagem: ${mensagem}`);
       delete sessionHistory[sessionId];
@@ -198,7 +217,6 @@ exports.handler = async (event) => {
       const nomeProduto = matchPagamento[1];
       const valor = parseFloat(matchPagamento[2]);
       reply = reply.replace(matchPagamento[0], '').trim();
-
       const link = await gerarLinkInfinitePay(nomeProduto, valor);
       if (link) {
         reply += `\n\n💳 *Link de pagamento:*\n${link}\n\nPague com Pix ou cartão em até 12x. ✅`;
@@ -210,11 +228,7 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({
-        resposta: reply,
-        transferir: escalar,
-        session_id: sessionId
-      })
+      body: JSON.stringify({ resposta: reply, transferir: escalar, session_id: sessionId })
     };
 
   } catch (error) {
