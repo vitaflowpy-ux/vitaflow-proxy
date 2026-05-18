@@ -23,7 +23,9 @@ APRESENTAÇÃO DE PRODUTOS:
 - Quando houver muitas opções, agrupe por dosagem do menor para o maior
 - Liste TODOS os produtos disponíveis retornados, sem omitir nenhum
 - Nunca crie rankings ou use termos como "mais procurado", "mais vendido", "recomendado"
-- Formato numerado com emojis chamativos: use a sequência 🔥 ⚡ 💎 🚀 🎯 💪 🌟 🔝 🏆 ✨ repetindo se necessário. Exemplo: 🔥 1. Nome do produto — R$ valor
+- Formato numerado com emojis numéricos: 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 e depois 11. 12. 13... para os seguintes
+- Ordene sempre do menor para o maior por dosagem (mg/ui/ml). Se a dosagem for igual, ordene pelo menor preço
+- Liste TODOS os produtos sem limite — nunca corte a lista
 - Não mencione "Disponível" — se está na lista, está disponível
 - Se um produto estiver indisponível, simplesmente não o liste e sugira uma alternativa similar disponível se houver
 
@@ -207,7 +209,7 @@ async function _buscarGraphQL(termo) {
         'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
       },
       body: JSON.stringify({
-        query: `{ products(first: 20, query: "${termo}") { edges { node { title availableForSale variants(first: 5) { edges { node { title price { amount } availableForSale } } } } } } }`
+        query: `{ products(first: 50, query: "${termo}") { edges { node { title availableForSale variants(first: 5) { edges { node { title price { amount } availableForSale } } } } } } }`
       })
     });
     const data = await res.json();
@@ -224,13 +226,16 @@ function formatarProdutos(produtos) {
   return produtos.map(({ node: p }) => {
     const variants = p.variants?.edges || [];
     if (variants.length === 1) {
-      const preco = variants[0]?.node?.price?.amount || '0';
-      return `• ${p.title} — R$ ${parseFloat(preco).toFixed(2)} — ${p.availableForSale ? 'Disponível' : 'Indisponível'}`;
+      const preco = parseFloat(variants[0]?.node?.price?.amount || '0');
+      return `${p.title} — R$ ${preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     } else {
-      const variantesTexto = variants.map(({ node: v }) =>
-        `  - ${v.title}: R$ ${parseFloat(v.price?.amount || 0).toFixed(2)} — ${v.availableForSale ? 'Disponível' : 'Indisponível'}`
-      ).join('\n');
-      return `• ${p.title}:\n${variantesTexto}`;
+      const variantesTexto = variants
+        .filter(({ node: v }) => v.availableForSale)
+        .map(({ node: v }) => {
+          const preco = parseFloat(v.price?.amount || 0);
+          return `  - ${v.title}: R$ ${preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        }).join('\n');
+      return `${p.title}:\n${variantesTexto}`;
     }
   }).join('\n');
 }
