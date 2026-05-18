@@ -154,14 +154,8 @@ async function extrairTermoBusca(mensagem) {
   }
 }
 
-async function buscarPorColecao(colecao) {
+async function buscarPorColecao(handle) {
   try {
-    const handles = {
-      'mais vendidos': 'mais-vendidos', 'peptideos': 'peptideos',
-      'hormonios': 'hormonios', 'gh': 'gh',
-      'promocoes': 'promocoes', 'outros': 'outros'
-    };
-    const handle = handles[colecao.toLowerCase()] || colecao.toLowerCase();
     const res = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/api/2024-01/graphql.json`, {
       method: 'POST',
       headers: {
@@ -329,27 +323,59 @@ exports.handler = async (event) => {
     const history = sessionHistory[sessionId];
 
     // Detecta coleção ou busca por produto
-    const colecoes = ['mais vendidos', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
+    const mapaColecoes = {
+      'mais vendidos': 'mais-vendidos',
+      'mais vendido': 'mais-vendidos',
+      'top': 'mais-vendidos',
+      'peptideo': 'peptideos',
+      'peptideos': 'peptideos',
+      'hormonio': 'hormonios',
+      'hormonios': 'hormonios',
+      'gh': 'gh',
+      'growth': 'gh',
+      'promocao': 'promocoes',
+      'promocoes': 'promocoes',
+      'promo': 'promocoes',
+      'oferta': 'promocoes',
+      'desconto': 'promocoes',
+      'outros': 'outros',
+      'outro': 'outros',
+    };
     const mensagemLower = mensagem.toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    let colecaoDetectada = colecoes.find(c => mensagemLower.includes(c));
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // remove acentos
+      .replace(/ç/g, 'c');                                 // ç → c (antes do normalize não pega)
 
-    // Se não detectou coleção diretamente, verifica se o histórico tinha menção a uma coleção
-    // e o cliente respondeu com confirmação ("sim", "lista completa", "quero ver", etc.)
+    let colecaoDetectada = null;
+    let handleColecao = null;
+    for (const [palavra, handle] of Object.entries(mapaColecoes)) {
+      if (mensagemLower.includes(palavra)) {
+        colecaoDetectada = palavra;
+        handleColecao = handle;
+        break;
+      }
+    }
+
+    // Se não detectou coleção diretamente, verifica contexto do histórico
     const confirmacoes = ['sim', 'lista', 'quero ver', 'mostra', 'mostre', 'ver tudo', 'completa', 'todas', 'todos'];
     const ehConfirmacao = confirmacoes.some(c => mensagemLower.includes(c));
     if (!colecaoDetectada && ehConfirmacao && history.length > 0) {
       const ultimaResposta = history.filter(h => h.role === 'assistant').slice(-1)[0]?.content || '';
-      const ultimaRespostaNorm = ultimaResposta.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      colecaoDetectada = colecoes.find(c => ultimaRespostaNorm.includes(c));
+      const ultimaNorm = ultimaResposta.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ç/g, 'c');
+      for (const [palavra, handle] of Object.entries(mapaColecoes)) {
+        if (ultimaNorm.includes(palavra)) {
+          colecaoDetectada = palavra;
+          handleColecao = handle;
+          break;
+        }
+      }
     }
 
     let contextoProdutos = '';
-    if (colecaoDetectada) {
-      console.log('BUSCANDO COLECAO:', colecaoDetectada);
-      const produtos = await buscarPorColecao(colecaoDetectada);
+    if (colecaoDetectada && handleColecao) {
+      console.log('BUSCANDO COLECAO:', handleColecao);
+      const produtos = await buscarPorColecao(handleColecao);
       if (produtos) {
-        contextoProdutos = `\n\nCATALOGO DA COLECAO "${colecaoDetectada.toUpperCase()}":\n${produtos}`;
+        contextoProdutos = `\n\nCATALOGO DA COLECAO "${handleColecao.toUpperCase()}":\n${produtos}`;
         console.log('COLECAO ENCONTRADA:', produtos.substring(0, 200));
       }
     } else {
