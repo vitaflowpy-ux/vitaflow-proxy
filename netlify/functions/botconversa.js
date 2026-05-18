@@ -355,28 +355,38 @@ exports.handler = async (event) => {
       }
     }
 
-    // Se não detectou coleção diretamente, verifica contexto do histórico
-    const confirmacoes = ['sim', 'lista', 'quero ver', 'mostra', 'mostre', 'ver tudo', 'completa', 'todas', 'todos'];
-    const ehConfirmacao = confirmacoes.some(c => mensagemLower.includes(c));
-    if (!colecaoDetectada && ehConfirmacao && history.length > 0) {
-      const ultimaResposta = history.filter(h => h.role === 'assistant').slice(-1)[0]?.content || '';
-      const ultimaNorm = ultimaResposta.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ç/g, 'c');
-      for (const [palavra, handle] of Object.entries(mapaColecoes)) {
-        if (ultimaNorm.includes(palavra)) {
-          colecaoDetectada = palavra;
-          handleColecao = handle;
-          break;
-        }
-      }
-    }
+    // Detecção por histórico desativada — causava contaminação com respostas anteriores
 
     let contextoProdutos = '';
     if (colecaoDetectada && handleColecao) {
       console.log('BUSCANDO COLECAO:', handleColecao);
       const produtos = await buscarPorColecao(handleColecao);
       if (produtos) {
-        contextoProdutos = `\n\nCATALOGO DA COLECAO "${handleColecao.toUpperCase()}":\n${produtos}`;
-        console.log('COLECAO ENCONTRADA:', produtos.substring(0, 200));
+        // BYPASS SONNET: monta resposta direto para coleções — mais rápido, sem timeout
+        const nomesColecao = {
+          'mais-vendidos': 'MAIS VENDIDOS', 'peptideos': 'PEPTÍDEOS',
+          'hormonios': 'HORMÔNIOS', 'gh': 'GH', 'promocoes': 'PROMOÇÕES', 'outros': 'OUTROS'
+        };
+        const nomeExibicao = nomesColecao[handleColecao] || handleColecao.toUpperCase();
+        const linhas = produtos.split('\n').filter(Boolean);
+        const listaFormatada = linhas.map((linha, i) => {
+          const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+          const emoji = i < 10 ? emojisNum[i] : `${i+1}.`;
+          const partes = linha.split('|');
+          const nome = partes[0]?.trim();
+          const preco = partes[1]?.trim();
+          return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
+        }).join('\n');
+
+        const reply = `Aqui estão todos os produtos de *${nomeExibicao}* disponíveis! 💪\n\n${listaFormatada}\n\nQual te interessa? Posso passar mais detalhes, protocolo de uso ou gerar o link de pagamento! 🚀`;
+        history.push({ role: 'user', content: mensagem });
+        history.push({ role: 'assistant', content: reply });
+        if (history.length > 10) history.splice(0, history.length - 10);
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({ resposta: reply, transferir: false, session_id: sessionId })
+        };
       }
     } else {
       const termoBusca = await extrairTermoBusca(mensagem);
