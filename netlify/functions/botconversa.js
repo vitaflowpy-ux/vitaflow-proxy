@@ -39,9 +39,9 @@ TABELA DE PREÇOS / CATEGORIAS:
 PROTOCOLOS E DOSAGENS:
 - Você pode explicar livremente para que serve um produto, seus benefícios e indicações
 - Se o cliente perguntar COMO usar, dosagem, frequência ou protocolo de uso ANTES de comprar, responda: "O protocolo completo de utilização passo após a confirmação da compra! 😊 Posso te ajudar a escolher o produto ideal ou gerar o link de pagamento!"
-- Após a compra confirmada (pagamento recebido), forneça o protocolo completo com dosagem mínima eficaz
+- Protocolo SÓ é fornecido após o [DADOS_CLIENTE] ter sido disparado nessa conversa — nunca antes
+- Após disparar o [DADOS_CLIENTE], forneça o protocolo completo com dosagem mínima eficaz
 - O objetivo é que o produto renda o maior tempo possível para o cliente
-- Seja direto e prático, como um consultor experiente
 
 FRETE E ENTREGA:
 - Antes de gerar o link de pagamento, SEMPRE pergunte o estado e modalidade de envio
@@ -91,16 +91,16 @@ GERAÇÃO DE LINK DE PAGAMENTO:
 
 FLUXO PÓS-VENDA:
 - Após gerar o link de pagamento, pergunte se o cliente conseguiu pagar
-- Quando o cliente disser que pagou, peça o comprovante de pagamento antes de prosseguir
-- Somente após receber o comprovante (print, foto ou confirmação com dados do Pix), solicite os dados para envio
+- Quando o cliente confirmar o pagamento (qualquer confirmação verbal como "paguei", "fiz", "sim", "feito", "pago", "ok", "confirmado"), aceite imediatamente e siga para coleta de dados — NUNCA peça comprovante mais de uma vez
+- Se o cliente mandar uma imagem ou arquivo, considere como comprovante e siga em frente
 - Colete obrigatoriamente: NOME COMPLETO, CPF, TELEFONE, E-MAIL, ENDEREÇO (rua e número), COMPLEMENTO, BAIRRO, CIDADE, ESTADO, CEP
 - O cliente pode mandar os dados em várias mensagens separadas — vá acumulando no histórico
-- E-MAIL: aceite qualquer formato incluindo letras maiúsculas (ex: "Professor.thiagopena@gmail.com" é um e-mail válido). Nunca peça o e-mail mais de uma vez — se o cliente já forneceu algo parecido com um e-mail (com @ e ponto), aceite. Se o cliente se recusar a fornecer na segunda solicitação, use "nao_informado" e prossiga
-- CPF: se o cliente se recusar a fornecer na segunda solicitação, use "nao_informado" e prossiga
-- Quando tiver todos os campos obrigatórios (e-mail pode ser "nao_informado"), responda EXATAMENTE neste formato em uma linha ANTES de qualquer outra mensagem:
+- E-MAIL: aceite qualquer formato incluindo letras maiúsculas. Nunca peça mais de uma vez — se tiver @ e ponto, aceite. Se recusar na segunda vez, use "nao_informado"
+- CPF: se recusar na segunda solicitação, use "nao_informado" e prossiga
+- Se complemento não foi informado, use "sem complemento"
+- Quando tiver TODOS os campos, responda EXATAMENTE neste formato em uma linha ANTES de qualquer outra mensagem:
   [DADOS_CLIENTE:nome|cpf|telefone|email|endereco|complemento|bairro|cidade|estado|cep|produto|valor]
 - NUNCA encerre o fluxo pós-venda nem diga "pedido finalizado" sem ter disparado o [DADOS_CLIENTE] primeiro
-- Se complemento não foi informado, use "sem complemento" no campo
 - Em "produto" coloque o nome completo do produto comprado. Em "valor" coloque o valor total pago (ex: 115.00)
 - Exemplo: [DADOS_CLIENTE:João Silva|123.456.789-00|21999999999|joao@email.com|Rua A 100|Apto 201|Centro|Rio de Janeiro|RJ|20000-000|BPC-157 5mg - XL Peptides + Frete RJ PAC|115.00]
 
@@ -324,47 +324,50 @@ exports.handler = async (event) => {
     if (!sessionHistory[sessionId]) sessionHistory[sessionId] = [];
     const history = sessionHistory[sessionId];
 
-    // Detecta coleção ou busca por produto
+
+    // Detecção de coleção RESTRITIVA — só ativa se a mensagem for essencialmente a palavra da coleção
+    // ex: "peptídeos", "quero ver hormônios" → sim | "ghk-cu", "glow peptides" → não
     const mapaColecoes = {
       'mais vendidos': 'mais-vendidos',
       'mais vendido': 'mais-vendidos',
-      'top': 'mais-vendidos',
       'peptideo': 'peptideos',
       'peptideos': 'peptideos',
       'hormonio': 'hormonios',
       'hormonios': 'hormonios',
-      'gh': 'gh',
-      'growth': 'gh',
       'promocao': 'promocoes',
       'promocoes': 'promocoes',
       'promo': 'promocoes',
       'oferta': 'promocoes',
-      'desconto': 'promocoes',
       'outros': 'outros',
-      'outro': 'outros',
     };
     const mensagemLower = mensagem.toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // remove acentos
-      .replace(/ç/g, 'c');                                 // ç → c (antes do normalize não pega)
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/ç/g, 'c')
+      .trim();
 
+    // Só detecta coleção se a mensagem for curta e basicamente só a palavra-chave (até 4 palavras)
+    const palavrasMensagem = mensagemLower.split(/\s+/).filter(Boolean);
     let colecaoDetectada = null;
     let handleColecao = null;
-    for (const [palavra, handle] of Object.entries(mapaColecoes)) {
-      if (mensagemLower.includes(palavra)) {
-        colecaoDetectada = palavra;
-        handleColecao = handle;
-        break;
+    if (palavrasMensagem.length <= 4) {
+      for (const [palavra, handle] of Object.entries(mapaColecoes)) {
+        if (mensagemLower.includes(palavra)) {
+          // GH é especial — só detecta se for exatamente "gh" ou "tabela gh" etc, não dentro de "ghk"
+          if (palavra === 'gh' && mensagemLower.replace(palavra, '').match(/[a-z]/)) continue;
+          colecaoDetectada = palavra;
+          handleColecao = handle;
+          break;
+        }
       }
     }
 
-    // Detecção por histórico desativada — causava contaminação com respostas anteriores
-
     let contextoProdutos = '';
+
     if (colecaoDetectada && handleColecao) {
+      // ── BUSCA POR COLEÇÃO (bypass Sonnet) ──────────────────────────────────
       console.log('BUSCANDO COLECAO:', handleColecao);
       const produtos = await buscarPorColecao(handleColecao);
       if (produtos) {
-        // BYPASS SONNET: monta resposta direto para coleções — mais rápido, sem timeout
         const nomesColecao = {
           'mais-vendidos': 'MAIS VENDIDOS', 'peptideos': 'PEPTÍDEOS',
           'hormonios': 'HORMÔNIOS', 'gh': 'GH', 'promocoes': 'PROMOÇÕES', 'outros': 'OUTROS'
@@ -390,18 +393,27 @@ exports.handler = async (event) => {
           body: JSON.stringify({ resposta: reply, transferir: false, session_id: sessionId })
         };
       }
+
     } else {
-      const termoBusca = await extrairTermoBusca(mensagem);
-      console.log('TERMO DE BUSCA:', termoBusca);
-      if (termoBusca) {
-        const produtos = await buscarProdutos(termoBusca);
-        if (produtos) {
-          contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO para "${termoBusca}":\n${produtos}`;
-          console.log('PRODUTOS ENCONTRADOS:', produtos.substring(0, 200));
-        } else {
-          contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO para "${termoBusca}": nenhum produto encontrado.`;
-          console.log('NENHUM PRODUTO ENCONTRADO para:', termoBusca);
+      // ── BUSCA POR PRODUTO ───────────────────────────────────────────────────
+      // 1. Tenta direto com a mensagem do cliente no Shopify (mais genérico e preciso)
+      let produtos = await buscarProdutos(mensagem);
+      console.log('BUSCA SHOPIFY DIRETA:', produtos ? 'encontrou' : 'não encontrou');
+
+      // 2. Fallback: Haiku extrai/corrige o termo e tenta de novo
+      if (!produtos) {
+        const termoBusca = await extrairTermoBusca(mensagem);
+        console.log('TERMO HAIKU:', termoBusca);
+        if (termoBusca) {
+          produtos = await buscarProdutos(termoBusca);
+          console.log('BUSCA HAIKU:', produtos ? 'encontrou' : 'não encontrou');
         }
+      }
+
+      if (produtos) {
+        contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO:\n${produtos}`;
+      } else {
+        contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO: nenhum produto encontrado.`;
       }
     }
 
