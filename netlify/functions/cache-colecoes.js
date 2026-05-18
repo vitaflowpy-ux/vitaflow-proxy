@@ -4,7 +4,7 @@
 
 const SHOPIFY_STORE = 'vitaflow-7352';
 const FIREBASE_URL = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
-const COLECOES = ['mais-vendidos', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
+const COLECOES = ['10-mais-vendidos', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
 
 // Busca uma coleção completa do Shopify (paginada até 250 produtos)
 async function buscarColecaoShopify(handle) {
