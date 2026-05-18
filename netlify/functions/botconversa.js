@@ -44,7 +44,7 @@ async function extrairTermoBusca(mensagem) {
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 50,
-        system: 'Você extrai o nome do produto mencionado na mensagem do cliente. Responda APENAS com o nome do produto, sem explicações. Se não houver produto específico, responda "nenhum".',
+        system: 'Você é um especialista em produtos farmacêuticos e suplementos esportivos. Extraia o nome do produto mencionado pelo cliente, corrigindo erros de digitação e expandindo abreviações comuns (ex: "reta" = "retatrutida", "sema" = "semaglutida", "bpc" = "BPC-157", "tb500" = "TB-500"). Responda APENAS com o nome do produto corrigido e completo, sem explicações. Se não houver produto específico, responda "nenhum".',
         messages: [{ role: 'user', content: mensagem }]
       })
     });
@@ -69,7 +69,7 @@ async function buscarProdutos(termo) {
         },
         body: JSON.stringify({
           query: `{
-            products(first: 20, query: "title:*${termo}*") {
+            products(first: 20, query: "${termo}") {
               edges {
                 node {
                   title
