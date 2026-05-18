@@ -155,31 +155,36 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body || '{}');
+    console.log('BODY RECEBIDO:', JSON.stringify(body));
+
     const mensagem = body.mensagem || body.message || body.texto || '';
     const sessionId = body.phone || body.subscriber_id || body.session_id || 'default';
 
+    console.log('MENSAGEM:', mensagem, '| SESSION:', sessionId);
+
     if (!mensagem) {
+      console.log('MENSAGEM VAZIA - retornando erro');
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Campo mensagem obrigatorio' }) };
     }
 
     if (!sessionHistory[sessionId]) sessionHistory[sessionId] = [];
     const history = sessionHistory[sessionId];
 
-    // Passo 1: Claude Haiku extrai o nome do produto da mensagem
     const termoBusca = await extrairTermoBusca(mensagem);
+    console.log('TERMO DE BUSCA:', termoBusca);
 
-    // Passo 2: busca na Shopify com o termo limpo
     let contextoProdutos = '';
     if (termoBusca) {
       const produtos = await buscarProdutos(termoBusca);
       if (produtos) {
         contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATÁLOGO para "${termoBusca}":\n${produtos}`;
+        console.log('PRODUTOS ENCONTRADOS:', produtos.substring(0, 200));
       } else {
         contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATÁLOGO para "${termoBusca}": nenhum produto encontrado.`;
+        console.log('NENHUM PRODUTO ENCONTRADO para:', termoBusca);
       }
     }
 
-    // Passo 3: Claude Sonnet responde ao cliente
     history.push({ role: 'user', content: mensagem });
     if (history.length > 10) history.splice(0, history.length - 10);
 
@@ -200,10 +205,10 @@ exports.handler = async (event) => {
 
     const claudeData = await claudeRes.json();
     let reply = claudeData.content?.[0]?.text || 'Desculpe, não consegui processar sua mensagem.';
+    console.log('RESPOSTA CLAUDE:', reply.substring(0, 200));
 
     history.push({ role: 'assistant', content: reply });
 
-    // Escalar para humano
     const escalar = reply.includes('[ESCALAR_HUMANO]');
     reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
     if (escalar) {
@@ -211,7 +216,6 @@ exports.handler = async (event) => {
       delete sessionHistory[sessionId];
     }
 
-    // Gerar link de pagamento
     const matchPagamento = reply.match(/\[GERAR_PAGAMENTO:(.+?):(\d+\.?\d*)\]/);
     if (matchPagamento) {
       const nomeProduto = matchPagamento[1];
@@ -232,7 +236,7 @@ exports.handler = async (event) => {
     };
 
   } catch (error) {
-    console.error('Erro:', error);
+    console.error('Erro geral:', error);
     return {
       statusCode: 200,
       headers,
