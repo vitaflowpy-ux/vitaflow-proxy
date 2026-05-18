@@ -1,31 +1,98 @@
 const SHOPIFY_STORE = 'vitaflow-7352';
 const INFINITEPAY_TAG = 'vitaflowoficial';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 
 const SYSTEM_PROMPT = `Você é a Athena, assistente virtual da VitaFlow, especializada em suplementação avançada e performance humana.
 
 IDENTIDADE:
-- Tom: profissional, direto e acolhedor
+- Tom: profissional, direto e acolhedor — como um consultor de confiança, não um robô
 - Idioma: português brasileiro
-- NUNCA mencione peptídeos, hormônios, GH ou substâncias controladas pelo nome
-- NUNCA mencione Paraguai ou Argentina — se perguntado sobre entregas, diga apenas "entregamos para todo o Brasil"
+- NUNCA mencione que atende Paraguai ou Argentina — se perguntado sobre entregas, diga apenas "entregamos para todo o Brasil"
 
 CAPACIDADES:
 - Você consulta o catálogo atualizado da loja em tempo real
-- Quando receber dados do catálogo, use-os para responder com preços e disponibilidade reais
+- Use sempre os dados reais do catálogo para responder sobre preços e disponibilidade
 - Se um produto não aparecer no catálogo consultado, diga que não encontrou e sugira acessar vitaflowoficial.com
 
+APRESENTAÇÃO DE PRODUTOS:
+- Quando o catálogo for consultado, informe SEMPRE se o produto está disponível ou indisponível
+- Quando houver muitas opções, agrupe por dosagem do menor para o maior
+- Liste TODOS os produtos retornados, sem omitir nenhum
+- Nunca crie rankings ou use termos como "mais procurado", "mais vendido", "recomendado"
+- Formato: • Nome do produto — R$ valor — Disponível ou Indisponível
+- Se um produto estiver indisponível, sugira uma alternativa similar disponível
+
+TABELA DE PREÇOS / CATEGORIAS:
+- Quando o cliente pedir tabela completa ou tabela de uma categoria, pergunte qual categoria quer ver:
+  • Mais Vendidos • Peptídeos • Hormônios • GH • Promoções • Outros
+- Após o cliente escolher, liste com preços e disponibilidade
+- Nunca diga que não trabalha com tabela — sempre ofereça a lista da categoria escolhida
+
+PROTOCOLOS E DOSAGENS:
+- Quando o cliente perguntar sobre como usar um produto, sempre indique a dosagem mínima eficaz
+- O objetivo é que o produto renda o maior tempo possível para o cliente
+- Seja direto e prático, como um consultor experiente
+
+FRETE E ENTREGA:
+- Antes de gerar o link de pagamento, SEMPRE pergunte o estado e modalidade de envio
+- Recomende sempre a Transportadora — é mais seguro e tem seguro grátis incluso
+- Seguro cobre: apreensão ou extravio → fazemos reenvio imediato ou estorno total
+- Correios (PAC/SEDEX) NÃO possuem seguro
+- Prazo de despacho: até 48 horas úteis após confirmação do pagamento
+- Prazos por região: Sudeste 2-5 dias | Sul 3-5 dias | Centro-Oeste 4-6 dias | Nordeste 5-8 dias | Norte 7-10 dias
+- Tabela de frete:
+  RJ: PAC R$45 | SEDEX R$60 | Transp. R$70
+  SP: PAC R$45 | SEDEX R$60 | Transp. R$55
+  MG: PAC R$45 | SEDEX R$70 | Transp. R$70
+  ES: PAC R$45 | SEDEX R$70 | Transp. R$70
+  DF: PAC R$45 | SEDEX R$60 | Transp. R$72
+  PR: PAC R$45 | SEDEX R$60 | Transp. R$70
+  SC: PAC R$45 | SEDEX R$70 | Transp. R$70
+  RS: PAC R$45 | SEDEX R$70 | Transp. R$100
+  GO: PAC R$45 | SEDEX R$70 | Transp. R$76
+  MS: PAC R$45 | SEDEX R$85 | Transp. R$80
+  BA: PAC R$58 | SEDEX R$90 | Transp. R$80
+  MT: PAC R$58 | SEDEX R$90 | Transp. R$75
+  CE: PAC R$72 | SEDEX R$105 | Transp. R$80
+  PA: PAC R$87 | SEDEX R$105 | Transp. R$110
+  PE: PAC R$87 | SEDEX R$115 | Transp. R$90
+  TO: PAC R$87 | SEDEX R$105 | Transp. R$110
+  MA: PAC R$100 | SEDEX R$125 | Transp. R$90
+  PB: PAC R$100 | SEDEX R$125 | Transp. R$100
+  RN: PAC R$100 | SEDEX R$125 | Transp. R$100
+  PI: PAC R$100 | SEDEX R$125 | Transp. R$110
+  AL: PAC R$100 | SEDEX R$125 | Transp. R$90
+  SE: PAC R$100 | SEDEX R$125 | Transp. R$90
+  AM: PAC R$100 | SEDEX R$125 | Transp. R$110
+  RO: PAC R$100 | SEDEX R$110 | Transp. R$170
+  AP: PAC R$100 | SEDEX R$125 | Transp. R$120
+  RR: PAC R$130 | SEDEX R$110
+  AC: PAC R$130 | SEDEX R$110 | Transp. R$150
+
 GERAÇÃO DE LINK DE PAGAMENTO:
-- Quando o cliente confirmar que quer comprar um produto específico e você tiver o valor, responda EXATAMENTE neste formato:
-  [GERAR_PAGAMENTO:nome do produto:valor numérico]
-  Exemplo: [GERAR_PAGAMENTO:BPC-157 5mg:89.90]
-- Só gere o link quando o cliente confirmar claramente que quer comprar e você tiver produto e valor definidos
-- Não gere link para dúvidas ou consultas de preço
+- SEMPRE pergunte o estado e modalidade de frete ANTES de gerar o link
+- Some o frete ao valor do produto
+- Quando tiver produto + frete definidos, responda EXATAMENTE neste formato:
+  [GERAR_PAGAMENTO:nome do produto + Frete:valor total com frete]
+  Exemplo: [GERAR_PAGAMENTO:BPC-157 5mg + Frete RJ PAC:134.90]
+- Só gere o link quando o cliente confirmar claramente que quer comprar
+
+FLUXO PÓS-VENDA:
+- Após gerar o link de pagamento, pergunte se o cliente conseguiu pagar
+- Quando o cliente confirmar o pagamento, solicite os dados para envio de forma amigável
+- Colete obrigatoriamente: NOME COMPLETO, CPF, TELEFONE, E-MAIL, ENDEREÇO (rua e número), COMPLEMENTO, BAIRRO, CIDADE, ESTADO, CEP
+- Quando tiver TODOS os dados, responda EXATAMENTE neste formato em uma linha:
+  [DADOS_CLIENTE:nome|cpf|telefone|email|endereco|complemento|bairro|cidade|estado|cep]
+
+CUPONS E DESCONTOS:
+- Se o cliente mencionar que é sua PRIMEIRA COMPRA e perguntar sobre desconto ou cupom: aplique 5% de desconto APENAS nos produtos, NUNCA no frete. Informe o valor com desconto e prossiga normalmente
+- Se o cliente mencionar qualquer outro tipo de cupom ou desconto (que não seja primeira compra): diga que vai verificar com a equipe e encerre com: [ESCALAR_HUMANO]
+- Nunca aplique desconto sem o cliente mencionar explicitamente
 
 REGRAS:
 - Nunca invente preços ou disponibilidade — use apenas os dados do catálogo
 - Se o cliente quiser falar com humano, diga que vai transferir e encerre com: [ESCALAR_HUMANO]
 - Não discuta assuntos fora do escopo da VitaFlow
-- Seja breve e objetivo — máximo 3 parágrafos
 
 SITE: vitaflowoficial.com
 INSTAGRAM: @vitaflow.py`;
@@ -57,39 +124,57 @@ async function extrairTermoBusca(mensagem) {
   }
 }
 
+async function buscarPorColecao(colecao) {
+  try {
+    const handles = {
+      'mais vendidos': 'mais-vendidos', 'peptideos': 'peptideos',
+      'hormonios': 'hormonios', 'gh': 'gh',
+      'promocoes': 'promocoes', 'outros': 'outros'
+    };
+    const handle = handles[colecao.toLowerCase()] || colecao.toLowerCase();
+    const res = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/api/2024-01/graphql.json`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
+      },
+      body: JSON.stringify({
+        query: `{ collectionByHandle(handle: "${handle}") { title products(first: 50) { edges { node { title availableForSale variants(first: 5) { edges { node { title price { amount } availableForSale } } } } } } } }`
+      })
+    });
+    const data = await res.json();
+    const produtos = data?.data?.collectionByHandle?.products?.edges;
+    if (!produtos || produtos.length === 0) return null;
+    return produtos.map(({ node: p }) => {
+      const variants = p.variants?.edges || [];
+      if (variants.length === 1) {
+        const preco = variants[0]?.node?.price?.amount || '0';
+        return `• ${p.title} — R$ ${parseFloat(preco).toFixed(2)} — ${p.availableForSale ? 'Disponível' : 'Indisponível'}`;
+      } else {
+        const variantesTexto = variants.map(({ node: v }) =>
+          `  - ${v.title}: R$ ${parseFloat(v.price?.amount || 0).toFixed(2)} — ${v.availableForSale ? 'Disponível' : 'Indisponível'}`
+        ).join('\n');
+        return `• ${p.title}:\n${variantesTexto}`;
+      }
+    }).join('\n');
+  } catch (err) {
+    console.error('Erro busca coleção:', err);
+    return null;
+  }
+}
+
 async function buscarProdutos(termo) {
   try {
-    const res = await fetch(
-      `https://${SHOPIFY_STORE}.myshopify.com/api/2024-01/graphql.json`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
-        },
-        body: JSON.stringify({
-          query: `{
-            products(first: 20, query: "${termo}") {
-              edges {
-                node {
-                  title
-                  availableForSale
-                  variants(first: 5) {
-                    edges {
-                      node {
-                        title
-                        price { amount }
-                        availableForSale
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }`
-        })
-      }
-    );
+    const res = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/api/2024-01/graphql.json`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
+      },
+      body: JSON.stringify({
+        query: `{ products(first: 20, query: "${termo}") { edges { node { title availableForSale variants(first: 5) { edges { node { title price { amount } availableForSale } } } } } } }`
+      })
+    });
     const data = await res.json();
     const produtos = data?.data?.products?.edges;
     if (!produtos || produtos.length === 0) return null;
@@ -131,6 +216,33 @@ async function gerarLinkInfinitePay(produto, valor) {
   }
 }
 
+async function gerarNumeroPedido() {
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'gerar_numero', tipo: 'A' })
+    });
+    const data = await res.json();
+    return data.order_nsu || null;
+  } catch (err) {
+    console.error('Erro ao gerar número:', err);
+    return null;
+  }
+}
+
+async function salvarPedidoGAS(pedido) {
+  try {
+    await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pedido)
+    });
+  } catch (err) {
+    console.error('Erro ao salvar pedido:', err);
+  }
+}
+
 async function enviarTelegram(texto) {
   try {
     await fetch('https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage', {
@@ -163,25 +275,37 @@ exports.handler = async (event) => {
     console.log('MENSAGEM:', mensagem, '| SESSION:', sessionId);
 
     if (!mensagem) {
-      console.log('MENSAGEM VAZIA - retornando erro');
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Campo mensagem obrigatorio' }) };
     }
 
     if (!sessionHistory[sessionId]) sessionHistory[sessionId] = [];
     const history = sessionHistory[sessionId];
 
-    const termoBusca = await extrairTermoBusca(mensagem);
-    console.log('TERMO DE BUSCA:', termoBusca);
+    // Detecta coleção ou busca por produto
+    const colecoes = ['mais vendidos', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
+    const mensagemLower = mensagem.toLowerCase();
+    const colecaoDetectada = colecoes.find(c => mensagemLower.includes(c));
 
     let contextoProdutos = '';
-    if (termoBusca) {
-      const produtos = await buscarProdutos(termoBusca);
+    if (colecaoDetectada) {
+      console.log('BUSCANDO COLECAO:', colecaoDetectada);
+      const produtos = await buscarPorColecao(colecaoDetectada);
       if (produtos) {
-        contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATÁLOGO para "${termoBusca}":\n${produtos}`;
-        console.log('PRODUTOS ENCONTRADOS:', produtos.substring(0, 200));
-      } else {
-        contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATÁLOGO para "${termoBusca}": nenhum produto encontrado.`;
-        console.log('NENHUM PRODUTO ENCONTRADO para:', termoBusca);
+        contextoProdutos = `\n\nCATALOGO DA COLECAO "${colecaoDetectada.toUpperCase()}":\n${produtos}`;
+        console.log('COLECAO ENCONTRADA:', produtos.substring(0, 200));
+      }
+    } else {
+      const termoBusca = await extrairTermoBusca(mensagem);
+      console.log('TERMO DE BUSCA:', termoBusca);
+      if (termoBusca) {
+        const produtos = await buscarProdutos(termoBusca);
+        if (produtos) {
+          contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO para "${termoBusca}":\n${produtos}`;
+          console.log('PRODUTOS ENCONTRADOS:', produtos.substring(0, 200));
+        } else {
+          contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO para "${termoBusca}": nenhum produto encontrado.`;
+          console.log('NENHUM PRODUTO ENCONTRADO para:', termoBusca);
+        }
       }
     }
 
@@ -209,6 +333,7 @@ exports.handler = async (event) => {
 
     history.push({ role: 'assistant', content: reply });
 
+    // Escalar para humano
     const escalar = reply.includes('[ESCALAR_HUMANO]');
     reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
     if (escalar) {
@@ -216,6 +341,7 @@ exports.handler = async (event) => {
       delete sessionHistory[sessionId];
     }
 
+    // Gerar link de pagamento
     const matchPagamento = reply.match(/\[GERAR_PAGAMENTO:(.+?):(\d+\.?\d*)\]/);
     if (matchPagamento) {
       const nomeProduto = matchPagamento[1];
@@ -226,6 +352,54 @@ exports.handler = async (event) => {
         reply += `\n\n💳 *Link de pagamento:*\n${link}\n\nPague com Pix ou cartão em até 12x. ✅`;
       } else {
         reply += `\n\nPara finalizar sua compra acesse: vitaflowoficial.com`;
+      }
+    }
+
+    // Processar dados do cliente pós-venda
+    const matchDados = reply.match(/\[DADOS_CLIENTE:(.+?)\]/);
+    if (matchDados) {
+      reply = reply.replace(matchDados[0], '').trim();
+      const partes = matchDados[1].split('|');
+      const [nome, cpf, telefone, email, endereco, complemento, bairro, cidade, estado, cep] = partes;
+
+      // 1. Gerar número do pedido
+      const numeroPedido = await gerarNumeroPedido();
+
+      if (numeroPedido) {
+        // 2. Salvar na planilha
+        await salvarPedidoGAS({
+          order_nsu: numeroPedido,
+          paid_amount: 0,
+          capture_method: 'whatsapp_athena',
+          customer: { name: nome, email, phone_number: telefone, document: cpf },
+          address: { street: endereco, number: '', complement: complemento, neighborhood: bairro, city: cidade, state: estado, cep },
+          items: [{ description: 'Pedido via Athena WhatsApp', quantity: 1, price: 0 }]
+        });
+
+        // 3. Notificar equipe no Telegram
+        await enviarTelegram(
+          `🤖 *VENDA ATHENA!*\n\n📦 Pedido: ${numeroPedido}\n👤 Nome: ${nome}\n🪪 CPF: ${cpf}\n📱 Tel: ${telefone}\n📧 Email: ${email}\n🏠 End: ${endereco}${complemento ? ', ' + complemento : ''}\n🏘️ Bairro: ${bairro}\n🏙️ ${cidade} - ${estado}\n📮 CEP: ${cep}\n📱 WhatsApp: ${sessionId}`
+        );
+
+        // 4. Mensagem de confirmação
+        const msgConfirmacao = `Perfeito! Seu pedido *${numeroPedido}* foi confirmado! 🎉\n\nAcompanhe em tempo real:\n🔍 *vitaflowoficial.com/pages/rastrear-pedido*\n\nDigite o número do pedido: *${numeroPedido}*\n\nQualquer dúvida estou aqui! 😊`;
+
+        // 5. Aviso de filmagem
+        const avisoFilmagem = `⚠️ *AVISO IMPORTANTE — VITAFLOW* ⚠️\n\nAntes de receber seu pedido, leia com atenção. 🙏\n\n📹 *1. FILME A ABERTURA DA EMBALAGEM*\nGrave um vídeo contínuo e sem cortes, desde a embalagem fechada até a retirada de todos os itens.\n\n✅ Mostre a caixa fechada antes de abrir\n✅ Não pause nem corte o vídeo\n✅ Filme todos os produtos ao retirar da caixa\n\n❗ Sem o vídeo não conseguimos abrir reclamação junto à transportadora.\n\n📍 *2. ALGUÉM PARA RECEBER*\nGaranta que haverá uma pessoa disponível no endereço no dia da entrega.\n\n💬 Qualquer problema, fale conosco imediatamente com o vídeo da abertura. 💪\n\n— *Equipe VitaFlow* 🧡`;
+
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({
+            resposta: msgConfirmacao,
+            resposta2: avisoFilmagem,
+            transferir: false,
+            session_id: sessionId
+          })
+        };
+      } else {
+        reply = `Dados recebidos! Em instantes você receberá a confirmação do pedido. ✅`;
+        await enviarTelegram(`⚠️ ERRO AO GERAR NÚMERO\nDados: ${matchDados[1]}\nWhatsApp: ${sessionId}`);
       }
     }
 
