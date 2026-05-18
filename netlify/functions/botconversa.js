@@ -35,11 +35,13 @@ PROTOCOLOS E DOSAGENS:
 
 FRETE E ENTREGA:
 - Antes de gerar o link de pagamento, SEMPRE pergunte o estado e modalidade de envio
+- Modalidades disponíveis: PAC, SEDEX e Transportadora (Jadlog, J&T Express ou Loggi)
 - Recomende sempre a Transportadora — é mais seguro e tem seguro grátis incluso
 - Seguro cobre: apreensão ou extravio → fazemos reenvio imediato ou estorno total
 - Correios (PAC/SEDEX) NÃO possuem seguro
 - Prazo de despacho: até 48 horas úteis após confirmação do pagamento
-- Prazos por região: Sudeste 2-5 dias | Sul 3-5 dias | Centro-Oeste 4-6 dias | Nordeste 5-8 dias | Norte 7-10 dias
+- Prazos ESTIMADOS de entrega por região (contados a partir do despacho, que ocorre em até 48h úteis após o pagamento): Sudeste 2-5 dias | Sul 3-5 dias | Centro-Oeste 4-6 dias | Nordeste 5-8 dias | Norte 7-10 dias
+- SEMPRE use a expressão "prazo estimado" ao mencionar prazos de entrega e SEMPRE informe que esse prazo começa a contar após o despacho
 - Tabela de frete:
   RJ: PAC R$45 | SEDEX R$60 | Transp. R$70
   SP: PAC R$45 | SEDEX R$60 | Transp. R$55
@@ -79,15 +81,25 @@ GERAÇÃO DE LINK DE PAGAMENTO:
 
 FLUXO PÓS-VENDA:
 - Após gerar o link de pagamento, pergunte se o cliente conseguiu pagar
-- Quando o cliente confirmar o pagamento, solicite os dados para envio de forma amigável
+- Quando o cliente disser que pagou, peça o comprovante de pagamento antes de prosseguir
+- Somente após receber o comprovante (print, foto ou confirmação com dados do Pix), solicite os dados para envio
 - Colete obrigatoriamente: NOME COMPLETO, CPF, TELEFONE, E-MAIL, ENDEREÇO (rua e número), COMPLEMENTO, BAIRRO, CIDADE, ESTADO, CEP
-- Quando tiver TODOS os dados, responda EXATAMENTE neste formato em uma linha:
-  [DADOS_CLIENTE:nome|cpf|telefone|email|endereco|complemento|bairro|cidade|estado|cep]
+- O cliente pode mandar os dados em várias mensagens separadas — vá acumulando no histórico
+- E-MAIL: aceite qualquer formato incluindo letras maiúsculas (ex: "Professor.thiagopena@gmail.com" é um e-mail válido). Nunca peça o e-mail mais de uma vez — se o cliente já forneceu algo parecido com um e-mail (com @ e ponto), aceite. Se o cliente se recusar a fornecer na segunda solicitação, use "nao_informado" e prossiga
+- CPF: se o cliente se recusar a fornecer na segunda solicitação, use "nao_informado" e prossiga
+- Quando tiver todos os campos obrigatórios (e-mail pode ser "nao_informado"), responda EXATAMENTE neste formato em uma linha ANTES de qualquer outra mensagem:
+  [DADOS_CLIENTE:nome|cpf|telefone|email|endereco|complemento|bairro|cidade|estado|cep|produto|valor]
+- NUNCA encerre o fluxo pós-venda nem diga "pedido finalizado" sem ter disparado o [DADOS_CLIENTE] primeiro
+- Se complemento não foi informado, use "sem complemento" no campo
+- Em "produto" coloque o nome completo do produto comprado. Em "valor" coloque o valor total pago (ex: 115.00)
+- Exemplo: [DADOS_CLIENTE:João Silva|123.456.789-00|21999999999|joao@email.com|Rua A 100|Apto 201|Centro|Rio de Janeiro|RJ|20000-000|BPC-157 5mg - XL Peptides + Frete RJ PAC|115.00]
 
 REGRAS:
 - Nunca invente preços ou disponibilidade — use apenas os dados do catálogo
 - Se o cliente quiser falar com humano, diga que vai transferir e encerre com: [ESCALAR_HUMANO]
 - Não discuta assuntos fora do escopo da VitaFlow
+- LOGÍSTICA: se o cliente perguntar qualquer coisa sobre entrega, rastreio, prazo, demora ou status de um pedido já realizado, responda EXATAMENTE assim (substituindo os dados do cliente):
+  "Para questões de entrega, nosso setor de logística vai te atender diretamente! 📦\n\nEntre em contato pelo WhatsApp: *+44 7537 155718*\n\nJá leve essas informações para agilizar:\n📦 Número do pedido: *[número informado pelo cliente ou "seu número de pedido"]*\n🪪 CPF: *[CPF informado ou "seu CPF"]*\n👤 Nome completo: *[nome informado ou "seu nome completo"]*\n\nEles vão resolver rapidinho! 💪"
 
 SITE: vitaflowoficial.com
 INSTAGRAM: @vitaflow.py`;
@@ -382,34 +394,62 @@ exports.handler = async (event) => {
     if (matchDados) {
       reply = reply.replace(matchDados[0], '').trim();
       const partes = matchDados[1].split('|');
-      const [nome, cpf, telefone, email, endereco, complemento, bairro, cidade, estado, cep] = partes;
+      const [nome, cpfRaw, telefone, email, endereco, complemento, bairro, cidade, estado, cep, produto, valorRaw] = partes;
+
+      // Formata CPF: 12345678900 → 123.456.789-00
+      const cpfNumeros = (cpfRaw || '').replace(/\D/g, '');
+      const cpf = cpfNumeros.length === 11
+        ? `${cpfNumeros.slice(0,3)}.${cpfNumeros.slice(3,6)}.${cpfNumeros.slice(6,9)}-${cpfNumeros.slice(9)}`
+        : cpfRaw;
+
+      // Normaliza e-mail para minúsculas
+      const emailNormalizado = (email || 'nao_informado').toLowerCase().trim();
+
+      // Valor real em centavos para o GAS
+      const valorReais = parseFloat(valorRaw || '0') || 0;
+      const valorCentavos = Math.round(valorReais * 100);
+      const nomeProduto = produto || 'Pedido via Athena WhatsApp';
 
       const numeroPedido = await gerarNumeroPedido();
 
       if (numeroPedido) {
         await salvarPedidoGAS({
           order_nsu: numeroPedido,
-          paid_amount: 0,
+          paid_amount: valorCentavos,
           capture_method: 'whatsapp_athena',
-          customer: { name: nome, email, phone_number: telefone, document: cpf },
+          customer: { name: nome, email: emailNormalizado, phone_number: telefone, document: cpf },
           address: { street: endereco, number: '', complement: complemento, neighborhood: bairro, city: cidade, state: estado, cep },
-          items: [{ description: 'Pedido via Athena WhatsApp', quantity: 1, price: 0 }]
+          items: [{ description: nomeProduto, quantity: 1, price: valorCentavos }]
         });
 
         await enviarTelegram(
-          `🤖 *VENDA ATHENA!*\n\n📦 Pedido: ${numeroPedido}\n👤 Nome: ${nome}\n🪪 CPF: ${cpf}\n📱 Tel: ${telefone}\n📧 Email: ${email}\n🏠 End: ${endereco}${complemento ? ', ' + complemento : ''}\n🏘️ Bairro: ${bairro}\n🏙️ ${cidade} - ${estado}\n📮 CEP: ${cep}\n📱 WhatsApp: ${sessionId}`
+          `🤖 *VENDA ATHENA!*\n\n📦 Pedido: ${numeroPedido}\n👤 Nome: ${nome}\n🪪 CPF: ${cpf}\n📱 Tel: ${telefone}\n📧 Email: ${emailNormalizado}\n🏠 End: ${endereco}${complemento && complemento !== 'sem complemento' ? ', ' + complemento : ''}\n🏘️ Bairro: ${bairro}\n🏙️ ${cidade} - ${estado}\n📮 CEP: ${cep}\n🛒 Produto: ${nomeProduto}\n💰 Valor: R$ ${valorReais.toFixed(2)}\n📱 WhatsApp: ${sessionId}`
         );
 
-        const msgConfirmacao = `Perfeito! Seu pedido *${numeroPedido}* foi confirmado! 🎉\n\nAcompanhe em tempo real:\n🔍 *vitaflowoficial.com/pages/rastrear-pedido*\n\nDigite o número do pedido: *${numeroPedido}*\n\nQualquer dúvida estou aqui! 😊`;
+        // Gera link do recibo pré-preenchido
+        const enderecoCompleto = [endereco, complemento !== 'sem complemento' ? complemento : '', bairro, cidade, estado].filter(Boolean).join(', ');
+        const params = new URLSearchParams({
+          pedido: numeroPedido,
+          nome,
+          cpf,
+          telefone,
+          email: emailNormalizado,
+          endereco: enderecoCompleto,
+          produto: nomeProduto,
+          qtd: '1',
+          preco: valorReais.toFixed(2),
+          total: valorReais.toFixed(2),
+          pagamento: 'PIX'
+        });
+        const linkRecibo = `https://remarkable-empanada-3bfa55.netlify.app/recibo.html?${params.toString()}`;
 
-        const avisoFilmagem = `⚠️ *AVISO IMPORTANTE — VITAFLOW* ⚠️\n\nAntes de receber seu pedido, leia com atenção. 🙏\n\n📹 *1. FILME A ABERTURA DA EMBALAGEM*\nGrave um vídeo contínuo e sem cortes, desde a embalagem fechada até a retirada de todos os itens.\n\n✅ Mostre a caixa fechada antes de abrir\n✅ Não pause nem corte o vídeo\n✅ Filme todos os produtos ao retirar da caixa\n\n❗ Sem o vídeo não conseguimos abrir reclamação junto à transportadora.\n\n📍 *2. ALGUÉM PARA RECEBER*\nGaranta que haverá uma pessoa disponível no endereço no dia da entrega.\n\n💬 Qualquer problema, fale conosco imediatamente com o vídeo da abertura. 💪\n\n— *Equipe VitaFlow* 🧡`;
+        const msgConfirmacao = `✅ *Pedido ${numeroPedido} confirmado!*\n\n📦 ${nomeProduto}\n💰 R$ ${valorReais.toFixed(2)}\n\n🔍 *Rastreie seu pedido em tempo real:*\nvitaflowoficial.com/pages/rastrear-pedido\nNúmero: *${numeroPedido}*\n\n🧾 *Seu recibo:* ${linkRecibo}\n\n─────────────────────\n⚠️ *AVISOS IMPORTANTES — VITAFLOW* ⚠️\n\n📹 *1. FILMAGEM DA ABERTURA — OBRIGATÓRIO*\nAo receber sua encomenda, grave um vídeo *contínuo e sem cortes*, desde a embalagem ainda fechada até a retirada de todos os itens.\n\n*Por que isso é necessário?*\nJá identificamos casos em que entregadores retiraram produtos da caixa e a lacraram novamente de forma perfeita, sem deixar nenhum vestígio visível. Sem o vídeo, não há como provar o que aconteceu — nem para nós, nem para a transportadora.\n\n✅ Filme a caixa fechada antes de abrir\n✅ Não pause nem corte o vídeo em nenhum momento\n✅ Filme todos os itens ao retirar da caixa\n\n❗ *A responsabilidade pela filmagem é do cliente.* Sem o vídeo, não conseguimos abrir reclamação junto à transportadora e não teremos como te ajudar, independentemente da situação.\n\n─────────────────────\n📍 *2. ENDEREÇO E RECEBIMENTO*\nConfira todos os dados do endereço antes de finalizar. Deve haver *uma pessoa disponível* no local para receber o pedido pessoalmente.\n\n❗ *A responsabilidade pelo endereço correto e pela presença de alguém para receber é do cliente.* Não solicite deixar o pacote sem ninguém — já tivemos casos em que o cliente alegou não ter recebido, porém a transportadora apresentou comprovante de entrega. Nessa situação, não temos como ajudar.\n\n─────────────────────\n⚠️ *3. DISPONIBILIDADE DE ESTOQUE*\nDevido ao alto volume de vendas no atacado, o estoque pode sofrer oscilações em tempo real. Caso algum item esteja indisponível, faremos a substituição por produto equivalente ou de valor superior. Se preferir não receber substitutos, entre em contato com nosso suporte antes do despacho da encomenda.\n\n─────────────────────\n💬 Teve algum problema? Fale conosco *imediatamente* pelo WhatsApp, envie o vídeo da abertura e os detalhes do pedido. Faremos tudo ao nosso alcance para resolver! 💪\n\n— *Equipe VitaFlow* 🧡`;
 
         return {
           statusCode: 200,
           headers,
           body: JSON.stringify({
             resposta: msgConfirmacao,
-            resposta2: avisoFilmagem,
             transferir: false,
             session_id: sessionId
           })
