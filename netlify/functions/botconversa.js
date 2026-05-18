@@ -120,7 +120,7 @@ async function extrairTermoBusca(mensagem) {
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 50,
-        system: 'Você é um especialista em produtos farmacêuticos e suplementos esportivos. Extraia o nome do produto mencionado pelo cliente, corrigindo erros de digitação e expandindo abreviações comuns (ex: "reta" = "retatrutida", "sema" = "semaglutida", "bpc" = "BPC-157", "tb500" = "TB-500"). Responda APENAS com o nome do produto corrigido e completo, sem explicações, sem tags XML, sem formatação. Se não houver produto específico, responda "nenhum".',
+        system: 'Você é um especialista em produtos farmacêuticos e suplementos esportivos. Extraia o nome do produto mencionado pelo cliente, corrigindo erros de digitação e expandindo abreviações comuns (ex: "reta" = "retatrutida", "sema" = "semaglutida", "bpc" = "BPC-157", "tb500" = "TB-500", "agua bacteriostatica" = "agua bacteriostatica", "água bacteriostática" = "agua bacteriostatica", "bacteriostatica" = "agua bacteriostatica"). Considere também insumos de reconstituição como produtos válidos (água bacteriostática, água para injeção, diluente). Responda APENAS com o nome do produto corrigido e completo, sem explicações, sem tags XML, sem formatação. Se não houver produto específico, responda "nenhum".',
         messages: [{ role: 'user', content: mensagem }]
       })
     });
@@ -164,9 +164,24 @@ async function buscarPorColecao(colecao) {
 
 async function buscarProdutos(termo) {
   try {
-    // FIX 2: normaliza o termo antes de enviar na query GraphQL
+    // Tenta primeiro com termo normalizado (sem acento)
     const termoNormalizado = normalizarParaBusca(termo);
+    let produtos = await _buscarGraphQL(termoNormalizado);
 
+    // Se não achou, tenta com o termo original (com acento)
+    if (!produtos && termoNormalizado !== termo) {
+      produtos = await _buscarGraphQL(termo.replace(/['"]/g, '').trim());
+    }
+
+    return produtos;
+  } catch (err) {
+    console.error('Erro Shopify:', err);
+    return null;
+  }
+}
+
+async function _buscarGraphQL(termo) {
+  try {
     const res = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/api/2024-01/graphql.json`, {
       method: 'POST',
       headers: {
@@ -174,7 +189,7 @@ async function buscarProdutos(termo) {
         'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
       },
       body: JSON.stringify({
-        query: `{ products(first: 20, query: "${termoNormalizado}") { edges { node { title availableForSale variants(first: 5) { edges { node { title price { amount } availableForSale } } } } } } }`
+        query: `{ products(first: 20, query: "${termo}") { edges { node { title availableForSale variants(first: 5) { edges { node { title price { amount } availableForSale } } } } } } }`
       })
     });
     const data = await res.json();
@@ -182,7 +197,6 @@ async function buscarProdutos(termo) {
     if (!produtos || produtos.length === 0) return null;
     return formatarProdutos(produtos);
   } catch (err) {
-    console.error('Erro Shopify:', err);
     return null;
   }
 }
