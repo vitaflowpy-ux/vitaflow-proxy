@@ -424,25 +424,49 @@ exports.handler = async (event) => {
           'hormonios': 'HORMÔNIOS', 'gh': 'GH', 'promocoes': 'PROMOÇÕES', 'outros': 'OUTROS'
         };
         const nomeExibicao = nomesColecao[handleColecao] || handleColecao.toUpperCase();
-        const linhas = produtos.split('\n').filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+        const todasLinhas = produtos.split('\n').filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+        const CHUNK = 100;
 
-        const listaFormatada = linhas.map((linha, i) => {
-          const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-          const emoji = i < 10 ? emojisNum[i] : `${i+1}.`;
-          const partes = linha.split('|');
-          const nome = partes[0]?.trim();
-          const preco = partes[1]?.trim();
-          return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
-        }).join('\n\n');
+        // Divide em partes de 50
+        const partes = [];
+        for (let i = 0; i < todasLinhas.length; i += CHUNK) {
+          partes.push(todasLinhas.slice(i, i + CHUNK));
+        }
 
-        const reply = `Aqui estão os produtos de *${nomeExibicao}* disponíveis! 💪\n\n${listaFormatada}\n\nQual te interessa? É só me dizer o nome ou número que te passo mais detalhes e geramos o link de pagamento! 🚀`;
+        const mensagens = partes.map((linhas, parteIdx) => {
+          const listaFormatada = linhas.map((linha, i) => {
+            const idxGlobal = parteIdx * CHUNK + i;
+            const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+            const emoji = idxGlobal < 10 ? emojisNum[idxGlobal] : `${idxGlobal + 1}.`;
+            const parteItem = linha.split('|');
+            const nome = parteItem[0]?.trim();
+            const preco = parteItem[1]?.trim();
+            return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
+          }).join('\n\n');
+
+          if (parteIdx === 0) {
+            return `Aqui estão os produtos de *${nomeExibicao}* disponíveis! 💪 (${todasLinhas.length} produtos)\n\n${listaFormatada}`;
+          } else if (parteIdx === partes.length - 1) {
+            return `${listaFormatada}\n\nQual te interessa? É só me dizer o nome ou número! 🚀`;
+          } else {
+            return listaFormatada;
+          }
+        });
+
         history.push({ role: 'user', content: mensagem });
-        history.push({ role: 'assistant', content: reply });
+        history.push({ role: 'assistant', content: mensagens[0] });
         if (history.length > 10) history.splice(0, history.length - 10);
+
+        const responseBody = { transferir: false, session_id: sessionId };
+        mensagens.forEach((msg, i) => {
+          if (i === 0) responseBody.resposta = msg;
+          else responseBody[`resposta${i + 1}`] = msg;
+        });
+
         return {
           statusCode: 200,
           headers,
-          body: JSON.stringify({ resposta: reply, transferir: false, session_id: sessionId })
+          body: JSON.stringify(responseBody)
         };
       }
 
