@@ -348,8 +348,8 @@ exports.handler = async (event) => {
 
     // Detecção de coleção RESTRITIVA — só ativa se a mensagem for essencialmente a palavra da coleção
     const mapaColecoes = {
-      'mais vendidos': 'mais-vendidos',
-      'mais vendido': 'mais-vendidos',
+      'mais vendidos': '10-mais-vendidos',
+      'mais vendido': '10-mais-vendidos',
       'peptideo': 'peptideos',
       'peptideos': 'peptideos',
       'hormonio': 'hormonios',
@@ -404,7 +404,7 @@ exports.handler = async (event) => {
       const produtos = await buscarPorColecao(handleColecao);
       if (produtos) {
         const nomesColecao = {
-          'mais-vendidos': 'MAIS VENDIDOS', 'peptideos': 'PEPTÍDEOS',
+          '10-mais-vendidos': 'MAIS VENDIDOS', 'peptideos': 'PEPTÍDEOS',
           'hormonios': 'HORMÔNIOS', 'gh': 'GH', 'promocoes': 'PROMOÇÕES', 'outros': 'OUTROS'
         };
         const nomeExibicao = nomesColecao[handleColecao] || handleColecao.toUpperCase();
