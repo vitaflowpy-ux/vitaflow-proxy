@@ -27,6 +27,7 @@ APRESENTAÇÃO DE PRODUTOS:
 - Formato numerado com emojis numéricos: 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 e depois 11. 12. 13... para os seguintes
 - Ordene sempre do menor para o maior por dosagem (mg/ui/ml). Se a dosagem for igual, ordene pelo menor preço
 - Liste TODOS os produtos sem limite — nunca corte a lista
+- SEMPRE adicione uma linha em branco entre cada produto da lista para facilitar a leitura no celular
 - Não mencione "Disponível" — se está na lista, está disponível
 - Se um produto estiver indisponível, simplesmente não o liste e sugira uma alternativa similar disponível se houver
 
@@ -380,10 +381,15 @@ exports.handler = async (event) => {
     let colecaoDetectada = null;
     let handleColecao = null;
 
-    // Verifica GH separadamente — evita falso positivo com GHK, GHrp etc
+    // Verifica GH separadamente — evita falso positivo com GHK, GHrp, GHrh etc
+    // Só detecta GH se aparecer como palavra isolada
     if (palavrasMensagem.length <= 4 && palavrasMensagem.some(p => p === 'gh')) {
-      colecaoDetectada = 'gh';
-      handleColecao = 'gh';
+      // Garante que não é parte de outra palavra (ghk, ghrp, etc)
+      const temGHIsolado = /\bgh\b/i.test(mensagemLower.replace(/gh[a-z]/gi, ''));
+      if (temGHIsolado || mensagemLower.trim() === 'gh') {
+        colecaoDetectada = 'gh';
+        handleColecao = 'gh';
+      }
     }
 
     if (!colecaoDetectada && palavrasMensagem.length <= 6) {
@@ -408,10 +414,7 @@ exports.handler = async (event) => {
           'hormonios': 'HORMÔNIOS', 'gh': 'GH', 'promocoes': 'PROMOÇÕES', 'outros': 'OUTROS'
         };
         const nomeExibicao = nomesColecao[handleColecao] || handleColecao.toUpperCase();
-        const todasLinhas = produtos.split('\n').filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-        const limite = 30;
-        const linhas = todasLinhas.slice(0, limite);
-        const temMais = todasLinhas.length > limite;
+        const linhas = produtos.split('\n').filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
         const listaFormatada = linhas.map((linha, i) => {
           const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
@@ -420,13 +423,9 @@ exports.handler = async (event) => {
           const nome = partes[0]?.trim();
           const preco = partes[1]?.trim();
           return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
-        }).join('\n');
+        }).join('\n\n');
 
-        const rodape = temMais
-          ? `\n\n_Mostrando ${limite} de ${todasLinhas.length} produtos. Para buscar um específico, me diga o nome!_`
-          : '';
-
-        const reply = `Aqui estão os produtos de *${nomeExibicao}* disponíveis! 💪\n\n${listaFormatada}${rodape}\n\nQual te interessa? É só me dizer o nome ou número que te passo mais detalhes e geramos o link de pagamento! 🚀`;
+        const reply = `Aqui estão os produtos de *${nomeExibicao}* disponíveis! 💪\n\n${listaFormatada}\n\nQual te interessa? É só me dizer o nome ou número que te passo mais detalhes e geramos o link de pagamento! 🚀`;
         history.push({ role: 'user', content: mensagem });
         history.push({ role: 'assistant', content: reply });
         if (history.length > 10) history.splice(0, history.length - 10);
