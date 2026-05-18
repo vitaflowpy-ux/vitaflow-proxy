@@ -223,21 +223,25 @@ async function _buscarGraphQL(termo) {
 
 // Função auxiliar extraída para evitar duplicação
 function formatarProdutos(produtos) {
-  return produtos.map(({ node: p }) => {
-    const variants = p.variants?.edges || [];
-    if (variants.length === 1) {
-      const preco = parseFloat(variants[0]?.node?.price?.amount || '0');
-      return `${p.title} — R$ ${preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    } else {
-      const variantesTexto = variants
-        .filter(({ node: v }) => v.availableForSale)
-        .map(({ node: v }) => {
+  return produtos
+    .filter(({ node: p }) => p.availableForSale)
+    .map(({ node: p }) => {
+      const variants = p.variants?.edges || [];
+      const disponíveis = variants.filter(({ node: v }) => v.availableForSale);
+      if (disponíveis.length === 0) return null;
+      if (disponíveis.length === 1) {
+        const preco = parseFloat(disponíveis[0]?.node?.price?.amount || '0');
+        return `${p.title}|${preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      } else {
+        const variantesTexto = disponíveis.map(({ node: v }) => {
           const preco = parseFloat(v.price?.amount || 0);
-          return `  - ${v.title}: R$ ${preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-        }).join('\n');
-      return `${p.title}:\n${variantesTexto}`;
-    }
-  }).join('\n');
+          return `${v.title}:R$${preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        }).join(';');
+        return `${p.title}|${variantesTexto}`;
+      }
+    })
+    .filter(Boolean)
+    .join('\n');
 }
 
 async function gerarLinkInfinitePay(produto, valor) {
@@ -375,7 +379,7 @@ exports.handler = async (event) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
+        max_tokens: 4000,
         system: SYSTEM_PROMPT + contextoProdutos,
         messages: history
       })
