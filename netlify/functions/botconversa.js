@@ -488,8 +488,32 @@ exports.handler = async (event) => {
     });
 
     const claudeData = await claudeRes.json();
-    // FIX 1 aplicado na resposta principal do Sonnet
-    let reply = limparTagsXML(claudeData.content?.[0]?.text || 'Desculpe, não consegui processar sua mensagem.');
+
+    // Log de erro da API se houver
+    if (claudeData.error || !claudeData.content) {
+      console.error('ERRO CLAUDE API:', JSON.stringify(claudeData));
+      // Retry uma vez após 1s
+      await new Promise(r => setTimeout(r, 1000));
+      const retryRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          system: SYSTEM_PROMPT + contextoProdutos,
+          messages: history
+        })
+      });
+      const retryData = await retryRes.json();
+      claudeData.content = retryData.content;
+      if (!claudeData.content) console.error('RETRY TAMBÉM FALHOU:', JSON.stringify(retryData));
+    }
+
+    let reply = limparTagsXML(claudeData.content?.[0]?.text || 'Desculpe, tive um problema técnico. Pode repetir sua mensagem?');
     console.log('RESPOSTA CLAUDE:', reply.substring(0, 200));
 
     history.push({ role: 'assistant', content: reply });
