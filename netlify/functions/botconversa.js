@@ -1,5 +1,6 @@
 const SHOPIFY_STORE = 'vitaflow-7352';
 const INFINITEPAY_TAG = 'vitaflowoficial';
+const FIREBASE_URL = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 
 const SYSTEM_PROMPT = `Você é a Athena, assistente virtual da VitaFlow, especializada em suplementação avançada e performance humana.
@@ -158,6 +159,26 @@ async function extrairTermoBusca(mensagem) {
 
 async function buscarPorColecao(handle) {
   try {
+    // Lê do cache Firebase — instantâneo, sem timeout
+    const url = `${FIREBASE_URL}/vitaflow_cache/colecoes/${handle}.json`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data?.dados && data.dados.length > 0) {
+      console.log(`CACHE HIT: ${handle} (${data.total} produtos, atualizado ${data.atualizado_em})`);
+      return data.dados;
+    }
+    // Fallback: busca direto no Shopify se cache vazio
+    console.log(`CACHE MISS: ${handle} — buscando Shopify`);
+    return await buscarColecaoShopify(handle);
+  } catch (err) {
+    console.error('Erro busca coleção:', err);
+    return await buscarColecaoShopify(handle);
+  }
+}
+
+// Fallback direto no Shopify (usado quando cache não disponível)
+async function buscarColecaoShopify(handle) {
+  try {
     const res = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/api/2024-01/graphql.json`, {
       method: 'POST',
       headers: {
@@ -173,7 +194,7 @@ async function buscarPorColecao(handle) {
     if (!produtos || produtos.length === 0) return null;
     return formatarProdutos(produtos);
   } catch (err) {
-    console.error('Erro busca coleção:', err);
+    console.error('Erro Shopify fallback:', err);
     return null;
   }
 }
