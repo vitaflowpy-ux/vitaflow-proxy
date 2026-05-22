@@ -9,89 +9,97 @@ const headers = {
   'Content-Type': 'application/json',
 };
 
-async function shopifyGet(path) {
-  const res = await fetch(`https://${SHOPIFY_DOMAIN}/admin/api/2025-01${path}`, {
+async function shopifyGet(url) {
+  const res = await fetch(url, {
     headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN, 'Content-Type': 'application/json' }
   });
-  if (!res.ok) throw new Error(`Shopify HTTP ${res.status} — ${path}`);
-  return res.json();
+  if (!res.ok) throw new Error(`Shopify HTTP ${res.status}`);
+  return { data: await res.json(), link: res.headers.get('Link')||'' };
 }
 
-// Mapeia título da coleção → categoria
 function mapCategory(title) {
   const t = (title || '').toLowerCase();
   if (t.includes('peptid')) return 'Peptídeos';
-  if (t.includes('hormô') || t.includes('hormoni')) return 'Hormônios';
+  if (t.includes('horm')) return 'Hormônios';
   if (t === 'gh') return 'GH';
-  if (t.includes('outro')) return 'Outros';
   if (t.includes('mais vendid')) return 'Mais Vendidos';
   if (t.includes('promo')) return 'Promoções';
+  if (t.includes('outro')) return 'Outros';
   return 'Outros';
+}
+
+async function getAllPages(firstUrl) {
+  let results = [];
+  let url = firstUrl;
+  while (url) {
+    const { data, link } = await shopifyGet(url);
+    const key = Object.keys(data)[0];
+    results = results.concat(data[key] || []);
+    const next = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = next ? next[1] : null;
+  }
+  return results;
 }
 
 exports.handler = async function(event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
 
   try {
-    // 1. Busca todas as coleções
-    const colData = await shopifyGet('/custom_collections.json?limit=250&fields=id,title');
-    const smartData = await shopifyGet('/smart_collections.json?limit=250&fields=id,title');
-    const allCols = [...(colData.custom_collections||[]), ...(smartData.smart_collections||[])];
+    const base = `https://${SHOPIFY_DOMAIN}/admin/api/2025-01`;
 
-    // Filtra só as relevantes (ignora Mais Vendidos e Promoções para categorização)
+    // 1. Busca todas as coleções (custom + smart)
+    const [customCols, smartCols] = await Promise.all([
+      getAllPages(`${base}/custom_collections.json?limit=250&fields=id,title`),
+      getAllPages(`${base}/smart_collections.json?limit=250&fields=id,title`),
+    ]);
+    const allCols = [...customCols, ...smartCols];
+
+    // Filtra as relevantes
     const catCols = allCols.filter(c => {
       const t = c.title.toLowerCase();
-      return t.includes('peptid') || t.includes('hormô') || t.includes('hormoni') || t === 'gh' || t.includes('outro');
+      return t.includes('peptid') || t.includes('horm') || t === 'gh' ||
+             t.includes('outro') || t.includes('mais vendid') || t.includes('promo');
     });
 
-    // 2. Para cada produto, descobre sua categoria buscando por coleção
-    // Mais eficiente: busca todos os produtos e depois busca collects para cruzar
-    let allProducts = {};
-    let url = `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/products.json?limit=250&fields=id,title,variants`;
-    while (url) {
-      const res = await fetch(url, {
-        headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN }
-      });
-      if (!res.ok) throw new Error(`Shopify HTTP ${res.status}`);
-      const data = await res.json();
-      (data.products || []).forEach(p => {
-        const price = (p.variants||[]).reduce((min, v) => {
-          const pr = parseFloat(v.price)||0;
-          return pr > 0 && pr < min ? pr : min;
-        }, Infinity);
-        allProducts[String(p.id)] = {
-          id: String(p.id),
-          name: p.title,
-          price: price === Infinity ? 0 : price,
-          category: 'Outros',
-        };
-      });
-      const link = res.headers.get('Link') || '';
-      const next = link.match(/<([^>]+)>;\s*rel="next"/);
-      url = next ? next[1] : null;
-    }
+    // 2. Busca todos os produtos
+    const products = await getAllPages(`${base}/products.json?limit=250&fields=id,title,variants`);
+    
+    const allProducts = {};
+    products.forEach(p => {
+      const prices = (p.variants||[]).map(v=>parseFloat(v.price)||0).filter(v=>v>0);
+      allProducts[String(p.id)] = {
+        id: String(p.id),
+        name: p.title,
+        price: prices.length ? Math.min(...prices) : 0,
+        category: 'Outros',
+        categories: [], // todas as coleções do produto
+      };
+    });
 
-    // 3. Busca collects (relação produto↔coleção) para cada coleção relevante
-    for (const col of catCols) {
+    // 3. Para cada coleção, busca os produtos via endpoint direto
+    // (funciona para custom E smart collections)
+    await Promise.all(catCols.map(async col => {
       const cat = mapCategory(col.title);
-      let cUrl = `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/collects.json?collection_id=${col.id}&limit=250&fields=product_id`;
-      while (cUrl) {
-        const res = await fetch(cUrl, {
-          headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN }
+      try {
+        const prods = await getAllPages(`${base}/products.json?collection_id=${col.id}&limit=250&fields=id`);
+        prods.forEach(p => {
+          const pid = String(p.id);
+          if (allProducts[pid]) {
+            allProducts[pid].categories.push(cat);
+            // Prioridade: Peptídeos > Hormônios > GH > Outros > Mais Vendidos > Promoções
+            const priority = ['Peptídeos','Hormônios','GH','Outros','Mais Vendidos','Promoções'];
+            const current = allProducts[pid].category;
+            const currentIdx = priority.indexOf(current);
+            const newIdx = priority.indexOf(cat);
+            if (newIdx < currentIdx) allProducts[pid].category = cat;
+          }
         });
-        if (!res.ok) break;
-        const data = await res.json();
-        (data.collects || []).forEach(c => {
-          const pid = String(c.product_id);
-          if (allProducts[pid]) allProducts[pid].category = cat;
-        });
-        const link = res.headers.get('Link') || '';
-        const next = link.match(/<([^>]+)>;\s*rel="next"/);
-        cUrl = next ? next[1] : null;
-      }
-    }
+      } catch(e) {}
+    }));
 
-    const result = Object.values(allProducts).sort((a,b) => a.name.localeCompare(b.name, 'pt-BR'));
+    const result = Object.values(allProducts)
+      .map(p => ({ id: p.id, name: p.name, price: p.price, category: p.category, categories: p.categories }))
+      .sort((a,b) => a.name.localeCompare(b.name, 'pt-BR'));
 
     return {
       statusCode: 200,
