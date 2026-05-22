@@ -1,76 +1,102 @@
 // netlify/functions/shopify-products.js
-// Busca produtos da Shopify via Admin API e devolve para a ferramenta de orçamento
-
 const SHOPIFY_DOMAIN = 'vitaflow-7352.myshopify.com';
 const SHOPIFY_TOKEN  = process.env.SHOPIFY_TOKEN;
 
-exports.handler = async function(event, context) {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json',
-  };
+const headers = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Content-Type': 'application/json',
+};
 
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
-  }
+async function shopifyGet(path) {
+  const res = await fetch(`https://${SHOPIFY_DOMAIN}/admin/api/2025-01${path}`, {
+    headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN, 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) throw new Error(`Shopify HTTP ${res.status} — ${path}`);
+  return res.json();
+}
+
+// Mapeia título da coleção → categoria
+function mapCategory(title) {
+  const t = (title || '').toLowerCase();
+  if (t.includes('peptid')) return 'Peptídeos';
+  if (t.includes('hormô') || t.includes('hormoni')) return 'Hormônios';
+  if (t === 'gh') return 'GH';
+  if (t.includes('outro')) return 'Outros';
+  if (t.includes('mais vendid')) return 'Mais Vendidos';
+  if (t.includes('promo')) return 'Promoções';
+  return 'Outros';
+}
+
+exports.handler = async function(event) {
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
 
   try {
-    let allProducts = [];
-    let url = `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/products.json?limit=250&fields=id,title,variants,product_type`;
+    // 1. Busca todas as coleções
+    const colData = await shopifyGet('/custom_collections.json?limit=250&fields=id,title');
+    const smartData = await shopifyGet('/smart_collections.json?limit=250&fields=id,title');
+    const allCols = [...(colData.custom_collections||[]), ...(smartData.smart_collections||[])];
 
-    // Pagina até buscar todos os produtos
+    // Filtra só as relevantes (ignora Mais Vendidos e Promoções para categorização)
+    const catCols = allCols.filter(c => {
+      const t = c.title.toLowerCase();
+      return t.includes('peptid') || t.includes('hormô') || t.includes('hormoni') || t === 'gh' || t.includes('outro');
+    });
+
+    // 2. Para cada produto, descobre sua categoria buscando por coleção
+    // Mais eficiente: busca todos os produtos e depois busca collects para cruzar
+    let allProducts = {};
+    let url = `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/products.json?limit=250&fields=id,title,variants`;
     while (url) {
       const res = await fetch(url, {
-        headers: {
-          'X-Shopify-Access-Token': SHOPIFY_TOKEN,
-          'Content-Type': 'application/json',
-        }
+        headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN }
       });
-
-      if (!res.ok) {
-        throw new Error(`Shopify HTTP ${res.status}`);
-      }
-
+      if (!res.ok) throw new Error(`Shopify HTTP ${res.status}`);
       const data = await res.json();
-      const products = data.products || [];
-
-      products.forEach(p => {
-        // Pega o menor preço entre as variantes disponíveis
-        const variants = p.variants || [];
-        const price = variants.length > 0
-          ? Math.min(...variants.map(v => parseFloat(v.price) || 0))
-          : 0;
-
-        // Mapeia categoria pelo product_type
-        let category = 'Outros';
-        const pt = (p.product_type || '').toLowerCase();
-        if (pt.includes('peptí') || pt.includes('pepti') || pt === 'peptideo' || pt === 'peptídeo') category = 'Peptídeos';
-        else if (pt.includes('hormô') || pt.includes('hormo')) category = 'Hormônios';
-        else if (pt.includes('gh') || pt.includes('growth')) category = 'GH';
-
-        allProducts.push({
+      (data.products || []).forEach(p => {
+        const price = (p.variants||[]).reduce((min, v) => {
+          const pr = parseFloat(v.price)||0;
+          return pr > 0 && pr < min ? pr : min;
+        }, Infinity);
+        allProducts[String(p.id)] = {
           id: String(p.id),
           name: p.title,
-          price: price,
-          category: category,
-        });
+          price: price === Infinity ? 0 : price,
+          category: 'Outros',
+        };
       });
-
-      // Checa se tem próxima página via Link header
-      const linkHeader = res.headers.get('Link') || '';
-      const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
-      url = nextMatch ? nextMatch[1] : null;
+      const link = res.headers.get('Link') || '';
+      const next = link.match(/<([^>]+)>;\s*rel="next"/);
+      url = next ? next[1] : null;
     }
 
-    // Ordena por nome
-    allProducts.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    // 3. Busca collects (relação produto↔coleção) para cada coleção relevante
+    for (const col of catCols) {
+      const cat = mapCategory(col.title);
+      let cUrl = `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/collects.json?collection_id=${col.id}&limit=250&fields=product_id`;
+      while (cUrl) {
+        const res = await fetch(cUrl, {
+          headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN }
+        });
+        if (!res.ok) break;
+        const data = await res.json();
+        (data.collects || []).forEach(c => {
+          const pid = String(c.product_id);
+          if (allProducts[pid]) allProducts[pid].category = cat;
+        });
+        const link = res.headers.get('Link') || '';
+        const next = link.match(/<([^>]+)>;\s*rel="next"/);
+        cUrl = next ? next[1] : null;
+      }
+    }
+
+    const result = Object.values(allProducts).sort((a,b) => a.name.localeCompare(b.name, 'pt-BR'));
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ products: allProducts, total: allProducts.length }),
+      body: JSON.stringify({ products: result, total: result.length }),
     };
 
   } catch (err) {
