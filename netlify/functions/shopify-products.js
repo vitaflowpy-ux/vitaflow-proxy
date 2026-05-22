@@ -2,7 +2,7 @@
 // Busca produtos da Shopify via Admin API e devolve para a ferramenta de orçamento
 
 const SHOPIFY_DOMAIN = 'vitaflow-7352.myshopify.com';
-const SHOPIFY_TOKEN  = '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';
+const SHOPIFY_TOKEN  = process.env.SHOPIFY_TOKEN;
 
 exports.handler = async function(event, context) {
   const headers = {
