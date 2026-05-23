@@ -118,8 +118,6 @@ REGRAS:
 SITE: vitaflowoficial.com
 INSTAGRAM: @vitaflow.py`;
 
-const sessionHistory = {};
-
 // FIX 1: Remove quaisquer tags XML que o modelo possa ter incluído na resposta
 function limparTagsXML(texto) {
   return texto.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '').replace(/<[^>]+>/g, '').trim();
@@ -132,6 +130,34 @@ function normalizarParaBusca(termo) {
     .replace(/[\u0300-\u036f]/g, '') // remove diacríticos
     .replace(/['"]/g, '')            // remove aspas que quebram a query GraphQL
     .trim();
+}
+
+// Histórico de sessão no Firebase — persiste entre restarts do Netlify
+async function getHistory(sessionId) {
+  try {
+    const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
+    const res = await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`);
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+
+async function saveHistory(sessionId, history) {
+  try {
+    const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
+    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(history.slice(-10))
+    });
+  } catch (err) { console.error('Erro ao salvar histórico:', err); }
+}
+
+async function deleteHistory(sessionId) {
+  try {
+    const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
+    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`, { method: 'DELETE' });
+  } catch {}
 }
 
 async function extrairTermoBusca(mensagem) {
@@ -345,8 +371,7 @@ exports.handler = async (event) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Campo mensagem obrigatorio' }) };
     }
 
-    if (!sessionHistory[sessionId]) sessionHistory[sessionId] = [];
-    const history = sessionHistory[sessionId];
+    const history = await getHistory(sessionId);
 
     // ═══════════════════════════════════════════════════════════════
     // ROTEADOR DE INTENÇÃO — classifica ANTES de qualquer ação
@@ -360,7 +385,7 @@ exports.handler = async (event) => {
     const pedidoHumano = ['atendente', 'vendedor', 'humano', 'pessoa real', 'falar com', 'quero falar', 'suporte humano'];
     if (pedidoHumano.some(p => mensagemLower.includes(p))) {
       await enviarTelegram(`🔔 CLIENTE QUER FALAR COM HUMANO\n\n📱 Número: ${sessionId}\n💬 Última mensagem: ${mensagem}`);
-      delete sessionHistory[sessionId];
+      await deleteHistory(sessionId);
       return {
         statusCode: 200, headers,
         body: JSON.stringify({ resposta: `Claro! Vou te transferir para um de nossos atendentes agora. 😊\n\nAguarde um momento!`, resposta2: '', resposta3: '', transferir: true, session_id: sessionId })
@@ -376,7 +401,7 @@ exports.handler = async (event) => {
 
     if (ehConversacional) {
       history.push({ role: 'user', content: mensagem });
-      if (history.length > 10) history.splice(0, history.length - 10);
+      
       const claudeResConv = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
@@ -385,6 +410,7 @@ exports.handler = async (event) => {
       const convData = await claudeResConv.json();
       let replyConv = limparTagsXML(convData.content?.[0]?.text || 'Olá! Como posso te ajudar?');
       history.push({ role: 'assistant', content: replyConv });
+      await saveHistory(sessionId, history);
       return {
         statusCode: 200, headers,
         body: JSON.stringify({ resposta: replyConv, resposta2: '', resposta3: '', transferir: false, session_id: sessionId })
@@ -421,7 +447,7 @@ exports.handler = async (event) => {
       const replyCateg = `Temos as seguintes categorias disponíveis! 📋\n\nÉ só me dizer qual quer ver que listo todos os produtos com preços:\n\n1️⃣ *Mais Vendidos*\n2️⃣ *Peptídeos*\n3️⃣ *Hormônios*\n4️⃣ *GH*\n5️⃣ *Promoções*\n6️⃣ *Outros*\n\nQual categoria te interessa? 😊`;
       history.push({ role: 'user', content: mensagem });
       history.push({ role: 'assistant', content: replyCateg });
-      if (history.length > 10) history.splice(0, history.length - 10);
+      
       return { statusCode: 200, headers, body: JSON.stringify({ resposta: replyCateg, transferir: false, session_id: sessionId }) };
     }
 
@@ -485,7 +511,7 @@ exports.handler = async (event) => {
 
         history.push({ role: 'user', content: mensagem });
         history.push({ role: 'assistant', content: reply });
-        if (history.length > 10) history.splice(0, history.length - 10);
+        
 
         return {
           statusCode: 200,
@@ -501,7 +527,7 @@ exports.handler = async (event) => {
       const pedidoHumano = ['atendente', 'vendedor', 'humano', 'pessoa', 'falar com', 'quero falar', 'me passa', 'suporte'];
       if (pedidoHumano.some(p => mensagemLower.includes(p))) {
         await enviarTelegram(`🔔 CLIENTE QUER FALAR COM HUMANO\n\n📱 Número: ${sessionId}\n💬 Última mensagem: ${mensagem}`);
-        delete sessionHistory[sessionId];
+        await deleteHistory(sessionId);
         const replyEscalar = `Claro! Vou te transferir para um de nossos atendentes agora. 😊\n\nAguarde um momento!`;
         return {
           statusCode: 200,
@@ -554,7 +580,7 @@ exports.handler = async (event) => {
           const reply = `Aqui estão os produtos disponíveis! 💪\n\n${listaFormatada}\n\nQual te interessa? Me diz o nome ou número que geramos o link de pagamento! 🚀`;
           history.push({ role: 'user', content: mensagem });
           history.push({ role: 'assistant', content: reply });
-          if (history.length > 10) history.splice(0, history.length - 10);
+          
           return {
             statusCode: 200,
             headers,
@@ -568,7 +594,7 @@ exports.handler = async (event) => {
     }
 
     history.push({ role: 'user', content: mensagem });
-    if (history.length > 10) history.splice(0, history.length - 10);
+    
 
     const temContextoProdutos = contextoProdutos.length > 0;
 
@@ -617,13 +643,14 @@ exports.handler = async (event) => {
     console.log('RESPOSTA CLAUDE:', reply.substring(0, 200));
 
     history.push({ role: 'assistant', content: reply });
+    await saveHistory(sessionId, history);
 
     // Escalar para humano
     const escalar = reply.includes('[ESCALAR_HUMANO]');
     reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
     if (escalar) {
       await enviarTelegram(`🔔 CLIENTE QUER FALAR COM HUMANO\n\n📱 Número: ${sessionId}\n💬 Última mensagem: ${mensagem}`);
-      delete sessionHistory[sessionId];
+      await deleteHistory(sessionId);
     }
 
     // Gerar link de pagamento
