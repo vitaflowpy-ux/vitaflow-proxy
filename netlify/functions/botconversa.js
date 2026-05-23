@@ -464,51 +464,33 @@ exports.handler = async (event) => {
         };
         const nomeExibicao = nomesColecao[handleColecao] || handleColecao.toUpperCase();
         const todasLinhas = produtos.split('\n').filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-        const CHUNK = 100;
+        const LIMITE = 50;
+        const linhas = todasLinhas.slice(0, LIMITE);
 
-        // Divide em partes de 50
-        const partes = [];
-        for (let i = 0; i < todasLinhas.length; i += CHUNK) {
-          partes.push(todasLinhas.slice(i, i + CHUNK));
-        }
+        const listaFormatada = linhas.map((linha, i) => {
+          const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+          const emoji = i < 10 ? emojisNum[i] : `${i+1}.`;
+          const partes = linha.split('|');
+          const nome = partes[0]?.trim();
+          const preco = partes[1]?.trim();
+          return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
+        }).join('\n\n');
 
-        const mensagens = partes.map((linhas, parteIdx) => {
-          const listaFormatada = linhas.map((linha, i) => {
-            const idxGlobal = parteIdx * CHUNK + i;
-            const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-            const emoji = idxGlobal < 10 ? emojisNum[idxGlobal] : `${idxGlobal + 1}.`;
-            const parteItem = linha.split('|');
-            const nome = parteItem[0]?.trim();
-            const preco = parteItem[1]?.trim();
-            return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
-          }).join('\n\n');
+        const temMais = todasLinhas.length > LIMITE;
+        const rodape = temMais
+          ? `\n\n_Mostrando ${LIMITE} de ${todasLinhas.length} produtos. Me diga o nome ou marca que procura para ver mais!_ 🔍`
+          : '';
 
-          if (parteIdx === 0) {
-            return `Aqui estão os produtos de *${nomeExibicao}* disponíveis! 💪 (${todasLinhas.length} produtos)\n\n${listaFormatada}`;
-          } else if (parteIdx === partes.length - 1) {
-            return `${listaFormatada}\n\nQual te interessa? É só me dizer o nome ou número! 🚀`;
-          } else {
-            return listaFormatada;
-          }
-        });
+        const reply = `Aqui estão os produtos de *${nomeExibicao}* disponíveis! 💪\n\n${listaFormatada}${rodape}\n\nQual te interessa? Me diz o nome ou número! 🚀`;
 
         history.push({ role: 'user', content: mensagem });
-        history.push({ role: 'assistant', content: mensagens[0] });
+        history.push({ role: 'assistant', content: reply });
         if (history.length > 10) history.splice(0, history.length - 10);
-
-        const responseBody = { transferir: false, session_id: sessionId };
-        mensagens.forEach((msg, i) => {
-          if (i === 0) responseBody.resposta = msg;
-          else responseBody[`resposta${i + 1}`] = msg;
-        });
-        // Garante que resposta2 e resposta3 sempre existem no JSON (evita traço no BotConversa)
-        if (!responseBody.resposta2) responseBody.resposta2 = '';
-        if (!responseBody.resposta3) responseBody.resposta3 = '';
 
         return {
           statusCode: 200,
           headers,
-          body: JSON.stringify(responseBody)
+          body: JSON.stringify({ resposta: reply, resposta2: '', resposta3: '', transferir: false, session_id: sessionId })
         };
       }
 
@@ -544,6 +526,16 @@ exports.handler = async (event) => {
           if (termoBusca) {
             produtos = await buscarProdutos(termoBusca);
             console.log('BUSCA HAIKU:', produtos ? 'encontrou' : 'não encontrou');
+          }
+        }
+
+        // 3. Fallback: tenta palavras individuais com mais de 3 letras
+        if (!produtos) {
+          const stopWords = ['voce', 'tem', 'para', 'quero', 'qual', 'como', 'esse', 'esta', 'uma', 'que', 'com', 'dos', 'das', 'marca', 'produto', 'linha', 'sobre', 'ver', 'mostrar', 'quais', 'tudo', 'seus', 'suas', 'mais'];
+          const palavras = mensagemLower.split(/\s+/).filter(p => p.length > 3 && !stopWords.includes(p));
+          for (const palavra of palavras) {
+            produtos = await buscarProdutos(palavra);
+            if (produtos) { console.log('BUSCA PALAVRA:', palavra, '→ encontrou'); break; }
           }
         }
 
