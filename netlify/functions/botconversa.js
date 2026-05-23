@@ -348,8 +348,51 @@ exports.handler = async (event) => {
     if (!sessionHistory[sessionId]) sessionHistory[sessionId] = [];
     const history = sessionHistory[sessionId];
 
+    // ═══════════════════════════════════════════════════════════════
+    // ROTEADOR DE INTENÇÃO — classifica ANTES de qualquer ação
+    // ═══════════════════════════════════════════════════════════════
+    const mensagemLower = mensagem.toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/ç/g, 'c')
+      .trim();
 
-    // Detecção de coleção RESTRITIVA — só ativa se a mensagem for essencialmente a palavra da coleção
+    // 1. ATENDENTE HUMANO — escalona direto
+    const pedidoHumano = ['atendente', 'vendedor', 'humano', 'pessoa real', 'falar com', 'quero falar', 'suporte humano'];
+    if (pedidoHumano.some(p => mensagemLower.includes(p))) {
+      await enviarTelegram(`🔔 CLIENTE QUER FALAR COM HUMANO\n\n📱 Número: ${sessionId}\n💬 Última mensagem: ${mensagem}`);
+      delete sessionHistory[sessionId];
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({ resposta: `Claro! Vou te transferir para um de nossos atendentes agora. 😊\n\nAguarde um momento!`, resposta2: '', resposta3: '', transferir: true, session_id: sessionId })
+      };
+    }
+
+    // 2. CONVERSACIONAL — passa direto pro Sonnet sem buscar produto
+    const conversacional = ['obrigado', 'obrigada', 'valeu', 'ok', 'certo', 'entendi', 'legal', 'otimo', 'perfeito', 'bom dia', 'boa tarde', 'boa noite', 'oi', 'ola', 'tudo bem', 'como vai', 'tchau', 'ate mais', 'ate logo', 'de nada', 'sim', 'nao', 'ta', 'blz', 'beleza', 'show'];
+    const ehConversacional = conversacional.some(p => {
+      const msg = mensagemLower.trim();
+      return msg === p || msg.startsWith(p + ' ') || msg.startsWith(p + '!') || msg.startsWith(p + ',') || msg.startsWith(p + '.');
+    });
+
+    if (ehConversacional) {
+      history.push({ role: 'user', content: mensagem });
+      if (history.length > 10) history.splice(0, history.length - 10);
+      const claudeResConv = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 300, system: SYSTEM_PROMPT, messages: history })
+      });
+      const convData = await claudeResConv.json();
+      let replyConv = limparTagsXML(convData.content?.[0]?.text || 'Olá! Como posso te ajudar?');
+      history.push({ role: 'assistant', content: replyConv });
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({ resposta: replyConv, resposta2: '', resposta3: '', transferir: false, session_id: sessionId })
+      };
+    }
+
+    // A partir daqui: intenção de PRODUTO ou CATEGORIA
+    // ═══════════════════════════════════════════════════════════════
     const mapaColecoes = {
       'mais vendidos': '10-mais-vendidos',
       'mais vendido': '10-mais-vendidos',
@@ -373,12 +416,6 @@ exports.handler = async (event) => {
       'sarm': 'outros',
       'outros': 'outros',
     };
-    const mensagemLower = mensagem.toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/ç/g, 'c')
-      .trim();
-
-    // Bypass direto para "tabela de produtos" / "ver categorias" — responde sem chamar Sonnet
     const pedindoCategorias = ['tabela de produto', 'tabela completa', 'ver categoria', 'todas categoria', 'quais categoria', 'lista de produto', 'o que voce vende', 'o que voces vendem', 'o que tem'];
     if (pedindoCategorias.some(p => mensagemLower.includes(p))) {
       const replyCateg = `Temos as seguintes categorias disponíveis! 📋\n\nÉ só me dizer qual quer ver que listo todos os produtos com preços:\n\n1️⃣ *Mais Vendidos*\n2️⃣ *Peptídeos*\n3️⃣ *Hormônios*\n4️⃣ *GH*\n5️⃣ *Promoções*\n6️⃣ *Outros*\n\nQual categoria te interessa? 😊`;
@@ -477,53 +514,64 @@ exports.handler = async (event) => {
 
     } else {
       // ── BUSCA POR PRODUTO ───────────────────────────────────────────────────
-      // 1. Tenta direto com a mensagem do cliente no Shopify (mais genérico e preciso)
-      let produtos = await buscarProdutos(mensagem);
-      console.log('BUSCA SHOPIFY DIRETA:', produtos ? 'encontrou' : 'não encontrou');
 
-      // 2. Fallback: Haiku extrai/corrige o termo e tenta de novo
-      if (!produtos) {
-        const termoBusca = await extrairTermoBusca(mensagem);
-        console.log('TERMO HAIKU:', termoBusca);
-        if (termoBusca) {
-          produtos = await buscarProdutos(termoBusca);
-          console.log('BUSCA HAIKU:', produtos ? 'encontrou' : 'não encontrou');
-        }
+      // Detecta pedido de atendente humano — escalona direto
+      const pedidoHumano = ['atendente', 'vendedor', 'humano', 'pessoa', 'falar com', 'quero falar', 'me passa', 'suporte'];
+      if (pedidoHumano.some(p => mensagemLower.includes(p))) {
+        await enviarTelegram(`🔔 CLIENTE QUER FALAR COM HUMANO\n\n📱 Número: ${sessionId}\n💬 Última mensagem: ${mensagem}`);
+        delete sessionHistory[sessionId];
+        const replyEscalar = `Claro! Vou te transferir para um de nossos atendentes agora. 😊\n\nAguarde um momento!`;
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({ resposta: replyEscalar, resposta2: '', resposta3: '', transferir: true, session_id: sessionId })
+        };
       }
 
-      if (produtos) {
-        // BYPASS SONNET para busca por produto — mais rápido e consistente
-        const linhas = produtos.split('\n').filter(Boolean);
-        const listaFormatada = linhas.map((linha, i) => {
-          const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-          const emoji = i < 10 ? emojisNum[i] : `${i+1}.`;
-          const partes = linha.split('|');
-          const nome = partes[0]?.trim();
-          const preco = partes[1]?.trim();
-          return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
-        }).join('\n\n');
+      // Detecta mensagens conversacionais — passa para o Sonnet sem buscar produto
+      const mensagensConversacionais = ['obrigado', 'obrigada', 'valeu', 'ok', 'entendi', 'certo', 'legal', 'ótimo', 'otimo', 'perfeito', 'bom dia', 'boa tarde', 'boa noite', 'oi', 'ola', 'olá', 'tudo bem', 'tchau', 'ate mais', 'até mais'];
+      const ehConversacional = mensagensConversacionais.some(p => mensagemLower.trim() === p || mensagemLower.trim().startsWith(p));
 
-        const reply = `Aqui estão os produtos disponíveis! 💪\n\n${listaFormatada}\n\nQual te interessa? Me diz o nome ou número que geramos o link de pagamento! 🚀`;
+      if (!ehConversacional) {
+        // 1. Tenta direto com a mensagem do cliente no Shopify
+        let produtos = await buscarProdutos(mensagem);
+        console.log('BUSCA SHOPIFY DIRETA:', produtos ? 'encontrou' : 'não encontrou');
 
-        history.push({ role: 'user', content: mensagem });
-        history.push({ role: 'assistant', content: reply });
-        if (history.length > 10) history.splice(0, history.length - 10);
-        return {
-          statusCode: 200,
-          headers,
-          body: JSON.stringify({ resposta: reply, resposta2: '', resposta3: '', transferir: false, session_id: sessionId })
-        };
-      } else {
-        // Fix: responde direto sem chamar Sonnet — evita invenção e timeout
-        const replyNaoEncontrado = `Não encontrei esse produto no nosso catálogo. 🔍\n\nVocê pode verificar todas as opções disponíveis em *vitaflowoficial.com* ou me dizer outra coisa que procura! 😊`;
-        history.push({ role: 'user', content: mensagem });
-        history.push({ role: 'assistant', content: replyNaoEncontrado });
-        if (history.length > 10) history.splice(0, history.length - 10);
-        return {
-          statusCode: 200,
-          headers,
-          body: JSON.stringify({ resposta: replyNaoEncontrado, resposta2: '', resposta3: '', transferir: false, session_id: sessionId })
-        };
+        // 2. Fallback: Haiku extrai/corrige o termo e tenta de novo
+        if (!produtos) {
+          const termoBusca = await extrairTermoBusca(mensagem);
+          console.log('TERMO HAIKU:', termoBusca);
+          if (termoBusca) {
+            produtos = await buscarProdutos(termoBusca);
+            console.log('BUSCA HAIKU:', produtos ? 'encontrou' : 'não encontrou');
+          }
+        }
+
+        if (produtos) {
+          // BYPASS SONNET para busca por produto — mais rápido e consistente
+          const linhas = produtos.split('\n').filter(Boolean);
+          const listaFormatada = linhas.map((linha, i) => {
+            const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+            const emoji = i < 10 ? emojisNum[i] : `${i+1}.`;
+            const partes = linha.split('|');
+            const nome = partes[0]?.trim();
+            const preco = partes[1]?.trim();
+            return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
+          }).join('\n\n');
+
+          const reply = `Aqui estão os produtos disponíveis! 💪\n\n${listaFormatada}\n\nQual te interessa? Me diz o nome ou número que geramos o link de pagamento! 🚀`;
+          history.push({ role: 'user', content: mensagem });
+          history.push({ role: 'assistant', content: reply });
+          if (history.length > 10) history.splice(0, history.length - 10);
+          return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({ resposta: reply, resposta2: '', resposta3: '', transferir: false, session_id: sessionId })
+          };
+        } else {
+          // Produto não encontrado — passa para Sonnet com contexto de "não encontrado"
+          contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO: nenhum produto encontrado para "${mensagem}". Informe ao cliente que não encontrou e sugira vitaflowoficial.com.`;
+        }
       }
     }
 
