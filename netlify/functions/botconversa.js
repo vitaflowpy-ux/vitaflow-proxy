@@ -492,7 +492,27 @@ exports.handler = async (event) => {
       }
 
       if (produtos) {
-        contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO:\n${produtos}`;
+        // BYPASS SONNET para busca por produto — mais rápido e consistente
+        const linhas = produtos.split('\n').filter(Boolean);
+        const listaFormatada = linhas.map((linha, i) => {
+          const emojisNum = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+          const emoji = i < 10 ? emojisNum[i] : `${i+1}.`;
+          const partes = linha.split('|');
+          const nome = partes[0]?.trim();
+          const preco = partes[1]?.trim();
+          return preco ? `${emoji} *${nome}* — R$ ${preco}` : `${emoji} *${nome}*`;
+        }).join('\n\n');
+
+        const reply = `Aqui estão os produtos disponíveis! 💪\n\n${listaFormatada}\n\nQual te interessa? Me diz o nome ou número que geramos o link de pagamento! 🚀`;
+
+        history.push({ role: 'user', content: mensagem });
+        history.push({ role: 'assistant', content: reply });
+        if (history.length > 10) history.splice(0, history.length - 10);
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({ resposta: reply, resposta2: '', resposta3: '', transferir: false, session_id: sessionId })
+        };
       } else {
         // Fix: responde direto sem chamar Sonnet — evita invenção e timeout
         const replyNaoEncontrado = `Não encontrei esse produto no nosso catálogo. 🔍\n\nVocê pode verificar todas as opções disponíveis em *vitaflowoficial.com* ou me dizer outra coisa que procura! 😊`;
