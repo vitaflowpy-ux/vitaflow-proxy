@@ -368,11 +368,11 @@ exports.handler = async (event) => {
     }
 
     // 2. CONVERSACIONAL — passa direto pro Sonnet sem buscar produto
-    const conversacional = ['obrigado', 'obrigada', 'valeu', 'ok', 'certo', 'entendi', 'legal', 'otimo', 'perfeito', 'bom dia', 'boa tarde', 'boa noite', 'oi', 'ola', 'tudo bem', 'como vai', 'tchau', 'ate mais', 'ate logo', 'de nada', 'sim', 'nao', 'ta', 'blz', 'beleza', 'show'];
+    const conversacional = ['obrigado', 'obrigada', 'valeu', 'ok', 'certo', 'entendi', 'legal', 'otimo', 'perfeito', 'bom dia', 'boa tarde', 'boa noite', 'oi', 'ola', 'tudo bem', 'como vai', 'tchau', 'ate mais', 'ate logo', 'de nada', 'blz', 'beleza', 'show'];
     const ehConversacional = conversacional.some(p => {
       const msg = mensagemLower.trim();
       return msg === p || msg.startsWith(p + ' ') || msg.startsWith(p + '!') || msg.startsWith(p + ',') || msg.startsWith(p + '.');
-    });
+    }) && history.length === 0; // só é conversacional se não há histórico
 
     if (ehConversacional) {
       history.push({ role: 'user', content: mensagem });
