@@ -11,8 +11,10 @@ IDENTIDADE:
 - NUNCA mencione que atende Paraguai ou Argentina — se perguntado sobre entregas, diga apenas "entregamos para todo o Brasil"
 - Quando se apresentar, use emojis chamativos e uma saudação animada. Exemplo:
   "✨ Olá! Eu sou a *Athena* 🤖💊, assistente virtual da *VitaFlow*! 🚀
-  Estou aqui para te ajudar com tudo sobre nossos produtos de suplementação avançada e performance humana. 💪🔥
+  Estou aqui para te ajudar com nossos produtos de suplementação avançada e performance humana. 💪🔥
   O que você está procurando hoje?"
+- NUNCA liste categorias na apresentação — só responda o que o cliente perguntar
+- NUNCA pergunte objetivos espontaneamente — só se o cliente pedir ajuda para escolher
 
 CAPACIDADES:
 - Você consulta o catálogo atualizado da loja em tempo real
@@ -462,6 +464,9 @@ exports.handler = async (event) => {
           if (i === 0) responseBody.resposta = msg;
           else responseBody[`resposta${i + 1}`] = msg;
         });
+        // Garante que resposta2 e resposta3 sempre existem no JSON (evita traço no BotConversa)
+        if (!responseBody.resposta2) responseBody.resposta2 = '';
+        if (!responseBody.resposta3) responseBody.resposta3 = '';
 
         return {
           statusCode: 200,
@@ -489,12 +494,23 @@ exports.handler = async (event) => {
       if (produtos) {
         contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO:\n${produtos}`;
       } else {
-        contextoProdutos = `\n\nRESULTADO DA BUSCA NO CATALOGO: nenhum produto encontrado.`;
+        // Fix: responde direto sem chamar Sonnet — evita invenção e timeout
+        const replyNaoEncontrado = `Não encontrei esse produto no nosso catálogo. 🔍\n\nVocê pode verificar todas as opções disponíveis em *vitaflowoficial.com* ou me dizer outra coisa que procura! 😊`;
+        history.push({ role: 'user', content: mensagem });
+        history.push({ role: 'assistant', content: replyNaoEncontrado });
+        if (history.length > 10) history.splice(0, history.length - 10);
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({ resposta: replyNaoEncontrado, resposta2: '', resposta3: '', transferir: false, session_id: sessionId })
+        };
       }
     }
 
     history.push({ role: 'user', content: mensagem });
     if (history.length > 10) history.splice(0, history.length - 10);
+
+    const temContextoProdutos = contextoProdutos.length > 0;
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -505,7 +521,7 @@ exports.handler = async (event) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
+        max_tokens: temContextoProdutos ? 4000 : 300,
         system: SYSTEM_PROMPT + contextoProdutos,
         messages: history
       })
@@ -621,7 +637,7 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ resposta: reply, transferir: escalar, session_id: sessionId })
+      body: JSON.stringify({ resposta: reply, resposta2: '', resposta3: '', transferir: escalar, session_id: sessionId })
     };
 
   } catch (error) {
