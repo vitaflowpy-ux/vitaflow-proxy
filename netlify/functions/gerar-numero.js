@@ -24,7 +24,7 @@ exports.handler = async function(event, context) {
 
     const res = await fetch(WEBHOOK_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'gerar_numero', tipo: tipo || 'M' }),
       signal: controller.signal,
       redirect: 'follow',
