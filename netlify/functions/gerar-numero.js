@@ -1,9 +1,10 @@
 // netlify/functions/gerar-numero.js
-// Proxy para gerar número sequencial de pedido via Google Apps Script
-
 const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 
-exports.handler = async function(event) {
+exports.handler = async function(event, context) {
+  // Desabilita retry automático do Netlify
+  context.callbackWaitsForEmptyEventLoop = false;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -18,18 +19,25 @@ exports.handler = async function(event) {
   try {
     const { tipo } = JSON.parse(event.body || '{}');
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
+
     const res = await fetch(WEBHOOK_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'gerar_numero', tipo: tipo || 'M' })
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'gerar_numero', tipo: tipo || 'M' }),
+      signal: controller.signal,
+      redirect: 'follow',
     });
 
-    const data = await res.json();
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify(data),
-    };
+    clearTimeout(timeout);
+
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch(e) { data = { order_nsu: text.trim() }; }
+
+    return { statusCode: 200, headers, body: JSON.stringify(data) };
 
   } catch (err) {
     return {
