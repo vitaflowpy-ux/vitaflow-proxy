@@ -421,14 +421,16 @@ exports.handler = async (event) => {
       const valorPag = parseFloat(matchPag[2]);
       const link = await gerarLinkInfinitePay(nomeProdPag, valorPag);
 
-      // Salva no Firebase: phone + produto + valor para o GAS usar após confirmação do InfinitePay
+      // Salva no Firebase: phone + produto + valor + subscriber_id para o GAS usar após confirmação
       try {
         const orderKey = `pending_${sessionId.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const subscriberId = body.subscriber_id || body.id || null;
         await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${orderKey}.json`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: sessionId, produto: nomeProdPag, valor: valorPag, ts: Date.now() })
+          body: JSON.stringify({ phone: sessionId, produto: nomeProdPag, valor: valorPag, subscriber_id: subscriberId, ts: Date.now() })
         });
+        console.log('FIREBASE PENDING SALVO:', orderKey, 'subscriber_id:', subscriberId);
       } catch {}
 
       reply += link
