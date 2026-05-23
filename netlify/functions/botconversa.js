@@ -60,11 +60,15 @@ PÓS-VENDA:
 - Após gerar link, pergunte se pagou
 - Qualquer confirmação verbal ("paguei", "sim", "fiz", "ok") = aceito, siga para dados
 - Colete: NOME, CPF, TELEFONE, EMAIL, ENDEREÇO, COMPLEMENTO, BAIRRO, CIDADE, ESTADO, CEP
+- O cliente pode mandar todos os dados de uma vez em várias linhas — leia cada linha e extraia os campos na ordem: nome, cpf, telefone, email, endereço, complemento, bairro, cidade, estado, cep
+- Se uma linha parecer endereço (rua, avenida, estrada, etc), é o endereço
+- Se uma linha tiver @, é o email
+- Se uma linha tiver só números com 11 dígitos, é o telefone ou CPF
 - Email: aceite qualquer formato com @ e ponto; se recusar 2x use "nao_informado"
-- CPF: se recusar 2x use "nao_informado"
-- Complemento não informado: use "sem complemento"
-- Com TODOS os dados, responda EXATAMENTE em uma linha:
+- CPF: se recusar 2x use "nao_informado"; complemento não informado: use "sem complemento"
+- Com TODOS os dados extraídos, responda EXATAMENTE em uma linha:
   [DADOS_CLIENTE:nome|cpf|telefone|email|endereco|complemento|bairro|cidade|estado|cep|produto|valor]
+- NUNCA peça os dados de novo se o cliente já os enviou — processe o que recebeu
 - NUNCA diga "pedido finalizado" sem disparar [DADOS_CLIENTE] antes
 
 LOGÍSTICA:
@@ -258,6 +262,24 @@ exports.handler = async (event) => {
 
     const history = await getHistory(sessionId);
     const msgNorm = normalizarTexto(mensagem);
+
+    // ── MÍDIA: trata como comprovante de pagamento ────────────────────────────
+    const ehMidia = body.type === 'image' || body.type === 'video' || body.type === 'document' || body.type === 'audio' || mensagem === '' || mensagem === '[image]' || mensagem === '[video]' || mensagem === '[document]' || mensagem === '[audio]' || mensagem === '[sticker]';
+    if (ehMidia && history.length > 0) {
+      // Injeta como confirmação de pagamento no histórico
+      const msgComprovante = 'O cliente enviou o comprovante de pagamento por imagem/mídia. Considere como pagamento confirmado e solicite os dados de entrega.';
+      history.push({ role: 'user', content: msgComprovante });
+      const claudeResComp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 500, system: SYSTEM_PROMPT, messages: history })
+      });
+      const compData = await claudeResComp.json();
+      const replyComp = limparTagsXML(compData.content?.[0]?.text || 'Comprovante recebido! ✅ Agora me passe seus dados para o envio.');
+      history.push({ role: 'assistant', content: replyComp });
+      await saveHistory(sessionId, history);
+      return { statusCode: 200, headers, body: JSON.stringify({ resposta: replyComp, resposta2: '', resposta3: '', transferir: false, session_id: sessionId }) };
+    }
     const palavras = msgNorm.split(/\s+/).filter(Boolean);
 
     // ── 1. BYPASS: COLEÇÃO ────────────────────────────────────────────────────
@@ -395,10 +417,26 @@ exports.handler = async (event) => {
     const matchPag = reply.match(/\[GERAR_PAGAMENTO:(.+?):(\d+\.?\d*)\]/);
     if (matchPag) {
       reply = reply.replace(matchPag[0], '').trim();
-      const link = await gerarLinkInfinitePay(matchPag[1], parseFloat(matchPag[2]));
+      const nomeProdPag = matchPag[1];
+      const valorPag = parseFloat(matchPag[2]);
+      const link = await gerarLinkInfinitePay(nomeProdPag, valorPag);
+
+      // Salva no Firebase: phone + produto + valor para o GAS usar após confirmação do InfinitePay
+      try {
+        const orderKey = `pending_${sessionId.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${orderKey}.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: sessionId, produto: nomeProdPag, valor: valorPag, ts: Date.now() })
+        });
+      } catch {}
+
       reply += link
-        ? `\n\n💳 *Link de pagamento:*\n${link}\n\nPague com Pix ou cartão em até 12x. ✅`
+        ? `\n\n💳 *Link de pagamento:*\n${link}\n\nPague e me envie o comprovante assim que concluir! 📸\n_(pode ser print ou foto)_`
         : `\n\nAcesse: vitaflowoficial.com`;
+      history.push({ role: 'assistant', content: reply });
+      await saveHistory(sessionId, history);
+      return { statusCode: 200, headers, body: JSON.stringify({ resposta: reply, resposta2: '', resposta3: '', transferir: false, session_id: sessionId }) };
     }
 
     // Processar dados pós-venda
