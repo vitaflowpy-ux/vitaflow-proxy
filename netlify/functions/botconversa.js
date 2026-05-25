@@ -185,7 +185,7 @@ function expandirMarca(termo) {
 async function getHistory(sessionId) {
   try {
     const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
-    const res = await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`);
+    const res = await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json?auth=${process.env.FIREBASE_SECRET}`);
     const data = await res.json();
     return Array.isArray(data) ? data : [];
   } catch { return []; }
@@ -194,7 +194,7 @@ async function getHistory(sessionId) {
 async function saveHistory(sessionId, history) {
   try {
     const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
-    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`, {
+    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json?auth=${process.env.FIREBASE_SECRET}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(history.slice(-12))
@@ -205,7 +205,7 @@ async function saveHistory(sessionId, history) {
 async function deleteHistory(sessionId) {
   try {
     const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
-    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`, { method: 'DELETE' });
+    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json?auth=${process.env.FIREBASE_SECRET}`, { method: 'DELETE' });
   } catch {}
 }
 
@@ -537,7 +537,7 @@ exports.handler = async (event) => {
       try {
         const key = `pending_${sessionId.replace(/[^a-zA-Z0-9]/g, '_')}`;
         const subscriberId = body.subscriber_id || body.id || null;
-        await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${key}.json`, {
+        await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${key}.json?auth=${process.env.FIREBASE_SECRET}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ phone: sessionId, subscriber_id: subscriberId, produto: nomeProd, valor, ts: Date.now() })
