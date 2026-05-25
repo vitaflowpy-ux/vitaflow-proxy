@@ -4,16 +4,19 @@
 const API_KEY = '8c9e69c3-3c9f-4f23-b480-be4a0de29640';
 const BASE = 'https://backend.botconversa.com.br/api/v1';
 
-export const handler = async (event) => {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
-  }
+const headers = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Content-Type': 'application/json'
+};
 
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json'
-  };
+exports.handler = async (event) => {
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 200, headers, body: '' };
+  }
+  if (event.httpMethod !== 'POST') {
+    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
+  }
 
   let body;
   try {
@@ -54,20 +57,12 @@ export const handler = async (event) => {
       } else {
         const errBody = await r2.text();
         console.error('Erro ao criar subscriber:', errBody);
-        return {
-          statusCode: 502,
-          headers,
-          body: JSON.stringify({ error: `Erro ao criar contato: ${errBody}` })
-        };
+        return { statusCode: 502, headers, body: JSON.stringify({ error: `Erro ao criar contato: ${errBody}` }) };
       }
     }
 
     if (!subscriberId) {
-      return {
-        statusCode: 404,
-        headers,
-        body: JSON.stringify({ error: 'Contato não encontrado e não foi possível criar.' })
-      };
+      return { statusCode: 404, headers, body: JSON.stringify({ error: 'Contato não encontrado e não foi possível criar.' }) };
     }
 
     // 3. Envia mensagem
@@ -78,27 +73,15 @@ export const handler = async (event) => {
     });
 
     if (r3.ok) {
-      return {
-        statusCode: 200,
-        headers,
-        body: JSON.stringify({ success: true, subscriberId })
-      };
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true, subscriberId }) };
     } else {
       const errBody = await r3.text();
       console.error('Erro ao enviar mensagem:', errBody);
-      return {
-        statusCode: 502,
-        headers,
-        body: JSON.stringify({ error: `Erro ao enviar mensagem: ${errBody}` })
-      };
+      return { statusCode: 502, headers, body: JSON.stringify({ error: `Erro ao enviar: ${errBody}` }) };
     }
 
   } catch (e) {
     console.error('Exceção:', e);
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: `Erro interno: ${e.message}` })
-    };
+    return { statusCode: 500, headers, body: JSON.stringify({ error: `Erro interno: ${e.message}` }) };
   }
 };
