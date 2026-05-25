@@ -356,7 +356,8 @@ exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || '{}');
     const mensagem = body.mensagem || body.message || body.texto || '';
-    const sessionId = body.phone || body.subscriber_id || body.session_id || 'default';
+    const rawId = body.phone || body.subscriber_id || body.session_id || 'default';
+const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10,11})$/, '55$1') || rawId;
 
     console.log('MSG:', mensagem, '| SESSION:', sessionId);
 
