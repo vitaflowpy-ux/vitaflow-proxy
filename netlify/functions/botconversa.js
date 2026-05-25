@@ -28,10 +28,29 @@ IDENTIDADE E TOM:
 - Apresentação: "✨ Olá! Eu sou a *Athena* 🤖💊, consultora da *VitaFlow*! 🚀\nEstou aqui para te ajudar a encontrar os melhores produtos para seus objetivos. 💪🔥\nO que você está procurando hoje?"
 - NUNCA liste categorias na apresentação
 
+REGRA DE OURO — NAVEGAÇÃO DO CLIENTE:
+- Se o cliente pedir uma categoria, um número de lista ou o nome de um produto: MOSTRE OS PRODUTOS IMEDIATAMENTE, sem fazer nenhuma pergunta antes.
+- NUNCA interrompa a navegação com perguntas. O cliente que está navegando quer ver produtos e preços, não responder questionários.
+- Perguntas de objetivo SÓ quando o cliente chegar sem saber o que quer e pedir ajuda explicitamente (ex: "não sei o que usar", "me indica algo").
+
 INTELIGÊNCIA DE PRODUTO:
 Você conhece profundamente os produtos e sabe sugerir com base no objetivo do cliente.
 
-OBJETIVOS E STACKS RECOMENDADOS (priorize peptídeos, GH, hormônios, depois outros):
+OBJETIVOS — COMO APRESENTAR:
+Quando o cliente não sabe o que quer e pede orientação, liste APENAS os objetivos disponíveis, sem citar produtos ou substâncias. Aguarde o cliente escolher um objetivo antes de apresentar qualquer produto.
+Exemplo correto:
+"Qual é o seu objetivo principal? 😊
+💊 Emagrecimento
+💪 Ganho de massa muscular
+🔧 Recuperação/lesões
+⏳ Anti-aging/longevidade
+⚡ Performance/resistência
+🔋 Saúde mitocondrial/energia
+🧬 Saúde hormonal"
+
+Somente APÓS o cliente responder o objetivo, apresente os produtos daquela categoria usando o catálogo fornecido.
+
+STACKS POR OBJETIVO (use internamente para buscar produtos — não mostre antes do cliente escolher):
 - Emagrecimento: Retatrutida, Tirzepatida, Semaglutida, CBL-514, MOTS-C, AOD-9604, Slupp-332, Ipamorelin (depois: Clembuterol, T3)
 - Ganho de massa: Testosterona, Trembolona, Boldenona, Decanoato, GH, Ipamorelin, CJC-1295 (depois: outros anabolizantes)
 - Recuperação/lesões: BPC-157, TB-500, Klow, Glow, GHK-Cu
@@ -213,7 +232,6 @@ async function buscarColecaoCache(handle) {
 function formatarCatalogo(dados) {
   return dados.split('\n').filter(Boolean)
     .sort((a, b) => {
-      // Extrai número mg/ui para ordenar
       const getMg = s => {
         const m = s.match(/(\d+(?:\.\d+)?)\s*(?:mg|ui|ml)/i);
         return m ? parseFloat(m[1]) : 9999;
@@ -264,18 +282,15 @@ async function buscarShopify(termo) {
 async function buscarProduto(mensagem) {
   const norm = normalizarTexto(mensagem);
 
-  // 1. Tenta com a mensagem original
   let resultado = await buscarShopify(mensagem);
   if (resultado) return resultado;
 
-  // 2. Expande marca e tenta
   const marcaExpandida = expandirMarca(mensagem);
   if (marcaExpandida !== mensagem) {
     resultado = await buscarShopify(marcaExpandida);
     if (resultado) return resultado;
   }
 
-  // 3. Palavras-chave individuais (ignora stop words)
   const stopWords = new Set(['voce', 'tem', 'para', 'quero', 'qual', 'como', 'esse', 'esta', 'uma', 'que', 'com', 'dos', 'das', 'marca', 'produto', 'linha', 'sobre', 'ver', 'mostrar', 'quais', 'mais', 'tudo', 'seus', 'suas', 'minha', 'meu', 'comprar', 'preciso', 'gostaria', 'saber', 'todos', 'todas', 'valores', 'preco', 'precos', 'lista', 'tabela', 'quero', 'gostaria', 'poderia', 'me', 'de', 'do', 'da', 'os', 'as', 'um', 'no', 'na', 'por', 'ate', 'so', 'ja', 'nao', 'sim', 'ok', 'ola', 'oi', 'protocolo', 'objetivo', 'ajuda']);
   const palavras = norm.split(/\s+/).filter(p => p.length > 2 && !stopWords.has(p));
 
@@ -357,7 +372,7 @@ exports.handler = async (event) => {
     const body = JSON.parse(event.body || '{}');
     const mensagem = body.mensagem || body.message || body.texto || '';
     const rawId = body.phone || body.subscriber_id || body.session_id || 'default';
-const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10,11})$/, '55$1') || rawId;
+    const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10,11})$/, '55$1') || rawId;
 
     console.log('MSG:', mensagem, '| SESSION:', sessionId);
 
@@ -396,7 +411,6 @@ const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10
     let handleColecao = null;
     let nomeColecao = null;
 
-    // GH isolado (não pega GHK, GHRP etc)
     if (palavras.length <= 5 && palavras.some(p => p === 'gh') && !norm.match(/gh[a-z]/)) {
       handleColecao = 'gh'; nomeColecao = 'GH';
     }
@@ -414,7 +428,6 @@ const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10
     if (handleColecao) {
       const dados = await buscarColecaoCache(handleColecao);
       if (dados) {
-        const lista = formatarCatalogo(dados);
         const total = dados.split('\n').filter(Boolean).length;
         const LIMITE = 50;
         const linhas = dados.split('\n').filter(Boolean)
@@ -450,7 +463,6 @@ const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10
     }
 
     // ── BUSCA DE PRODUTO NO SHOPIFY ───────────────────────────────────────────
-    // Detecta se é pergunta de contexto (não busca produto)
     const ehSaudacao = ['bom dia', 'boa tarde', 'boa noite', 'oi', 'ola', 'opa', 'eai', 'e ai', 'hey', 'hi', 'hello', 'tudo bem', 'tudo bom', 'como vai', 'bom'].some(p => norm === p || norm.startsWith(p + ' ') || norm.startsWith(p + '!'));
 
     const ehContextual = history.length > 0 && (
@@ -458,7 +470,6 @@ const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10
       ['qual', 'quanto', 'como usar', 'diferenca', 'melhor', 'pior', 'mais barat', 'mais caro', 'quero esse', 'quero essa', 'pode ser', 'pagar', 'sim', 'nao', 'ok', 'combinado', 'fechado', 'paguei', 'fiz', 'feito', 'confirmado', 'obrigado', 'obrigada', 'valeu', 'entendi', 'certo', 'perfeito', 'exato', 'isso mesmo', 'esse mesmo', 'gerar link', 'gerar pagamento', 'quero comprar', 'fecha', 'bora', 'vai', 'pode'].some(p => norm.includes(p))
     );
 
-    // Detecta perguntas de protocolo/objetivo (vai para Sonnet com contexto)
     const ehProtocolo = ['protocolo', 'como usar', 'dosagem', 'como tomar', 'como aplicar', 'efeito', 'para que serve', 'beneficio', 'funciona', 'objetivo', 'emagre', 'emagrecer', 'perder peso', 'ganhar massa', 'hipertrofia', 'anti-aging', 'envelhecimento', 'performance', 'recuperacao', 'stack', 'ciclo', 'combinar', 'junto com'].some(p => norm.includes(p));
 
     let contextoProdutos = '';
@@ -508,7 +519,6 @@ const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10
     let reply = limparTagsXML(claudeData.content[0].text || '');
     console.log('SONNET:', reply.substring(0, 150));
 
-    // Escalar para humano
     const escalar = reply.includes('[ESCALAR_HUMANO]');
     reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
     if (escalar) {
@@ -517,7 +527,6 @@ const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10
       return { statusCode: 200, headers, body: JSON.stringify({ resposta: reply || 'Vou te transferir para um atendente! 😊', resposta2: '', resposta3: '', transferir: true }) };
     }
 
-    // Gerar link de pagamento
     const matchPag = reply.match(/\[GERAR_PAGAMENTO:(.+?):(\d+\.?\d*)\]/);
     if (matchPag) {
       reply = reply.replace(matchPag[0], '').trim();
@@ -525,7 +534,6 @@ const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10
       const valor = parseFloat(matchPag[2]);
       const link = await gerarLinkInfinitePay(nomeProd, valor);
 
-      // Salva pedido pendente no Firebase
       try {
         const key = `pending_${sessionId.replace(/[^a-zA-Z0-9]/g, '_')}`;
         const subscriberId = body.subscriber_id || body.id || null;
@@ -544,7 +552,6 @@ const sessionId = rawId.replace(/\D/g, '').replace(/^0+/, '').replace(/^55(\d{10
       return respond(reply);
     }
 
-    // Processar dados pós-venda
     const matchDados = reply.match(/\[DADOS_CLIENTE:(.+?)\]/);
     if (matchDados) {
       reply = reply.replace(matchDados[0], '').trim();
