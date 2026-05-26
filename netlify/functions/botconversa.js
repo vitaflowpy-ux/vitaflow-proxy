@@ -283,7 +283,36 @@ async function buscarShopify(termo) {
   } catch { return null; }
 }
 
+// ── Correções ortográficas comuns ────────────────────────────────────────────
+const CORRECOES = {
+  'retratutida': 'retatrutida', 'retatrutide': 'retatrutida', 'retatrutuda': 'retatrutida',
+  'retratrutida': 'retatrutida', 'retatutida': 'retatrutida', 'retrutida': 'retatrutida',
+  'tirzetapida': 'tirzepatida', 'tirzepatide': 'tirzepatida', 'tirzepetida': 'tirzepatida',
+  'tirzapatida': 'tirzepatida', 'tirzipatida': 'tirzepatida', 'tizepatida': 'tirzepatida',
+  'semalgutida': 'semaglutida', 'semaglitude': 'semaglutida', 'semagutida': 'semaglutida',
+  'ipamorelina': 'ipamorelin', 'ipamorelim': 'ipamorelin', 'ipamoreline': 'ipamorelin',
+  'testosterona': 'testosterona', 'testoterona': 'testosterona', 'testorona': 'testosterona',
+  'trembolona': 'trembolona', 'trembolana': 'trembolona', 'trenbolona': 'trembolona',
+  'boldenona': 'boldenona', 'boldonona': 'boldenona',
+  'bpc157': 'bpc-157', 'bpc 157': 'bpc-157',
+  'tb500': 'tb-500', 'tb 500': 'tb-500',
+  'ghk cu': 'ghk-cu', 'ghkcu': 'ghk-cu',
+  'epitalon': 'epitalon', 'epitelon': 'epitalon', 'epithalon': 'epitalon',
+  'cjc1295': 'cjc-1295', 'cjc 1295': 'cjc-1295',
+};
+
+function corrigirOrtografia(texto) {
+  const norm = normalizarTexto(texto);
+  for (const [errado, correto] of Object.entries(CORRECOES)) {
+    if (norm.includes(errado)) {
+      return texto.toLowerCase().replace(new RegExp(errado, 'gi'), correto);
+    }
+  }
+  return texto;
+}
+
 async function buscarProduto(mensagem) {
+  mensagem = corrigirOrtografia(mensagem);
   const norm = normalizarTexto(mensagem);
 
   let resultado = await buscarShopify(mensagem);
