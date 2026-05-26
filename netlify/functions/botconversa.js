@@ -52,12 +52,15 @@ Somente APÓS o cliente responder o objetivo, apresente os produtos daquela cate
 
 STACKS POR OBJETIVO (use internamente para buscar produtos — não mostre antes do cliente escolher):
 - Emagrecimento: Retatrutida, Tirzepatida, Semaglutida, CBL-514, MOTS-C, AOD-9604, Slupp-332, Ipamorelin (depois: Clembuterol, T3)
-- Ganho de massa: Testosterona, Trembolona, Boldenona, Decanoato, GH, Ipamorelin, CJC-1295 (depois: outros anabolizantes)
+- Ganho de massa muscular: Testosterona, Trembolona, Boldenona, Decanoato, GH, Ipamorelin, CJC-1295 (depois: outros anabolizantes) — NUNCA sugira Retatrutida ou Tirzepatida para esse objetivo
 - Recuperação/lesões: BPC-157, TB-500, Klow, Glow, GHK-Cu
 - Anti-aging/longevidade: Epitalon, SS-31, MOTS-C, GHK-Cu, Tesamorelin, 5-Amino-1MQ
 - Performance/resistência: GH, Testosterona, Ipamorelin, CJC-1295, Slupp-332, MOTS-C (depois: outros anabolizantes)
 - Saúde mitocondrial/energia: SS-31, MOTS-C, Slupp-332, 5-Amino-1MQ, Epitalon
 - Saúde hormonal: Testosterona, HCG, Anastrozol, Proviron
+
+MUDANÇA DE CONTEXTO — REGRA CRÍTICA:
+Quando o cliente mudar de assunto ou objetivo, IGNORE o contexto anterior e responda com base no NOVO tema. Se estava falando de Retatrutida e o cliente pergunta sobre ganho de massa, responda com Testosterona/GH/Trembolona — nunca continue no assunto anterior.
 
 CANETAS ESPECIAIS (mencione sempre que relevante para o objetivo do cliente):
 - 🔥 *Caneta 240UI Eurogold* (Somatropina + Ipamorelin + GHRP6) — excelente custo-benefício para metabolismo geral: hipertrofia, queima de gordura, recuperação e bem-estar
@@ -113,6 +116,7 @@ CATÁLOGO — COMO LISTAR PRODUTOS:
 - Linha em branco entre cada produto
 - Após listar: faça uma observação consultora sobre os produtos (qual oferece melhor custo-benefício, qual é mais recomendado para o objetivo do cliente)
 - NUNCA invente produtos ou preços — use SOMENTE o catálogo fornecido
+- NUNCA use ## ou ### ou qualquer markdown de título. O WhatsApp não renderiza — use apenas *negrito* com asteriscos simples
 
 BUSCA POR MARCA:
 - Reconheça abreviações: cooper=Cooper Pharma, lander=Landerlan, king=King Pharma, alpha=Alpha Pharma, xl=XL Peptides, neuro=Neuroceptix, neo=NeoPeptides, alluvi=Alluvi Healthcare, euro=Eurogold, veltrane=Veltrane, lipoless=Lipoless, tirzec=Tirzec, gluconex=Gluconex, lipoland=Lipoland, tg=TG, zphc=ZPHC, health=Health Peptides, muscle=Muscle Labs, royal=Royal Pharmaceuticals
@@ -185,7 +189,7 @@ function expandirMarca(termo) {
 async function getHistory(sessionId) {
   try {
     const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
-    const res = await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json?auth=${process.env.FIREBASE_SECRET}`);
+    const res = await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`);
     const data = await res.json();
     return Array.isArray(data) ? data : [];
   } catch { return []; }
@@ -194,7 +198,7 @@ async function getHistory(sessionId) {
 async function saveHistory(sessionId, history) {
   try {
     const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
-    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json?auth=${process.env.FIREBASE_SECRET}`, {
+    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(history.slice(-12))
@@ -205,7 +209,7 @@ async function saveHistory(sessionId, history) {
 async function deleteHistory(sessionId) {
   try {
     const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
-    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json?auth=${process.env.FIREBASE_SECRET}`, { method: 'DELETE' });
+    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`, { method: 'DELETE' });
   } catch {}
 }
 
@@ -537,7 +541,7 @@ exports.handler = async (event) => {
       try {
         const key = `pending_${sessionId.replace(/[^a-zA-Z0-9]/g, '_')}`;
         const subscriberId = body.subscriber_id || body.id || null;
-        await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${key}.json?auth=${process.env.FIREBASE_SECRET}`, {
+        await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${key}.json`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ phone: sessionId, subscriber_id: subscriberId, produto: nomeProd, valor, ts: Date.now() })
