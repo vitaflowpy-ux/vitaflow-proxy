@@ -47,37 +47,41 @@ exports.handler = async function(event) {
   try {
     const base = `https://${SHOPIFY_DOMAIN}/admin/api/2025-01`;
 
-    // 1. Busca todas as coleções (custom + smart)
     const [customCols, smartCols] = await Promise.all([
       getAllPages(`${base}/custom_collections.json?limit=250&fields=id,title`),
       getAllPages(`${base}/smart_collections.json?limit=250&fields=id,title`),
     ]);
     const allCols = [...customCols, ...smartCols];
 
-    // Filtra as relevantes
     const catCols = allCols.filter(c => {
       const t = c.title.toLowerCase();
       return t.includes('peptid') || t.includes('horm') || t === 'gh' ||
              t.includes('outro') || t.includes('mais vendid') || t.includes('promo');
     });
 
-    // 2. Busca todos os produtos
-    const products = await getAllPages(`${base}/products.json?limit=250&fields=id,title,variants`);
-    
+    const products = await getAllPages(`${base}/products.json?limit=250&fields=id,title,variants,status`);
+
     const allProducts = {};
     products.forEach(p => {
-      const prices = (p.variants||[]).map(v=>parseFloat(v.price)||0).filter(v=>v>0);
+      const variants = p.variants || [];
+      const prices = variants.map(v => parseFloat(v.price)||0).filter(v => v > 0);
+      // Produto disponível se: status=active E pelo menos uma variante com estoque > 0
+      // ou sem controle de estoque (inventory_management nulo)
+      const available = p.status === 'active' && variants.some(v =>
+        !v.inventory_management ||
+        v.inventory_policy === 'continue' ||
+        (v.inventory_quantity !== undefined ? v.inventory_quantity > 0 : true)
+      );
       allProducts[String(p.id)] = {
         id: String(p.id),
         name: p.title,
         price: prices.length ? Math.min(...prices) : 0,
         category: 'Outros',
-        categories: [], // todas as coleções do produto
+        categories: [],
+        available,
       };
     });
 
-    // 3. Para cada coleção, busca os produtos via endpoint direto
-    // (funciona para custom E smart collections)
     await Promise.all(catCols.map(async col => {
       const cat = mapCategory(col.title);
       try {
@@ -86,7 +90,6 @@ exports.handler = async function(event) {
           const pid = String(p.id);
           if (allProducts[pid]) {
             allProducts[pid].categories.push(cat);
-            // Prioridade: Peptídeos > Hormônios > GH > Outros > Mais Vendidos > Promoções
             const priority = ['Peptídeos','Hormônios','GH','Outros','Mais Vendidos','Promoções'];
             const current = allProducts[pid].category;
             const currentIdx = priority.indexOf(current);
@@ -98,7 +101,7 @@ exports.handler = async function(event) {
     }));
 
     const result = Object.values(allProducts)
-      .map(p => ({ id: p.id, name: p.name, price: p.price, category: p.category, categories: p.categories }))
+      .map(p => ({ id: p.id, name: p.name, price: p.price, category: p.category, categories: p.categories, available: p.available }))
       .sort((a,b) => a.name.localeCompare(b.name, 'pt-BR'));
 
     return {
