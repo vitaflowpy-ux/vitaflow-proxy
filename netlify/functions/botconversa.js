@@ -148,6 +148,17 @@ PAGAMENTO:
 - Sequência obrigatória: 1) cliente escolhe produto → 2) pergunta estado/modalidade frete → 3) confirma total → 4) gera link
 - Se cliente perguntar só sobre frete sem produto: informe os valores e pergunte o que ele quer pedir
 
+DESCONTO PROMOCIONAL (quando houver promoção ativa no contexto):
+- O desconto é aplicado SOMENTE no valor dos produtos, NUNCA no frete
+- Cálculo: valor_produto × (1 - desconto%) + valor_frete = total do link
+- Exemplo com 15% off: produto R$1.000 + frete R$70 = link de R$920 (R$850 produto + R$70 frete)
+- Mostre o cálculo detalhado ao cliente antes de gerar o link:
+  "💰 Produto: R$ 1.000,00
+   🔥 Desconto 15%: -R$ 150,00
+   🚚 Frete [estado/modalidade]: R$ 70,00
+   ✅ Total: R$ 920,00"
+- Só então gera: [GERAR_PAGAMENTO:produto + Frete ESTADO MODALIDADE:920.00]
+
 PÓS-VENDA:
 - Imagem/comprovante = pagamento confirmado
 - Colete: NOME, CPF, TELEFONE, EMAIL, ENDEREÇO, COMPLEMENTO, BAIRRO, CIDADE, ESTADO, CEP
@@ -357,26 +368,124 @@ async function buscarPorObjetivo(objetivo) {
 
 // ── Correções ortográficas ────────────────────────────────────────────────────
 const CORRECOES = {
+  // Retatrutida
   'retratutida': 'retatrutida', 'retatrutide': 'retatrutida', 'retatrutuda': 'retatrutida',
   'retratrutida': 'retatrutida', 'retatutida': 'retatrutida', 'retrutida': 'retatrutida',
+  'retatrutidas': 'retatrutida', 'reta': 'retatrutida',
+  // Tirzepatida
   'tirzetapida': 'tirzepatida', 'tirzepatide': 'tirzepatida', 'tirzepetida': 'tirzepatida',
-  'tirzapatida': 'tirzepatida', 'tizepatida': 'tirzepatida',
-  'semalgutida': 'semaglutida', 'semagutida': 'semaglutida',
-  'ipamorelina': 'ipamorelin', 'ipamorelim': 'ipamorelin',
-  'testoterona': 'testosterona', 'testorona': 'testosterona',
-  'trembolana': 'trembolona', 'trenbolona': 'trembolona',
-  'bpc157': 'bpc-157', 'bpc 157': 'bpc-157',
-  'tb500': 'tb-500', 'tb 500': 'tb-500',
-  'ghk cu': 'ghk-cu', 'ghkcu': 'ghk-cu',
-  'epitelon': 'epitalon', 'epithalon': 'epitalon',
-  'cjc1295': 'cjc-1295', 'cjc 1295': 'cjc-1295',
-  'cagrilintida': 'cagrilintide',
+  'tirzapatida': 'tirzepatida', 'tizepatida': 'tirzepatida', 'tirze': 'tirzepatida',
+  'tirzepatidas': 'tirzepatida',
+  // Semaglutida
+  'semalgutida': 'semaglutida', 'semagutida': 'semaglutida', 'sema': 'semaglutida',
+  // Ipamorelin
+  'ipamorelina': 'ipamorelin', 'ipamorelim': 'ipamorelin', 'ipa': 'ipamorelin',
+  'ipa-morelin': 'ipamorelin', 'ipam': 'ipamorelin',
+  // Testosterona
+  'testoterona': 'testosterona', 'testorona': 'testosterona', 'testo': 'testosterona',
+  // Trembolona
+  'trembolana': 'trembolona', 'trenbolona': 'trembolona', 'tren': 'trembolona',
+  // BPC-157
+  'bpc157': 'bpc-157', 'bpc 157': 'bpc-157', 'bpc': 'bpc-157',
+  'pl14736': 'bpc-157', 'pl 14736': 'bpc-157', 'pl-14736': 'bpc-157',
+  // TB-500
+  'tb500': 'tb-500', 'tb 500': 'tb-500', 'tb4': 'tb-500', 'tb-4': 'tb-500',
+  'timosina beta 4': 'tb-500', 'timosina beta-4': 'tb-500',
+  'thymosin beta 4': 'tb-500', 'thymosin beta-4': 'tb-500',
+  // CJC-1295
+  'cjc1295': 'cjc-1295', 'cjc 1295': 'cjc-1295', 'cjc': 'cjc-1295',
+  'mod grf 1-29': 'cjc-1295', 'mod grf 1 29': 'cjc-1295', 'mod grf': 'cjc-1295',
+  // GHRP-6
+  'ghrp6': 'ghrp-6', 'ghrp 6': 'ghrp-6',
+  // GHRP-2
+  'ghrp2': 'ghrp-2', 'ghrp 2': 'ghrp-2',
+  // GHK-Cu
+  'ghk cu': 'ghk-cu', 'ghkcu': 'ghk-cu', 'ghk': 'ghk-cu',
+  'peptideo de cobre': 'ghk-cu', 'peptide de cobre': 'ghk-cu',
+  // Melanotan II
+  'melanotan 2': 'melanotan', 'melanotan-ii': 'melanotan', 'melanotan ii': 'melanotan',
+  'mt-2': 'melanotan', 'mt2': 'melanotan', 'mt ii': 'melanotan', 'mt 2': 'melanotan',
+  // PT-141
+  'pt141': 'pt-141', 'pt 141': 'pt-141',
+  'bremelanotide': 'pt-141', 'bremelanotida': 'pt-141', 'vyleesi': 'pt-141',
+  // HGH Fragment 176-191
+  'hgh frag': 'hgh fragment', 'hgh-frag': 'hgh fragment',
+  'frag 176': 'hgh fragment', 'fragmento 176-191': 'hgh fragment',
+  'frag176191': 'hgh fragment', 'fragment 176': 'hgh fragment',
+  'aod9604': 'aod-9604', 'aod 9604': 'aod-9604', 'aod': 'aod-9604',
+  // Epitalon
+  'epitelon': 'epitalon', 'epithalon': 'epitalon', 'epithalone': 'epitalon', 'aedg': 'epitalon',
+  // Sermorelin
+  'sermorelina': 'sermorelin', 'grf 1-29': 'sermorelin', 'grf 1 29': 'sermorelin',
+  // Tesamorelin
+  'tesamorelina': 'tesamorelin', 'egrifta': 'tesamorelin',
+  // MOTS-C
+  'motsc': 'mots-c', 'mots c': 'mots-c', 'motss': 'mots-c',
+  // SS-31
+  'ss31': 'ss-31', 'ss 31': 'ss-31',
+  // LL-37
+  'll37': 'll-37', 'll 37': 'll-37',
+  // CBL-514
+  'cbl514': 'cbl-514', 'cbl 514': 'cbl-514',
+  // 5-Amino-1MQ
+  '5amino1mq': '5-amino-1mq', '5 amino': '5-amino-1mq',
+  // Slupp-332
+  'slupp332': 'slupp-332', 'slupp 332': 'slupp-332',
+  // Cagrilintide
+  'cagrilintida': 'cagrilintide', 'cagrili': 'cagrilintide',
+
+  // ── ESTEROIDES ANABOLIZANTES ─────────────────────────────────────────────
+  // Testosterona
+  'testosterone': 'testosterona', 'propionato': 'testosterona propionato',
+  'enantato': 'testosterona enantato', 'cipionato': 'testosterona cipionato',
+  'isocaptoato': 'testosterona', 'decanoato': 'testosterona decanoato',
+  'durateston': 'testosterona', 'deposteron': 'testosterona', 'nebido': 'testosterona',
+
+  // Oxandrolona
+  'oxandrolone': 'oxandrolona', 'oxan': 'oxandrolona', 'oxandrola': 'oxandrolona',
+  'anavar': 'oxandrolona',
+
+  // Stanozolol
+  'estanozolol': 'stanozolol', 'stano': 'stanozolol', 'estano': 'stanozolol',
+  'winstrol': 'stanozolol', 'winny': 'stanozolol',
+
+  // Nandrolona
+  'nandrolona': 'nandrolona', 'decanoato de nandrolona': 'nandrolona',
+  'fenilpropionato de nandrolona': 'nandrolona', 'deca': 'nandrolona',
+  'deca-durabolin': 'nandrolona', 'npp': 'nandrolona',
+
+  // Trembolona
+  'trenbolone': 'trembolona', 'acetato de trembolona': 'trembolona',
+  'enantato de trembolona': 'trembolona', 'parabolan': 'trembolona',
+  'hexidrobenzilcarbonato': 'trembolona',
+
+  // Metandienona (Dianabol)
+  'metandienona': 'dianabol', 'metandrostenolona': 'dianabol',
+  'dbol': 'dianabol', 'diana': 'dianabol',
+
+  // Oximetolona (Hemogenin)
+  'oximetolona': 'hemogenin', 'oxymetholone': 'hemogenin', 'anadrol': 'hemogenin',
+
+  // Boldenona
+  'boldenone': 'boldenona', 'undecilenato de boldenone': 'boldenona',
+  'equipoise': 'boldenona', 'bold': 'boldenona',
+
+  // Drostanolona (Masteron)
+  'drostanolona': 'masteron', 'propionato de drostanolona': 'masteron',
+  'enantato de drostanolona': 'masteron', 'mast': 'masteron',
+
+  // Metenolona (Primobolan)
+  'metenolona': 'primobolan', 'enantato de metenolona': 'primobolan', 'primo': 'primobolan',
 };
 
 function corrigirOrtografia(texto) {
   const norm = normalizarTexto(texto);
-  for (const [errado, correto] of Object.entries(CORRECOES)) {
-    if (norm.includes(errado)) return texto.toLowerCase().replace(new RegExp(errado, 'gi'), correto);
+  // Ordena por tamanho decrescente para evitar substituições parciais
+  const entradas = Object.entries(CORRECOES).sort((a,b) => b[0].length - a[0].length);
+  for (const [errado, correto] of entradas) {
+    if (norm.includes(errado)) {
+      return norm.replace(new RegExp(errado.replace(/[-]/g,'\\-'), 'gi'), correto);
+    }
   }
   return texto;
 }
