@@ -3,10 +3,10 @@
 // Busca todas as coleções do Shopify e salva no Firebase Realtime Database
 
 const SHOPIFY_STORE = 'vitaflow-7352';
+const STOREFRONT_TOKEN = 'b4b46a09460b7277f5d4625b9019daef'; // Storefront API token (público)
 const FIREBASE_URL = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const COLECOES = ['10-mais-vendidos', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
 
-// Busca uma coleção completa do Shopify (paginada até 250 produtos)
 async function buscarColecaoShopify(handle) {
   let todosProdutos = [];
   let cursor = null;
@@ -41,17 +41,25 @@ async function buscarColecaoShopify(handle) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
+        'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN
       },
       body: JSON.stringify({ query })
     });
 
     const data = await res.json();
+    if (data.errors) {
+      console.error(`Erro GraphQL em ${handle}:`, JSON.stringify(data.errors));
+      break;
+    }
     const colecao = data?.data?.collectionByHandle;
-    if (!colecao) break;
+    if (!colecao) {
+      console.log(`Coleção não encontrada: ${handle}`);
+      break;
+    }
 
     const edges = colecao.products?.edges || [];
     todosProdutos = todosProdutos.concat(edges);
+    console.log(`  ${handle}: página com ${edges.length} produtos`);
 
     temMais = colecao.products?.pageInfo?.hasNextPage || false;
     cursor = colecao.products?.pageInfo?.endCursor || null;
@@ -60,19 +68,18 @@ async function buscarColecaoShopify(handle) {
   return todosProdutos;
 }
 
-// Formata produtos para string compacta: "Nome|Preço\n"
 function formatarProdutos(produtos) {
   return produtos
     .filter(({ node: p }) => p.availableForSale)
     .map(({ node: p }) => {
       const variants = p.variants?.edges || [];
-      const disponíveis = variants.filter(({ node: v }) => v.availableForSale);
-      if (disponíveis.length === 0) return null;
-      if (disponíveis.length === 1) {
-        const preco = parseFloat(disponíveis[0]?.node?.price?.amount || '0');
+      const disponiveis = variants.filter(({ node: v }) => v.availableForSale);
+      if (disponiveis.length === 0) return null;
+      if (disponiveis.length === 1) {
+        const preco = parseFloat(disponiveis[0]?.node?.price?.amount || '0');
         return `${p.title}|${preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       } else {
-        const variantesTexto = disponíveis.map(({ node: v }) => {
+        const variantesTexto = disponiveis.map(({ node: v }) => {
           const preco = parseFloat(v.price?.amount || 0);
           return `${v.title}:R$${preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
         }).join(';');
@@ -83,10 +90,10 @@ function formatarProdutos(produtos) {
     .join('\n');
 }
 
-// Salva no Firebase
 async function salvarFirebase(handle, dados) {
-  const url = `${FIREBASE_URL}/vitaflow_cache/colecoes/${handle}.json?auth=${process.env.FIREBASE_SECRET}`;
-  await fetch(url, {
+  // Salva sem autenticação (regras do Firebase permitem escrita)
+  const url = `${FIREBASE_URL}/vitaflow_cache/colecoes/${handle}.json`;
+  const res = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -95,6 +102,10 @@ async function salvarFirebase(handle, dados) {
       total: dados.split('\n').filter(Boolean).length
     })
   });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Firebase erro: ${err}`);
+  }
 }
 
 exports.handler = async () => {
