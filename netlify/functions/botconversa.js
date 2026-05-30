@@ -323,6 +323,34 @@ async function buscarColecaoCache(handle) {
   } catch { return null; }
 }
 
+// ── Busca no cache do Firebase ───────────────────────────────────────────────
+async function buscarNoCache(termo) {
+  try {
+    const norm = normalizarTexto(termo);
+    const palavras = norm.split(/\s+/).filter(p => p.length > 2 && !STOP_BUSCA.has(p));
+    if (!palavras.length) return null;
+
+    const TODAS = ['peptideos', 'hormonios', 'gh', 'promocoes', 'outros', '10-mais-vendidos'];
+    const resultados = new Set();
+
+    await Promise.all(TODAS.map(async handle => {
+      try {
+        const res = await fetch(`${FIREBASE_URL}/vitaflow_cache/colecoes/${handle}.json`);
+        const data = await res.json();
+        if (!data?.dados) return;
+        data.dados.split('\n').filter(Boolean).forEach(linha => {
+          const nomeProd = normalizarTexto(linha.split('|')[0]);
+          if (palavras.every(p => nomeProd.includes(p))) {
+            resultados.add(linha);
+          }
+        });
+      } catch {}
+    }));
+
+    return resultados.size > 0 ? [...resultados].join('\n') : null;
+  } catch { return null; }
+}
+
 // ── Shopify ───────────────────────────────────────────────────────────────────
 async function buscarShopify(termo) {
   try {
@@ -525,7 +553,15 @@ async function buscarProduto(mensagem) {
     }
   }
 
-  // 5. Fallback: busca por objetivo
+  // 5. Fallback: busca no cache Firebase (mais confiável que Shopify ao vivo)
+  const termoCache = termo || normalizarTexto(mensagem);
+  resultado = await buscarNoCache(termoCache);
+  if (resultado) {
+    console.log('CACHE HIT busca:', termoCache);
+    return { produtos: resultado, fallback: false };
+  }
+
+  // 6. Fallback: busca por objetivo
   const objetivo = detectarObjetivo(mensagem);
   if (objetivo) {
     resultado = await buscarPorObjetivo(objetivo);
