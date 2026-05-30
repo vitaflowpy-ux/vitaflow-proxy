@@ -4,7 +4,6 @@ const FIREBASE_URL = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 const ATACADO_PDF = 'https://drive.google.com/uc?export=download&id=1olhYj0OW1cL0Wk0kk6-fct89EJff_1Ip';
 
-// ── Mapa de abreviações de marcas ─────────────────────────────────────────────
 const MARCAS = {
   'cooper': 'Cooper Pharma', 'lander': 'Landerlan', 'landerlan': 'Landerlan',
   'king': 'King Pharma', 'alpha': 'Alpha Pharma', 'muscle': 'Muscle Labs',
@@ -19,26 +18,51 @@ const MARCAS = {
   'lider': 'Líder Pharma', 'bratva': 'Bratva Labs', 'synedica': 'Synedica',
 };
 
+// ── Stacks por objetivo ───────────────────────────────────────────────────────
+const STACKS = {
+  emagrecimento: ['retatrutida', 'tirzepatida', 'semaglutida', 'cbl-514', 'cbl514', 'mots-c', 'motsc', 'aod-9604', 'aod9604', 'slupp-332', 'slupp332', 'ipamorelin', 'ipamorelina', 'clembuterol', 't3', 'glow', 'klow'],
+  massa: ['testosterona', 'testosterone', 'trembolona', 'trenbolona', 'boldenona', 'boldenone', 'decanoato', 'deca', 'gh', 'somatropina', 'ipamorelin', 'cjc-1295', 'cjc1295', 'stanozolol', 'oxandrolona'],
+  recuperacao: ['bpc-157', 'bpc157', 'tb-500', 'tb500', 'klow', 'glow', 'ghk-cu', 'ghkcu', 'ss-31', 'ss31'],
+  antiaging: ['epitalon', 'epithalon', 'ss-31', 'ss31', 'mots-c', 'motsc', 'ghk-cu', 'ghkcu', 'tesamorelin', '5-amino-1mq', '5amino1mq'],
+  performance: ['gh', 'somatropina', 'testosterona', 'ipamorelin', 'cjc-1295', 'slupp-332', 'mots-c'],
+  mitocondrial: ['ss-31', 'ss31', 'mots-c', 'motsc', 'slupp-332', 'slupp332', '5-amino-1mq', '5amino1mq', 'epitalon', 'nad'],
+  hormonal: ['testosterona', 'testosterone', 'hcg', 'anastrozol', 'proviron', 'mesterolona'],
+};
+
+// Palavras que indicam cada objetivo
+const OBJETIVO_PALAVRAS = {
+  emagrecimento: ['emagre', 'perder peso', 'emagrecer', 'queimar gordura', 'gordura', 'peso', 'obesidade', 'secar', 'definir', 'cutting', 'peptideo emagre'],
+  massa: ['ganhar massa', 'hipertrofia', 'ganho muscular', 'massa muscular', 'bulking', 'anabolizante', 'hormonio', 'anabolismo', 'ficar grande', 'aumentar musculo'],
+  recuperacao: ['recuperar', 'recuperacao', 'lesao', 'lesão', 'cicatrizar', 'dor', 'tendinite', 'articulacao', 'articulação', 'inflamacao'],
+  antiaging: ['anti-aging', 'anti aging', 'envelhecimento', 'longevidade', 'rejuvenescer', 'celula', 'celulas', 'antienvelhecimento'],
+  performance: ['performance', 'resistencia', 'rendimento', 'atletismo', 'corrida', 'endurance', 'esporte'],
+  mitocondrial: ['energia', 'mitocondria', 'cansaco', 'fadiga', 'disposicao', 'mitocondrial'],
+  hormonal: ['hormonio', 'testosterona', 'trt', 'reposicao hormonal', 'libido', 'andropausa'],
+};
+
 const SYSTEM_PROMPT = `Você é a Athena, consultora especializada da VitaFlow em suplementação avançada e performance humana.
 
 IDENTIDADE E TOM:
-- Tom: consultora experiente, direta, acolhedora e VENDEDORA — você conhece os produtos profundamente e adora ajudar os clientes a atingir seus objetivos
+- Tom: consultora experiente, inteligente, direta, acolhedora e VENDEDORA
 - Idioma: português brasileiro informal e caloroso
 - NUNCA mencione Paraguai ou Argentina — "entregamos para todo o Brasil"
 - Apresentação: "✨ Olá! Eu sou a *Athena* 🤖💊, consultora da *VitaFlow*! 🚀\nEstou aqui para te ajudar a encontrar os melhores produtos para seus objetivos. 💪🔥\nO que você está procurando hoje?"
 - NUNCA liste categorias na apresentação
 
-REGRA DE OURO — NAVEGAÇÃO DO CLIENTE:
-- Se o cliente pedir uma categoria, um número de lista ou o nome de um produto: MOSTRE OS PRODUTOS IMEDIATAMENTE, sem fazer nenhuma pergunta antes.
-- NUNCA interrompa a navegação com perguntas. O cliente que está navegando quer ver produtos e preços, não responder questionários.
-- Perguntas de objetivo SÓ quando o cliente chegar sem saber o que quer e pedir ajuda explicitamente (ex: "não sei o que usar", "me indica algo").
+INTELIGÊNCIA CONSULTORA — REGRAS PRINCIPAIS:
+1. NUNCA invente produtos, preços, promoções ou informações — use SOMENTE o que está no catálogo fornecido
+2. Se produto não disponível → use as ALTERNATIVAS DO MESMO OBJETIVO fornecidas no contexto
+3. Doses mínimas eficazes: sempre calcule quanto tempo o produto dura (ex: "com 0,5mg/semana este frasco rende 24 semanas")
+4. Sugira UM complemento por conversa — se cliente recusar, aceite e siga sem insistir
+5. NUNCA congele — sempre dê uma resposta útil, mesmo que seja pedir clareza
+6. Seja consultora, não robô — raciocine, conecte objetivo ao produto, explique valor
 
-INTELIGÊNCIA DE PRODUTO:
-Você conhece profundamente os produtos e sabe sugerir com base no objetivo do cliente.
+REGRA DE OURO — NAVEGAÇÃO DO CLIENTE:
+- Se o cliente pedir categoria, número ou nome de produto: mostre IMEDIATAMENTE sem perguntas
+- Perguntas de objetivo SÓ quando cliente não sabe o que quer
 
 OBJETIVOS — COMO APRESENTAR:
-Quando o cliente não sabe o que quer e pede orientação, liste APENAS os objetivos disponíveis, sem citar produtos ou substâncias. Aguarde o cliente escolher um objetivo antes de apresentar qualquer produto.
-Exemplo correto:
+Quando o cliente pede orientação sem saber o produto:
 "Qual é o seu objetivo principal? 😊
 💊 Emagrecimento
 💪 Ganho de massa muscular
@@ -48,92 +72,59 @@ Exemplo correto:
 🔋 Saúde mitocondrial/energia
 🧬 Saúde hormonal"
 
-Somente APÓS o cliente responder o objetivo, apresente os produtos daquela categoria usando o catálogo fornecido.
-
-STACKS POR OBJETIVO (use internamente para buscar produtos — não mostre antes do cliente escolher):
-- Emagrecimento: Retatrutida, Tirzepatida, Semaglutida, CBL-514, MOTS-C, AOD-9604, Slupp-332, Ipamorelin (depois: Clembuterol, T3)
-- Ganho de massa muscular: Testosterona, Trembolona, Boldenona, Decanoato, GH, Ipamorelin, CJC-1295 (depois: outros anabolizantes) — NUNCA sugira Retatrutida ou Tirzepatida para esse objetivo
-- Recuperação/lesões: BPC-157, TB-500, Klow, Glow, GHK-Cu
-- Anti-aging/longevidade: Epitalon, SS-31, MOTS-C, GHK-Cu, Tesamorelin, 5-Amino-1MQ
-- Performance/resistência: GH, Testosterona, Ipamorelin, CJC-1295, Slupp-332, MOTS-C (depois: outros anabolizantes)
-- Saúde mitocondrial/energia: SS-31, MOTS-C, Slupp-332, 5-Amino-1MQ, Epitalon
-- Saúde hormonal: Testosterona, HCG, Anastrozol, Proviron
-
 MUDANÇA DE CONTEXTO — REGRA CRÍTICA:
-Quando o cliente mudar de assunto ou objetivo, IGNORE o contexto anterior e responda com base no NOVO tema. Se estava falando de Retatrutida e o cliente pergunta sobre ganho de massa, responda com Testosterona/GH/Trembolona — nunca continue no assunto anterior.
+Quando cliente mudar de assunto, ignore contexto anterior completamente.
 
-CANETAS ESPECIAIS (mencione sempre que relevante para o objetivo do cliente):
-- 🔥 *Caneta 240UI Eurogold* (Somatropina + Ipamorelin + GHRP6) — excelente custo-benefício para metabolismo geral: hipertrofia, queima de gordura, recuperação e bem-estar
-- 🔥 *Caneta 200 UI MyoMax Inibition - Alluvi* (CJC-1295 + HGH Frag + Folistatin) — excelente custo-benefício para composição corporal
+CANETAS ESPECIAIS:
+- 🔥 *Caneta 240UI Eurogold* (Somatropina + Ipamorelin + GHRP6) — metabolismo geral
+- 🔥 *Caneta 200 UI MyoMax Inibition - Alluvi* (CJC-1295 + HGH Frag + Folistatin) — composição corporal
 
-PREFERÊNCIAS DE MARCA (respeite esta ordem ao sugerir):
-- Retatrutida: Veltrane, ZPHC, Alluvi, Synedica (depois outras)
-- Tirzepatida: Lipoless, TG, Tirzec, Gluconex, Lipoland (depois outras)
-- Peptídeos: XL Peptides, Health Peptides, NeoPeptides (depois outras)
-- Hormônios: Landerlan, ZPHC, Cooper Pharma (depois outras)
+PREFERÊNCIAS DE MARCA:
+- Retatrutida: Veltrane, ZPHC, Alluvi, Synedica
+- Tirzepatida: Lipoless, TG, Tirzec, Gluconex, Lipoland
+- Peptídeos: XL Peptides, Health Peptides, NeoPeptides
+- Hormônios: Landerlan, ZPHC, Cooper Pharma
 - GH: do mais barato para o mais caro
 
-TIRZEPATIDA — INFORMAÇÃO CRUCIAL:
-Quando cliente perguntar por "tirzepatida 15mg" — EXPLIQUE que existem dois tipos:
-1. Tirzepatida 15mg REAL (apenas 15mg) — só a ZPHC tem essa opção, mais barata
-2. Tirzepatida "15mg" das marcas populares (TG, Tirzec, Lipoless, Gluconex, Lipoland) = na verdade são 60mg TOTAIS (4 ampolas x 15mg cada). O cliente está pagando pelo TOTAL de 60mg, não 15mg.
-Explique SEMPRE de forma didática como as dosagens funcionam:
-"Esta tirzepatida tem 60mg no total. Com a dose inicial recomendada de 2,5mg/semana, este kit dura aproximadamente 24 semanas (6 meses) de tratamento — um excelente custo-benefício!"
+TIRZEPATIDA — EXPLICAÇÃO OBRIGATÓRIA:
+"15mg" das marcas populares = 60mg TOTAIS (4 ampolas x 15mg). Explique sempre de forma didática com cálculo de duração.
 
-RETATRUTIDA — INFORMAÇÃO CRUCIAL:
-- Melhor custo-benefício: Veltrane 120mg (dividido em doses semanais, dura muito mais)
+RETATRUTIDA:
+- Melhor custo-benefício: Veltrane 120mg
 - Melhor qualidade: ZPHC, Alluvi, Synedica
-- Cliente quer barata: ZPHC 15mg (apenas 15mg reais)
-Explique sempre a relação dose/duração.
+- Explique relação dose/duração
 
-PROTOCOLOS (LIBERADO antes da venda — seja consultora, não robô):
-- Dê informações detalhadas, atualizadas e relevantes sobre mecanismo de ação, benefícios e protocolo
-- SEMPRE use doses MÍNIMAS eficazes (faz o produto durar mais — mencione isso)
-- SEMPRE inclua disclaimer sutil: "💡 *Dica profissional:* [informação] — Como qualquer suplemento avançado, o acompanhamento profissional potencializa os resultados."
-- Após explicar, sempre direcione para a venda: "Quer que eu te mostre as opções disponíveis?" ou "Posso gerar o link de pagamento agora!"
-- Protocolo personalizado detalhado → direcione para vitaflowoficial.com/pages/gerador-de-protocolo
+PROTOCOLOS:
+- Informações detalhadas sobre mecanismo, benefícios e protocolo
+- Doses MÍNIMAS eficazes com cálculo de duração do produto
+- Disclaimer: "💡 Como qualquer suplemento avançado, o acompanhamento profissional potencializa os resultados."
+- Após protocolo → direcione para venda ou vitaflowoficial.com/pages/gerador-de-protocolo
 
 ATACADO:
-- Mínimo R$3.000 em produtos da tabela especial de atacado
-- Preços variam diariamente pelo câmbio
-- Disponibilidade pode oscilar pelo volume e velocidade das vendas
-- Envie o link da tabela: ${ATACADO_PDF}
-- "Os preços e disponibilidade da tabela podem variar. Para fechar um pedido atacado, entre em contato com nosso time."
-- Depois escalone para humano: [ESCALAR_HUMANO]
+- Mínimo R$3.000 | Preços variam pelo câmbio | Link: ${ATACADO_PDF}
+- Escalone: [ESCALAR_HUMANO]
 
 CUPONS E DESCONTOS:
-- Cliente tem cupom: "Ótimo! Basta aplicar seu cupom diretamente no checkout em *vitaflowoficial.com* — ou se preferir, posso te conectar com um atendente para finalizar com o cupom. 😊"
-- Cliente pede desconto: pergunte se é a primeira compra
-  - Se SIM: "Ótimo! Me passa seu nome e CPF que vou verificar no sistema 😊"
-  - Após receber: aguarde 2 segundos e responda: "Confirmado! ✅ Como é sua primeira compra na VitaFlow, você tem direito a *5% de desconto em todos os produtos* (não inclui frete). Já posso gerar seu link com o desconto aplicado! Qual produto você quer?"
-  - Se NÃO: "Entendo! Por enquanto nosso programa de desconto é exclusivo para primeira compra. Mas temos ótimas promoções — quer ver nossa coleção de Promoções? 🔥"
+- Com cupom: aplicar em vitaflowoficial.com ou conectar com atendente
+- Pede desconto — primeira compra: peça nome e CPF → "Confirmado! 5% de desconto em produtos (não inclui frete)"
+- Não primeira compra: sem desconto, ofereça promoções
 
-CATÁLOGO — COMO LISTAR PRODUTOS:
-- Use o catálogo fornecido no contexto
-- Ordene SEMPRE do menor para o maior em mg/ui
+CATÁLOGO:
+- Ordene do menor para o maior em mg/ui
 - Formato: emoji *Nome* — R$ preço
-- Emojis: 1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣8️⃣9️⃣🔟 depois 11. 12. etc
-- Linha em branco entre cada produto
-- Após listar: faça uma observação consultora sobre os produtos (qual oferece melhor custo-benefício, qual é mais recomendado para o objetivo do cliente)
-- NUNCA invente produtos ou preços — use SOMENTE o catálogo fornecido
-- NUNCA use ## ou ### ou qualquer markdown de título. O WhatsApp não renderiza — use apenas *negrito* com asteriscos simples
+- Emojis: 1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣8️⃣9️⃣🔟 depois 11. 12...
+- Linha em branco entre produtos
+- Comente sobre custo-benefício após listar
+- NUNCA use ## ou ### — use apenas *negrito*
 
-BUSCA POR MARCA:
-- Reconheça abreviações: cooper=Cooper Pharma, lander=Landerlan, king=King Pharma, alpha=Alpha Pharma, xl=XL Peptides, neuro=Neuroceptix, neo=NeoPeptides, alluvi=Alluvi Healthcare, euro=Eurogold, veltrane=Veltrane, lipoless=Lipoless, tirzec=Tirzec, gluconex=Gluconex, lipoland=Lipoland, tg=TG, zphc=ZPHC, health=Health Peptides, muscle=Muscle Labs, royal=Royal Pharmaceuticals
-
-LOGÍSTICA (pedidos já realizados):
-"Para acompanhar sua entrega, nosso setor de logística te atende diretamente! 📦
-WhatsApp: *+44 7537 155718*
-Leve: número do pedido, CPF e nome completo. Eles resolvem rapidinho! 💪"
-
-ESCALAÇÃO: Se cliente quiser falar com humano: [ESCALAR_HUMANO]
+LOGÍSTICA:
+"Para rastrear, nosso setor de logística te atende diretamente! 📦
+👉 *wa.me/447537155718*
+Leve: número do pedido, CPF e nome. Eles resolvem rapidinho! 💪"
 
 FRETE:
-- Pergunte estado e modalidade ANTES de gerar link
-- Modalidades: PAC, SEDEX, Transportadora (Jadlog, J&T Express, Loggi)
-- Recomende Transportadora — seguro grátis incluso (cobre apreensão/extravio). Correios NÃO têm seguro.
+- Recomende Transportadora — seguro grátis (cobre apreensão/extravio)
 - Despacho: até 48h úteis após pagamento
-- Prazos ESTIMADOS (a partir do despacho): Sudeste 2-5d | Sul 3-5d | Centro-Oeste 4-6d | Nordeste 5-8d | Norte 7-10d
 - Tabela:
   RJ: PAC R$45|SEDEX R$60|Transp R$70 | SP: PAC R$45|SEDEX R$60|Transp R$55
   MG: PAC R$45|SEDEX R$70|Transp R$70 | ES: PAC R$45|SEDEX R$70|Transp R$70
@@ -151,38 +142,78 @@ FRETE:
   AC: PAC R$130|SEDEX R$110|Transp R$150
 
 PAGAMENTO:
-- Quando tiver produto + frete: [GERAR_PAGAMENTO:nome produto + Frete ESTADO MODALIDADE:valor total]
-- Só gere quando cliente confirmar que quer comprar
-- Após gerar link: "Pague e me envie o comprovante! 📸 (print ou foto)"
+- [GERAR_PAGAMENTO:produto + Frete ESTADO MODALIDADE:valor total]
+- Só gere quando cliente confirmar compra
+- NUNCA mencione "link de pagamento" antes de o cliente ter escolhido um produto específico
+- Sequência obrigatória: 1) cliente escolhe produto → 2) pergunta estado/modalidade frete → 3) confirma total → 4) gera link
+- Se cliente perguntar só sobre frete sem produto: informe os valores e pergunte o que ele quer pedir
 
 PÓS-VENDA:
-- Qualquer confirmação de pagamento ou envio de imagem = pagamento confirmado
+- Imagem/comprovante = pagamento confirmado
 - Colete: NOME, CPF, TELEFONE, EMAIL, ENDEREÇO, COMPLEMENTO, BAIRRO, CIDADE, ESTADO, CEP
-- Cliente pode mandar tudo de uma vez em linhas separadas — extraia cada campo
-- Linha com @ e ponto = email | 11 dígitos numéricos = CPF ou telefone | rua/avenida/estrada = endereço
-- Email maiúsculo é válido | CPF pode ser "nao_informado" se recusar 2x | complemento "sem complemento" se não tiver
-- Com TODOS dados: [DADOS_CLIENTE:nome|cpf|telefone|email|endereco|complemento|bairro|cidade|estado|cep|produto|valor]
-- NUNCA diga "pedido finalizado" sem disparar [DADOS_CLIENTE] primeiro
+- [DADOS_CLIENTE:nome|cpf|telefone|email|endereco|complemento|bairro|cidade|estado|cep|produto|valor]
+- NUNCA diga "finalizado" sem disparar [DADOS_CLIENTE]
 
+ESCALAÇÃO: [ESCALAR_HUMANO]
 SITE: vitaflowoficial.com | INSTAGRAM: @vitaflow.py`;
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 function limparTagsXML(texto) {
   return texto.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '').replace(/<[^>]+>/g, '').trim();
 }
-
 function normalizarTexto(texto) {
   return (texto || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ç/g, 'c').trim();
 }
-
 function expandirMarca(termo) {
   const norm = normalizarTexto(termo);
   for (const [abrev, nome] of Object.entries(MARCAS)) {
-    if (norm === abrev || norm.includes(abrev)) {
-      return nome;
-    }
+    if (norm === abrev || norm.includes(abrev)) return nome;
   }
   return termo;
+}
+function singularizar(palavra) {
+  if (palavra.endsWith('idas')) return palavra.slice(0, -1);
+  if (palavra.endsWith('idos')) return palavra.slice(0, -1);
+  if (palavra.endsWith('oes')) return palavra.slice(0, -2) + 'ao';
+  if (palavra.endsWith('ais')) return palavra.slice(0, -2) + 'al';
+  if (palavra.endsWith('eis')) return palavra.slice(0, -2) + 'el';
+  if (palavra.length > 4 && palavra.endsWith('s')) return palavra.slice(0, -1);
+  return palavra;
+}
+
+const STOP_BUSCA = new Set([
+  'voce','voces','tem','para','quero','qual','como','esse','esta','uma','que',
+  'com','dos','das','marca','produto','linha','sobre','ver','mostrar','quais',
+  'mais','tudo','seus','suas','minha','meu','comprar','preciso','gostaria','saber',
+  'todos','todas','valores','preco','precos','lista','tabela','poderia','me','de',
+  'do','da','os','as','um','no','na','por','ate','so','ja','nao','sim','ok',
+  'ola','oi','protocolo','objetivo','ajuda','o','a','e','em','ou','se','ao',
+  'ser','ter','ir','ver','sao','vende','vendem','custa','custo','valor',
+  'opcao','opcoes','info','fala','mostra','passa','ha','la','ai','te','lhe',
+  'nos','show','boa','bom','dia','tarde','noite','bem','certo','ver','olhar',
+  'interessado','interessada','quero','busco','procuro','buscando'
+]);
+
+function extrairTermoBusca(mensagem) {
+  const norm = normalizarTexto(mensagem);
+  const semFrases = norm
+    .replace(/quero ver|quero saber|quero comprar|quanto custa|qual o preco|qual o valor|voce tem|tem disponivel|me mostra|me fala|me passa|o preco de|preco do|preco da|ver os|ver as|quais sao|qual e o|qual e a|informacoes sobre|info sobre|pode me falar|fala sobre|me conta sobre|me indica|me recomenda|o que e|o que sao|como funciona|como usar|pra que serve|para que serve/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  const palavras = semFrases.split(/\s+/).filter(p => p.length > 2 && !STOP_BUSCA.has(p));
+  return palavras.join(' ').trim();
+}
+
+// ── Detecta objetivo da mensagem ──────────────────────────────────────────────
+function detectarObjetivo(mensagem) {
+  const norm = normalizarTexto(mensagem);
+  for (const [objetivo, palavras] of Object.entries(OBJETIVO_PALAVRAS)) {
+    if (palavras.some(p => norm.includes(p))) return objetivo;
+  }
+  // Detecta objetivo pelo nome do produto
+  for (const [objetivo, produtos] of Object.entries(STACKS)) {
+    if (produtos.some(p => norm.includes(p))) return objetivo;
+  }
+  return null;
 }
 
 // ── Firebase ──────────────────────────────────────────────────────────────────
@@ -194,7 +225,6 @@ async function getHistory(sessionId) {
     return Array.isArray(data) ? data : [];
   } catch { return []; }
 }
-
 async function saveHistory(sessionId, history) {
   try {
     const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
@@ -205,12 +235,61 @@ async function saveHistory(sessionId, history) {
     });
   } catch {}
 }
-
 async function deleteHistory(sessionId) {
   try {
     const key = sessionId.replace(/[^a-zA-Z0-9]/g, '_');
     await fetch(`${FIREBASE_URL}/vitaflow_sessions/${key}.json`, { method: 'DELETE' });
   } catch {}
+}
+
+// ── Promoções programadas ─────────────────────────────────────────────────────
+async function carregarPromocoes() {
+  try {
+    const res = await fetch(`${FIREBASE_URL}/vitaflow_promocoes.json`);
+    const data = await res.json();
+    if (!data) return '';
+    const hoje = new Date().toISOString().slice(0, 10);
+    const ativas = Object.values(data).filter(p =>
+      p && p.ativo && (!p.inicio || p.inicio <= hoje) && (!p.fim || p.fim >= hoje)
+    );
+    if (!ativas.length) return '';
+    const lista = ativas.map(p => `• *${p.titulo}*: ${p.descricao}`).join('\n');
+    return `\n\nPROMOÇÕES ATIVAS AGORA (mencione quando relevante):\n${lista}`;
+  } catch { return ''; }
+}
+
+// ── Aprendizado simples ───────────────────────────────────────────────────────
+async function salvarAprendizado(pergunta, produto, valor) {
+  try {
+    const ts = Date.now();
+    await fetch(`${FIREBASE_URL}/vitaflow_aprendizado/${ts}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pergunta: normalizarTexto(pergunta), produto, valor, ts })
+    });
+  } catch {}
+}
+
+async function carregarAprendizado(mensagem) {
+  try {
+    const res = await fetch(`${FIREBASE_URL}/vitaflow_aprendizado.json`);
+    const data = await res.json();
+    if (!data) return '';
+    const norm = normalizarTexto(mensagem);
+    const palavrasMens = norm.split(/\s+/).filter(p => p.length > 3 && !STOP_BUSCA.has(p));
+    if (!palavrasMens.length) return '';
+    const matches = Object.values(data)
+      .filter(r => r && r.pergunta && r.produto)
+      .filter(r => {
+        const palavrasR = r.pergunta.split(/\s+/).filter(p => p.length > 3);
+        return palavrasMens.filter(p => palavrasR.includes(p)).length >= 2;
+      })
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, 3);
+    if (!matches.length) return '';
+    const sugestoes = matches.map(m => `"${m.produto}"`).join(', ');
+    return `\n\nAPRENDIZADO (produtos que converteram para perguntas similares): ${sugestoes} — considere priorizar esses ao sugerir`;
+  } catch { return ''; }
 }
 
 // ── Cache Firebase (coleções) ─────────────────────────────────────────────────
@@ -224,30 +303,12 @@ const MAPA_COLECOES = {
   'promocao': 'promocoes', 'promocoes': 'promocoes', 'promo': 'promocoes', 'oferta': 'promocoes',
   'sarm': 'outros', 'sarms': 'outros', 'outros': 'outros',
 };
-
 async function buscarColecaoCache(handle) {
   try {
     const res = await fetch(`${FIREBASE_URL}/vitaflow_cache/colecoes/${handle}.json`);
     const data = await res.json();
     return data?.dados || null;
   } catch { return null; }
-}
-
-function formatarCatalogo(dados) {
-  return dados.split('\n').filter(Boolean)
-    .sort((a, b) => {
-      const getMg = s => {
-        const m = s.match(/(\d+(?:\.\d+)?)\s*(?:mg|ui|ml)/i);
-        return m ? parseFloat(m[1]) : 9999;
-      };
-      return getMg(a) - getMg(b);
-    })
-    .map((linha, i) => {
-      const emojis = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-      const emoji = i < 10 ? emojis[i] : `${i+1}.`;
-      const [nome, preco] = linha.split('|');
-      return preco ? `${emoji} *${nome.trim()}* — R$ ${preco.trim()}` : `${emoji} *${nome.trim()}*`;
-    }).join('\n\n');
 }
 
 // ── Shopify ───────────────────────────────────────────────────────────────────
@@ -283,57 +344,99 @@ async function buscarShopify(termo) {
   } catch { return null; }
 }
 
-// ── Correções ortográficas comuns ────────────────────────────────────────────
+// ── Busca todos os produtos de um objetivo ────────────────────────────────────
+async function buscarPorObjetivo(objetivo) {
+  const termos = STACKS[objetivo] || [];
+  const resultados = new Set();
+  for (const termo of termos.slice(0, 5)) {
+    const r = await buscarShopify(termo);
+    if (r) r.split('\n').filter(Boolean).forEach(l => resultados.add(l));
+  }
+  return resultados.size > 0 ? [...resultados].join('\n') : null;
+}
+
+// ── Correções ortográficas ────────────────────────────────────────────────────
 const CORRECOES = {
   'retratutida': 'retatrutida', 'retatrutide': 'retatrutida', 'retatrutuda': 'retatrutida',
   'retratrutida': 'retatrutida', 'retatutida': 'retatrutida', 'retrutida': 'retatrutida',
   'tirzetapida': 'tirzepatida', 'tirzepatide': 'tirzepatida', 'tirzepetida': 'tirzepatida',
-  'tirzapatida': 'tirzepatida', 'tirzipatida': 'tirzepatida', 'tizepatida': 'tirzepatida',
-  'semalgutida': 'semaglutida', 'semaglitude': 'semaglutida', 'semagutida': 'semaglutida',
-  'ipamorelina': 'ipamorelin', 'ipamorelim': 'ipamorelin', 'ipamoreline': 'ipamorelin',
-  'testosterona': 'testosterona', 'testoterona': 'testosterona', 'testorona': 'testosterona',
-  'trembolona': 'trembolona', 'trembolana': 'trembolona', 'trenbolona': 'trembolona',
-  'boldenona': 'boldenona', 'boldonona': 'boldenona',
+  'tirzapatida': 'tirzepatida', 'tizepatida': 'tirzepatida',
+  'semalgutida': 'semaglutida', 'semagutida': 'semaglutida',
+  'ipamorelina': 'ipamorelin', 'ipamorelim': 'ipamorelin',
+  'testoterona': 'testosterona', 'testorona': 'testosterona',
+  'trembolana': 'trembolona', 'trenbolona': 'trembolona',
   'bpc157': 'bpc-157', 'bpc 157': 'bpc-157',
   'tb500': 'tb-500', 'tb 500': 'tb-500',
   'ghk cu': 'ghk-cu', 'ghkcu': 'ghk-cu',
-  'epitalon': 'epitalon', 'epitelon': 'epitalon', 'epithalon': 'epitalon',
+  'epitelon': 'epitalon', 'epithalon': 'epitalon',
   'cjc1295': 'cjc-1295', 'cjc 1295': 'cjc-1295',
+  'cagrilintida': 'cagrilintide',
 };
 
 function corrigirOrtografia(texto) {
   const norm = normalizarTexto(texto);
   for (const [errado, correto] of Object.entries(CORRECOES)) {
-    if (norm.includes(errado)) {
-      return texto.toLowerCase().replace(new RegExp(errado, 'gi'), correto);
-    }
+    if (norm.includes(errado)) return texto.toLowerCase().replace(new RegExp(errado, 'gi'), correto);
   }
   return texto;
 }
 
+// ── Busca melhorada com fallback por objetivo ─────────────────────────────────
 async function buscarProduto(mensagem) {
   mensagem = corrigirOrtografia(mensagem);
-  const norm = normalizarTexto(mensagem);
 
+  // 1. Mensagem completa
   let resultado = await buscarShopify(mensagem);
-  if (resultado) return resultado;
+  if (resultado) return { produtos: resultado, fallback: false };
 
+  // 2. Termo extraído
+  const termo = extrairTermoBusca(mensagem);
+  if (termo && termo !== normalizarTexto(mensagem) && termo.length > 1) {
+    resultado = await buscarShopify(termo);
+    if (resultado) return { produtos: resultado, fallback: false };
+  }
+
+  // 3. Expande marca
   const marcaExpandida = expandirMarca(mensagem);
   if (marcaExpandida !== mensagem) {
     resultado = await buscarShopify(marcaExpandida);
-    if (resultado) return resultado;
+    if (resultado) return { produtos: resultado, fallback: false };
   }
 
-  const stopWords = new Set(['voce', 'tem', 'para', 'quero', 'qual', 'como', 'esse', 'esta', 'uma', 'que', 'com', 'dos', 'das', 'marca', 'produto', 'linha', 'sobre', 'ver', 'mostrar', 'quais', 'mais', 'tudo', 'seus', 'suas', 'minha', 'meu', 'comprar', 'preciso', 'gostaria', 'saber', 'todos', 'todas', 'valores', 'preco', 'precos', 'lista', 'tabela', 'quero', 'gostaria', 'poderia', 'me', 'de', 'do', 'da', 'os', 'as', 'um', 'no', 'na', 'por', 'ate', 'so', 'ja', 'nao', 'sim', 'ok', 'ola', 'oi', 'protocolo', 'objetivo', 'ajuda']);
-  const palavras = norm.split(/\s+/).filter(p => p.length > 2 && !stopWords.has(p));
-
+  // 4. Palavras individuais + singular
+  const palavras = (termo || normalizarTexto(mensagem)).split(/\s+/).filter(p => p.length > 2 && !STOP_BUSCA.has(p));
   for (const palavra of palavras) {
-    const marcaExp = expandirMarca(palavra);
-    resultado = await buscarShopify(marcaExp);
-    if (resultado) return resultado;
+    resultado = await buscarShopify(expandirMarca(palavra));
+    if (resultado) return { produtos: resultado, fallback: false };
+    const sing = singularizar(palavra);
+    if (sing !== palavra) {
+      resultado = await buscarShopify(sing);
+      if (resultado) return { produtos: resultado, fallback: false };
+    }
   }
 
-  return null;
+  // 5. Fallback: busca por objetivo
+  const objetivo = detectarObjetivo(mensagem);
+  if (objetivo) {
+    resultado = await buscarPorObjetivo(objetivo);
+    if (resultado) return { produtos: resultado, fallback: true, objetivo };
+  }
+
+  return { produtos: null, fallback: false };
+}
+
+// ── Formata lista de produtos ─────────────────────────────────────────────────
+function formatarLista(produtos) {
+  const linhas = produtos.split('\n').filter(Boolean).sort((a, b) => {
+    const getMg = s => { const m = s.match(/(\d+(?:\.\d+)?)\s*(?:mg|ui|ml)/i); return m ? parseFloat(m[1]) : 9999; };
+    return getMg(a) - getMg(b);
+  });
+  const emojis = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+  return linhas.map((linha, i) => {
+    const [nome, preco] = linha.split('|');
+    const emoji = i < 10 ? emojis[i] : `${i+1}.`;
+    return preco ? `${emoji} *${nome.trim()}* — R$ ${preco.trim()}` : `${emoji} *${nome.trim()}*`;
+  }).join('\n\n');
 }
 
 // ── Outros serviços ───────────────────────────────────────────────────────────
@@ -352,34 +455,28 @@ async function gerarLinkInfinitePay(produto, valor) {
     return data?.url || null;
   } catch { return null; }
 }
-
 async function gerarNumeroPedido() {
   try {
     const res = await fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'gerar_numero', tipo: 'A' })
     });
     const data = await res.json();
     return data.order_nsu || null;
   } catch { return null; }
 }
-
 async function salvarPedidoGAS(pedido) {
   try {
     await fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(pedido)
     });
   } catch {}
 }
-
 async function enviarTelegram(texto) {
   try {
     await fetch('https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: '8660563352', text: texto })
     });
   } catch {}
@@ -392,7 +489,6 @@ exports.handler = async (event) => {
     'Access-Control-Allow-Headers': 'Content-Type',
     'Content-Type': 'application/json',
   };
-
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
 
@@ -411,18 +507,21 @@ exports.handler = async (event) => {
 
     if (!mensagem && !body.type) return { statusCode: 400, headers, body: JSON.stringify({ error: 'mensagem obrigatoria' }) };
 
-    const history = await getHistory(sessionId);
+    const [history, promocoes] = await Promise.all([
+      getHistory(sessionId),
+      carregarPromocoes()
+    ]);
     const norm = normalizarTexto(mensagem);
 
-    // ── MÍDIA: comprovante de pagamento ───────────────────────────────────────
+    // ── MÍDIA ─────────────────────────────────────────────────────────────────
     const ehMidia = ['image','video','document','audio','sticker'].includes(body.type) ||
       ['', '[image]', '[video]', '[document]', '[audio]', '[sticker]'].includes(mensagem);
     if (ehMidia && history.length > 0) {
-      history.push({ role: 'user', content: 'O cliente enviou o comprovante de pagamento por imagem/mídia. Considere como pagamento confirmado e solicite os dados de entrega.' });
+      history.push({ role: 'user', content: 'O cliente enviou o comprovante de pagamento. Considere como pagamento confirmado e solicite os dados de entrega.' });
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 600, system: SYSTEM_PROMPT, messages: history })
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 600, system: SYSTEM_PROMPT + promocoes, messages: history })
       });
       const d = await res.json();
       const reply = limparTagsXML(d.content?.[0]?.text || 'Comprovante recebido! ✅ Me passa seus dados para o envio.');
@@ -431,23 +530,19 @@ exports.handler = async (event) => {
       return respond(reply);
     }
 
-    // ── ATENDENTE HUMANO ──────────────────────────────────────────────────────
-    const pedidoHumano = ['atendente', 'vendedor', 'humano', 'pessoa real', 'falar com alguem', 'falar com pessoa', 'suporte humano'];
-    if (pedidoHumano.some(p => norm.includes(p))) {
+    // ── HUMANO ────────────────────────────────────────────────────────────────
+    if (['atendente', 'vendedor', 'humano', 'pessoa real', 'falar com alguem', 'falar com pessoa'].some(p => norm.includes(p))) {
       await enviarTelegram(`🔔 CLIENTE QUER HUMANO\n📱 ${sessionId}\n💬 ${mensagem}`);
       await deleteHistory(sessionId);
-      return { statusCode: 200, headers, body: JSON.stringify({ resposta: `Claro! Vou te transferir para um de nossos atendentes agora. 😊\nAguarde um momento!`, resposta2: '', resposta3: '', transferir: true }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ resposta: `Claro! Vou te transferir para um de nossos atendentes agora. 😊`, resposta2: '', resposta3: '', transferir: true }) };
     }
 
-    // ── BYPASS: COLEÇÕES DO CACHE ─────────────────────────────────────────────
+    // ── COLEÇÃO CACHE ─────────────────────────────────────────────────────────
     const palavras = norm.split(/\s+/).filter(Boolean);
-    let handleColecao = null;
-    let nomeColecao = null;
-
+    let handleColecao = null, nomeColecao = null;
     if (palavras.length <= 5 && palavras.some(p => p === 'gh') && !norm.match(/gh[a-z]/)) {
       handleColecao = 'gh'; nomeColecao = 'GH';
     }
-
     if (!handleColecao && palavras.length <= 6) {
       for (const [palavra, handle] of Object.entries(MAPA_COLECOES)) {
         if (norm.includes(palavra)) {
@@ -457,37 +552,24 @@ exports.handler = async (event) => {
         }
       }
     }
-
     if (handleColecao) {
       const dados = await buscarColecaoCache(handleColecao);
       if (dados) {
-        const total = dados.split('\n').filter(Boolean).length;
-        const LIMITE = 50;
-        const linhas = dados.split('\n').filter(Boolean)
-          .sort((a, b) => {
-            const getMg = s => { const m = s.match(/(\d+(?:\.\d+)?)\s*(?:mg|ui|ml)/i); return m ? parseFloat(m[1]) : 9999; };
-            return getMg(a) - getMg(b);
-          });
-        const exibir = linhas.slice(0, LIMITE);
-        const listaFmt = exibir.map((linha, i) => {
-          const emojis = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-          const emoji = i < 10 ? emojis[i] : `${i+1}.`;
-          const [nome, preco] = linha.split('|');
-          return preco ? `${emoji} *${nome.trim()}* — R$ ${preco.trim()}` : `${emoji} *${nome.trim()}*`;
-        }).join('\n\n');
-        const rodape = total > LIMITE ? `\n\n_Mostrando ${LIMITE} de ${total}. Me diga o nome ou marca para buscar mais!_` : '';
-        const reply = `Aqui estão os produtos de *${nomeColecao}* disponíveis! 💪\n\n${listaFmt}${rodape}\n\nQual te interessa? Me diz o nome ou número! 🚀`;
+        const linhas = dados.split('\n').filter(Boolean).sort((a, b) => {
+          const getMg = s => { const m = s.match(/(\d+(?:\.\d+)?)\s*(?:mg|ui|ml)/i); return m ? parseFloat(m[1]) : 9999; };
+          return getMg(a) - getMg(b);
+        }).slice(0, 50);
+        const lista = formatarLista(linhas.join('\n'));
+        const reply = `Aqui estão os produtos de *${nomeColecao}* disponíveis! 💪\n\n${lista}\n\nQual te interessa? Me diz o nome ou número! 🚀`;
         history.push({ role: 'user', content: mensagem });
         history.push({ role: 'assistant', content: reply });
         await saveHistory(sessionId, history);
-        console.log('CACHE HIT:', handleColecao);
         return respond(reply);
       }
     }
 
-    // ── BYPASS: TABELA DE CATEGORIAS ──────────────────────────────────────────
-    const pedindoCategorias = ['tabela de produto', 'tabela completa', 'ver categoria', 'quais categoria', 'lista de produto', 'o que voce vende', 'o que voces vendem', 'catalogo', 'o que tem', 'o que voce tem'];
-    if (pedindoCategorias.some(p => norm.includes(p))) {
+    // ── TABELA DE CATEGORIAS ──────────────────────────────────────────────────
+    if (['tabela de produto', 'tabela completa', 'ver categoria', 'quais categoria', 'lista de produto', 'o que voce vende', 'catalogo', 'o que tem'].some(p => norm.includes(p))) {
       const reply = `Temos as seguintes categorias! 📋\n\n1️⃣ *Mais Vendidos*\n2️⃣ *Peptídeos*\n3️⃣ *Hormônios*\n4️⃣ *GH*\n5️⃣ *Promoções*\n6️⃣ *Outros*\n\nQual quer ver? Me diz o número ou nome! 😊`;
       history.push({ role: 'user', content: mensagem });
       history.push({ role: 'assistant', content: reply });
@@ -495,63 +577,72 @@ exports.handler = async (event) => {
       return respond(reply);
     }
 
-    // ── BUSCA DE PRODUTO NO SHOPIFY ───────────────────────────────────────────
-    const ehSaudacao = ['bom dia', 'boa tarde', 'boa noite', 'oi', 'ola', 'opa', 'eai', 'e ai', 'hey', 'hi', 'hello', 'tudo bem', 'tudo bom', 'como vai', 'bom'].some(p => norm === p || norm.startsWith(p + ' ') || norm.startsWith(p + '!'));
+    // ── DECIDE SE BUSCA NO SHOPIFY ────────────────────────────────────────────
+    const ehSaudacao = ['bom dia','boa tarde','boa noite','oi','ola','opa','eai','e ai','hey','hi','hello','tudo bem','tudo bom','como vai'].some(p => norm === p || norm.startsWith(p + ' ') || norm.startsWith(p + '!'));
 
+    // Contextual conservador: só mensagens claramente sem produto
     const ehContextual = history.length > 0 && (
       /^[0-9]{1,2}$/.test(norm) ||
-      ['qual', 'quanto', 'como usar', 'diferenca', 'melhor', 'pior', 'mais barat', 'mais caro', 'quero esse', 'quero essa', 'pode ser', 'pagar', 'sim', 'nao', 'ok', 'combinado', 'fechado', 'paguei', 'fiz', 'feito', 'confirmado', 'obrigado', 'obrigada', 'valeu', 'entendi', 'certo', 'perfeito', 'exato', 'isso mesmo', 'esse mesmo', 'gerar link', 'gerar pagamento', 'quero comprar', 'fecha', 'bora', 'vai', 'pode'].some(p => norm.includes(p))
+      ['paguei','fiz o pix','transferi','pix feito','obrigado','obrigada','valeu',
+       'combinado','fechado','confirmado','gerar link','gerar pagamento',
+       'isso mesmo','esse mesmo'].some(p => norm === p || norm === p + '!' || norm === p + '.')
     );
-
-    const ehProtocolo = ['protocolo', 'como usar', 'dosagem', 'como tomar', 'como aplicar', 'efeito', 'para que serve', 'beneficio', 'funciona', 'objetivo', 'emagre', 'emagrecer', 'perder peso', 'ganhar massa', 'hipertrofia', 'anti-aging', 'envelhecimento', 'performance', 'recuperacao', 'stack', 'ciclo', 'combinar', 'junto com'].some(p => norm.includes(p));
 
     let contextoProdutos = '';
 
-    if (!ehSaudacao && !ehContextual && !ehProtocolo) {
-      const produtos = await buscarProduto(mensagem);
-      console.log('BUSCA:', produtos ? 'encontrou' : 'não encontrou');
+    if (!ehSaudacao && !ehContextual) {
+      // Busca paralela: produto + aprendizado
+      const [buscaResult, aprendizado] = await Promise.all([
+        buscarProduto(mensagem),
+        carregarAprendizado(mensagem)
+      ]);
+
+      const { produtos, fallback, objetivo } = buscaResult;
+      console.log('BUSCA:', produtos ? `encontrou (fallback=${fallback})` : 'não encontrou', objetivo || '');
 
       if (produtos) {
-        const linhas = produtos.split('\n').filter(Boolean).sort((a, b) => {
-          const getMg = s => { const m = s.match(/(\d+(?:\.\d+)?)\s*(?:mg|ui|ml)/i); return m ? parseFloat(m[1]) : 9999; };
-          return getMg(a) - getMg(b);
-        });
-        const emojis = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-        const lista = linhas.map((linha, i) => {
-          const [nome, preco] = linha.split('|');
-          const emoji = i < 10 ? emojis[i] : `${i+1}.`;
-          return preco ? `${emoji} *${nome.trim()}* — R$ ${preco.trim()}` : `${emoji} *${nome.trim()}*`;
-        }).join('\n\n');
-        contextoProdutos = `\n\nCATÁLOGO ENCONTRADO (use estes dados para responder):\n${lista}`;
+        const lista = formatarLista(produtos);
+        if (fallback && objetivo) {
+          // Produto pedido não disponível, mostrando alternativas do mesmo objetivo
+          const nomeObjetivo = { emagrecimento: 'emagrecimento', massa: 'ganho de massa', recuperacao: 'recuperação', antiaging: 'anti-aging', performance: 'performance', mitocondrial: 'saúde mitocondrial', hormonal: 'saúde hormonal' }[objetivo] || objetivo;
+          contextoProdutos = `\n\nATENÇÃO: O produto específico pedido pelo cliente não está disponível no momento. USE SOMENTE os produtos abaixo (disponíveis para ${nomeObjetivo}) e explique que são as melhores alternativas disponíveis para o mesmo objetivo. NUNCA mencione o produto indisponível como se estivesse disponível:\n${lista}`;
+        } else {
+          contextoProdutos = `\n\nCATÁLOGO DISPONÍVEL (use SOMENTE estes — NUNCA invente preços ou produtos além destes):\n${lista}`;
+        }
       } else {
-        contextoProdutos = `\n\nCATÁLOGO: Nenhum produto encontrado para "${mensagem}". Informe ao cliente que não encontrou e sugira ver categorias ou acessar vitaflowoficial.com. NÃO invente produtos.`;
+        contextoProdutos = `\n\nCATÁLOGO: Nenhum produto disponível encontrado para "${mensagem}". Informe ao cliente que não temos esse produto no momento, mas ofereça ver outras categorias ou acessar vitaflowoficial.com. NUNCA invente produtos ou preços.`;
       }
+
+      if (aprendizado) contextoProdutos += aprendizado;
     }
 
-    // ── SONNET — responde com inteligência ───────────────────────────────────
+    // ── CLAUDE SONNET ─────────────────────────────────────────────────────────
     history.push({ role: 'user', content: mensagem });
 
-    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        system: SYSTEM_PROMPT + contextoProdutos,
-        messages: history
-      })
-    });
+    const systemFinal = SYSTEM_PROMPT + promocoes + contextoProdutos;
 
-    const claudeData = await claudeRes.json();
-    if (claudeData.error || !claudeData.content) {
-      console.error('ERRO CLAUDE:', JSON.stringify(claudeData));
-      await new Promise(r => setTimeout(r, 1000));
-      return respond('Desculpe, tive um problema técnico. Pode repetir?');
+    let claudeData, reply;
+    try {
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 2000, system: systemFinal, messages: history })
+      });
+      claudeData = await claudeRes.json();
+      if (claudeData.error || !claudeData.content) throw new Error('Claude error');
+      reply = limparTagsXML(claudeData.content[0].text || '');
+    } catch(e) {
+      // Fallback garantido — nunca congela
+      console.error('ERRO CLAUDE:', e.message);
+      reply = 'Desculpe o delay! 😊 Pode me contar melhor o que está buscando? Estou aqui para te ajudar!';
+      history.push({ role: 'assistant', content: reply });
+      await saveHistory(sessionId, history);
+      return respond(reply);
     }
 
-    let reply = limparTagsXML(claudeData.content[0].text || '');
     console.log('SONNET:', reply.substring(0, 150));
 
+    // ── ESCALAR ───────────────────────────────────────────────────────────────
     const escalar = reply.includes('[ESCALAR_HUMANO]');
     reply = reply.replace('[ESCALAR_HUMANO]', '').trim();
     if (escalar) {
@@ -560,23 +651,20 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ resposta: reply || 'Vou te transferir para um atendente! 😊', resposta2: '', resposta3: '', transferir: true }) };
     }
 
+    // ── GERAR PAGAMENTO ───────────────────────────────────────────────────────
     const matchPag = reply.match(/\[GERAR_PAGAMENTO:(.+?):(\d+\.?\d*)\]/);
     if (matchPag) {
       reply = reply.replace(matchPag[0], '').trim();
       const nomeProd = matchPag[1];
       const valor = parseFloat(matchPag[2]);
       const link = await gerarLinkInfinitePay(nomeProd, valor);
-
       try {
         const key = `pending_${sessionId.replace(/[^a-zA-Z0-9]/g, '_')}`;
-        const subscriberId = body.subscriber_id || body.id || null;
         await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${key}.json`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: sessionId, subscriber_id: subscriberId, produto: nomeProd, valor, ts: Date.now() })
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: sessionId, subscriber_id: body.subscriber_id || null, produto: nomeProd, valor, ts: Date.now() })
         });
       } catch {}
-
       reply += link
         ? `\n\n💳 *Link de pagamento:*\n${link}\n\nPague e me envie o comprovante! 📸 _(print ou foto)_`
         : `\n\nAcesse: vitaflowoficial.com`;
@@ -585,6 +673,7 @@ exports.handler = async (event) => {
       return respond(reply);
     }
 
+    // ── DADOS CLIENTE (venda concluída) ───────────────────────────────────────
     const matchDados = reply.match(/\[DADOS_CLIENTE:(.+?)\]/);
     if (matchDados) {
       reply = reply.replace(matchDados[0], '').trim();
@@ -597,6 +686,10 @@ exports.handler = async (event) => {
       const nomeProduto = produto || 'Pedido via Athena';
       const numeroPedido = await gerarNumeroPedido();
 
+      // Salva aprendizado: qual pergunta levou à venda
+      const ultimaPergunta = history.filter(h => h.role === 'user').slice(-3).map(h => h.content).join(' ');
+      await salvarAprendizado(ultimaPergunta, nomeProduto, valorReais);
+
       if (numeroPedido) {
         await salvarPedidoGAS({
           order_nsu: numeroPedido, paid_amount: valorCentavos, capture_method: 'whatsapp_athena',
@@ -607,22 +700,19 @@ exports.handler = async (event) => {
         await enviarTelegram(`🤖 *VENDA ATHENA!*\n\n📦 ${numeroPedido}\n👤 ${nome}\n🪪 ${cpf}\n📱 ${telefone}\n📧 ${emailNorm}\n🏠 ${endereco}${complemento && complemento !== 'sem complemento' ? ', '+complemento : ''}, ${bairro}, ${cidade}-${estado}, ${cep}\n🛒 ${nomeProduto}\n💰 R$ ${valorReais.toFixed(2)}\n📱 ${sessionId}`);
         await deleteHistory(sessionId);
 
-        const msgConfirmacao = `✅ *Pedido ${numeroPedido} confirmado!*\n\n📦 ${nomeProduto}\n💰 R$ ${valorReais.toFixed(2)}\n\n🔍 *Rastreie seu pedido:*\nvitaflowoficial.com/pages/rastrear-pedido\nNúmero: *${numeroPedido}*\n\n─────────────────────\n⚠️ *AVISOS IMPORTANTES — VITAFLOW* ⚠️\n\n📹 *1. FILMAGEM DA ABERTURA — OBRIGATÓRIO*\nAo receber, grave um vídeo *contínuo e sem cortes* desde a embalagem fechada até retirar todos os itens.\n\n*Por que?* Já identificamos casos de entregadores que retiraram produtos e lacraram a caixa sem deixar vestígios. O vídeo é a única prova possível.\n\n✅ Filme a caixa fechada antes de abrir\n✅ Não pause nem corte\n✅ Filme todos os itens ao retirar\n\n❗ *Sem o vídeo não conseguimos abrir reclamação.* A responsabilidade pela filmagem é do cliente.\n\n─────────────────────\n📍 *2. ENDEREÇO E RECEBIMENTO*\nDeve haver uma pessoa disponível para receber. ❗ *A responsabilidade pelo endereço correto e recebimento é do cliente.*\n\n─────────────────────\n⚠️ *3. DISPONIBILIDADE DE ESTOQUE*\nDevido ao alto volume de vendas, o estoque pode oscilar. Se algum item estiver indisponível, faremos substituição equivalente ou superior. Para não receber substitutos, entre em contato antes do despacho.\n\n─────────────────────\n💬 Qualquer problema, fale conosco *imediatamente* com o vídeo da abertura. 💪\n— *Equipe VitaFlow* 🧡`;
-
-        return respond(msgConfirmacao);
+        return respond(`✅ *Pedido ${numeroPedido} confirmado!*\n\n📦 ${nomeProduto}\n💰 R$ ${valorReais.toFixed(2)}\n\n🔍 *Rastreie seu pedido:*\nvitaflowoficial.com/pages/rastrear-pedido\nNúmero: *${numeroPedido}*\n\n─────────────────────\n⚠️ *AVISOS IMPORTANTES — VITAFLOW* ⚠️\n\n📹 *1. FILMAGEM DA ABERTURA — OBRIGATÓRIO*\nAo receber, grave um vídeo *contínuo e sem cortes* desde a embalagem fechada até retirar todos os itens.\n\n✅ Filme a caixa fechada antes de abrir\n✅ Não pause nem corte\n✅ Filme todos os itens ao retirar\n\n❗ *Sem o vídeo não conseguimos abrir reclamação.*\n\n─────────────────────\n📍 *2. ENDEREÇO E RECEBIMENTO*\nDeve haver uma pessoa disponível para receber.\n\n─────────────────────\n💬 Qualquer problema, fale conosco *imediatamente* com o vídeo da abertura. 💪\n— *Equipe VitaFlow* 🧡`);
       } else {
-        reply = 'Dados recebidos! Em instantes você receberá a confirmação. ✅';
         await enviarTelegram(`⚠️ ERRO NÚMERO\n${matchDados[1]}\n${sessionId}`);
+        reply = 'Dados recebidos! Em instantes você receberá a confirmação. ✅';
       }
     }
 
     history.push({ role: 'assistant', content: reply });
     await saveHistory(sessionId, history);
-
-    return { statusCode: 200, headers, body: JSON.stringify({ resposta: reply, resposta2: '', resposta3: '', transferir: escalar, session_id: sessionId }) };
+    return { statusCode: 200, headers, body: JSON.stringify({ resposta: reply, resposta2: '', resposta3: '', transferir: false, session_id: sessionId }) };
 
   } catch (err) {
     console.error('ERRO GERAL:', err);
-    return respond('Desculpe, tive um problema técnico. Tente novamente!');
+    return respond('Desculpe o delay! 😊 Pode me contar o que está buscando? Estou aqui para te ajudar!');
   }
 };
