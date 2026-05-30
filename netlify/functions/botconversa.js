@@ -647,6 +647,20 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ resposta: `Claro! Vou te transferir para um de nossos atendentes agora. 😊`, resposta2: '', resposta3: '', transferir: true }) };
     }
 
+    // ── SAUDAÇÃO RÁPIDA (sem chamar API) ─────────────────────────────────────
+    const saudacoesSimples = ['oi','olá','ola','oii','oiii','opa','eai','e ai','hey','hi','hello','bom dia','boa tarde','boa noite','tudo bem','tudo bom','como vai','boa','oi tudo bem'];
+    const ehSaudacaoSimples = saudacoesSimples.some(s => norm === s || norm === s + '!' || norm === s + '?' || norm.trim() === s);
+    if (ehSaudacaoSimples && history.length === 0) {
+      const saudacao = `✨ Olá! Eu sou a *Athena* 🤖💊, consultora da *VitaFlow*! 🚀
+Estou aqui para te ajudar a encontrar os melhores produtos para seus objetivos. 💪🔥
+
+O que você está procurando hoje?`;
+      history.push({ role: 'user', content: mensagem });
+      history.push({ role: 'assistant', content: saudacao });
+      await saveHistory(sessionId, history);
+      return respond(saudacao);
+    }
+
     // ── COLEÇÃO CACHE ─────────────────────────────────────────────────────────
     const palavras = norm.split(/\s+/).filter(Boolean);
     let handleColecao = null, nomeColecao = null;
@@ -663,14 +677,55 @@ exports.handler = async (event) => {
       }
     }
     if (handleColecao) {
-      const dados = await buscarColecaoCache(handleColecao);
-      if (dados) {
-        const linhas = dados.split('\n').filter(Boolean).sort((a, b) => {
-          const getMg = s => { const m = s.match(/(\d+(?:\.\d+)?)\s*(?:mg|ui|ml)/i); return m ? parseFloat(m[1]) : 9999; };
-          return getMg(a) - getMg(b);
-        }).slice(0, 50);
-        const lista = formatarLista(linhas.join('\n'));
-        const reply = `Aqui estão os produtos de *${nomeColecao}* disponíveis! 💪\n\n${lista}\n\nQual te interessa? Me diz o nome ou número! 🚀`;
+      // Promoções e Mais Vendidos — lista produtos direto (poucos itens)
+      if (handleColecao === 'promocoes' || handleColecao === '10-mais-vendidos') {
+        const dados = await buscarColecaoCache(handleColecao);
+        if (dados) {
+          const linhas = dados.split('\n').filter(Boolean).sort((a, b) => {
+            const getMg = s => { const m = s.match(/(\d+(?:\.\d+)?)\s*(?:mg|ui|ml)/i); return m ? parseFloat(m[1]) : 9999; };
+            return getMg(a) - getMg(b);
+          }).slice(0, 20);
+          const lista = formatarLista(linhas.join('\n'));
+          const reply = `Aqui estão os produtos de *${nomeColecao}* disponíveis! 💪\n\n${lista}\n\nQual te interessa? Me diz o nome ou número! 🚀`;
+          history.push({ role: 'user', content: mensagem });
+          history.push({ role: 'assistant', content: reply });
+          await saveHistory(sessionId, history);
+          return respond(reply);
+        }
+      }
+
+      // Peptídeos, Hormônios, GH, Outros — lista substâncias genéricas
+      const SUBSTANCIAS = {
+        'peptideos': [
+          'Retatrutida', 'Tirzepatida', 'Semaglutida', 'Ipamorelin', 'CJC-1295',
+          'BPC-157', 'TB-500', 'GHK-Cu', 'SS-31', 'MOTS-C', 'Epitalon',
+          'Tesamorelin', 'PT-141', 'Melanotan', 'AOD-9604', 'CBL-514',
+          'HGH Fragment 176-191', '5-Amino-1MQ', 'Slupp-332', 'NAD+',
+          'Sermorelin', 'LL-37', 'PEG-MGF', 'IGF-1', 'GHRP-6', 'GHRP-2'
+        ],
+        'hormonios': [
+          'Testosterona', 'Durateston', 'Trembolona', 'Boldenona', 'Stanozolol',
+          'Oxandrolona', 'Nandrolona (Deca)', 'Masteron', 'Primobolan',
+          'Dianabol', 'Hemogenin (Anadrol)', 'HCG', 'Anastrozol', 'Proviron',
+          'Clembuterol', 'T3', 'CutStack'
+        ],
+        'gh': [
+          'Somatropina (GH)', 'Caneta Eurogold 240UI', 'Caneta MyoMax Alluvi 200UI',
+          'Hygetropin', 'Jintropin', 'Ansomone', 'Genotropin'
+        ],
+        'outros': [
+          'SARMs', 'Peptídeos Especiais', 'Suplementos', 'Acessórios'
+        ]
+      };
+
+      const substancias = SUBSTANCIAS[handleColecao] || [];
+      if (substancias.length > 0) {
+        const lista = substancias.map((s, i) => {
+          const emojis = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+          const emoji = i < 10 ? emojis[i] : `${i+1}.`;
+          return `${emoji} ${s}`;
+        }).join('\n');
+        const reply = `Temos as seguintes opções em *${nomeColecao}*:\n\n${lista}\n\nQual substância te interessa? Me diz o nome que busco todas as opções disponíveis com preços! 😊`;
         history.push({ role: 'user', content: mensagem });
         history.push({ role: 'assistant', content: reply });
         await saveHistory(sessionId, history);
