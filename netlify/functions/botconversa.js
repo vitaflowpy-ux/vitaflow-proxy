@@ -48,7 +48,9 @@ function buildMenuPrincipal(promo) {
   if (promo) {
     menu += `
 
-🚨 *${promo.titulo}* — Digite *PROMO*`;
+🚨 *${promo.titulo}*
+🔥 ${promo.desconto_pct ? promo.desconto_pct + '% de desconto aplicado automaticamente no link de pagamento — sem cupom, sem complicação!' : promo.descricao || ''}
+👉 Digite *PROMO* para saber mais ou escolha um produto abaixo e o desconto já vem incluído!`;
   }
   menu += `
 
@@ -130,18 +132,48 @@ const MENU_FABRICANTES = `*🏭 BUSCAR POR FABRICANTE*
 _Digite o número ou *menu* para voltar_`;
 
 // ── System prompt exclusivo para protocolos ───────────────────────────────────
-const PROTOCOLO_PROMPT = `Você é a Athena, especialista técnica da VitaFlow em peptídeos, hormônios e suplementação avançada.
+const PROTOCOLO_PROMPT = `Você é a Athena, consultora especialista da VitaFlow em peptídeos, hormônios e suplementação avançada. Você é uma vendedora brilhante: técnica, apaixonada pelo que faz e extremamente persuasiva — sem ser chata ou forçada.
 
-Seu papel EXCLUSIVO é responder sobre protocolos, dosagens, mecanismos de ação, benefícios e cuidados de uso.
+Seu papel é responder sobre protocolos, dosagens, mecanismos de ação, benefícios e cuidados de uso, E SEMPRE converter esse interesse em venda.
 
-REGRAS:
+REGRAS TÉCNICAS:
 - Português brasileiro informal e caloroso
 - Informações detalhadas e precisas
 - Use doses MÍNIMAS eficazes e explique quanto tempo o produto dura com essas doses
-- Inclua sempre: "💡 Como qualquer suplemento avançado, o acompanhamento profissional potencializa os resultados."
-- Ao final sempre diga: "Para ver produtos disponíveis, *digite menu*"
-- NUNCA mencione preços, marcas ou produtos específicos do catálogo
-- NUNCA use ## ou ### — use apenas *negrito*`;
+- NUNCA use ## ou ### — use apenas *negrito*
+- NUNCA mencione preços (você não tem acesso a eles)
+
+REGRAS ABSOLUTAS — NUNCA VIOLE:
+- NUNCA invente telefone, endereço, contato ou qualquer dado da empresa
+- NUNCA invente prazos — use SEMPRE os prazos oficiais abaixo
+- NUNCA invente produtos, marcas, disponibilidade ou estoque
+- Se não souber algo, diga que não tem essa informação e oriente a digitar *menu*
+
+FRETE E PRAZOS (use SEMPRE "prazo estimado" ao mencionar entrega):
+- Despacho: até 48 horas úteis após confirmação do pagamento
+- Prazos estimados de entrega por região (dias úteis, contados a partir do despacho):
+  Sudeste: 2 a 5 dias úteis | Sul: 3 a 5 dias úteis | Centro-Oeste: 4 a 6 dias úteis
+  Nordeste: 5 a 8 dias úteis | Norte: 7 a 10 dias úteis
+- Transportadoras disponíveis: Jadlog, J&T Express e Loggi
+- Modalidades: PAC, SEDEX (Correios) e Transportadora
+- Recomende sempre a Transportadora — inclui seguro grátis contra apreensão e extravio
+- Correios (PAC/SEDEX) NÃO possuem seguro
+
+REGRA DE OURO — SEMPRE ao final de cada resposta:
+1. Inclua: "💡 Como qualquer suplemento avançado, o acompanhamento profissional potencializa os resultados."
+2. Faça uma transição persuasiva para a compra, destacando urgência ou benefício único
+3. Termine com exatamente este bloco (substitua NOME_DO_PRODUTO pelo produto discutido):
+
+---PRODUTOS---
+NOME_DO_PRODUTO
+---FIM---
+
+Exemplos de transições persuasivas (varie, não repita sempre a mesma):
+- "Esse é exatamente o tipo de resultado que nossos clientes estão tendo. Quer dar esse passo agora?"
+- "Temos opções disponíveis com entrega para todo o Brasil. Que tal aproveitar?"
+- "Muita gente que pergunta sobre esse protocolo acaba se surpreendendo com os resultados em poucas semanas. Quer começar?"
+- "A janela de oportunidade para resultados reais é agora. Posso te mostrar o que temos disponível?"`;
+
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 function norm(s) {
@@ -365,6 +397,13 @@ exports.handler = async (event) => {
 
     const session = await getSession(sid);
     const state = session.state || 'MENU';
+
+    // ── Atalho global para frete (qualquer estado exceto quando já está no fluxo) ──
+    const ehPerguntaFrete = ["frete","entrega","envio","prazo","transportadora","pac","sedex"].some(p => n.includes(p));
+    if (ehPerguntaFrete && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS"].includes(state)) {
+      await saveSession(sid, { ...session, state:"ESTADO" });
+      return respond("🚚 *Calcular frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...");
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MENU PRINCIPAL
@@ -697,7 +736,16 @@ exports.handler = async (event) => {
           `Nome: \nCPF: \nTelefone: \nEmail: \nRua e número: \nComplemento: \nBairro: \nCidade: \nEstado: \nCEP: `
         );
       }
-      return respond(`Aguardando seu comprovante de pagamento! 📸\n\nEnvie o print ou foto após pagar.`);
+      // Cliente mudou de assunto — relembrar pedido pendente de forma persuasiva
+      const prodPend = session.produtoSelecionado || {};
+      const totalPend = session.total || 0;
+      return respond(
+        `⏳ Você ainda tem um pedido em aberto!\n\n` +
+        `📦 *${prodPend.nome || "Seu produto"}*\n` +
+        `💰 *R$ ${totalPend.toFixed(2).replace(".",",")}*\n\n` +
+        `Seu link de pagamento ainda está ativo — é só pagar e me enviar o comprovante para eu liberar o envio! 🚀\n\n` +
+        `Se quiser cancelar e começar do zero, digite *menu*. 😊`
+      );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -808,6 +856,13 @@ exports.handler = async (event) => {
     // PROTOCOLO (única parte com IA)
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'PROTOCOLO') {
+      // Se cliente digitou número e há lista de produtos do protocolo anterior
+      if (num && num >= 1 && session.listaProtocolo && num <= session.listaProtocolo.length) {
+        const prod = session.listaProtocolo[num - 1];
+        await saveSession(sid, { state:'QUANTIDADE', produtoSelecionado: prod });
+        return respond(`Você escolheu:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.',',')}\n\n*Quantas unidades deseja?*\n_(Digite o número)_`);
+      }
+
       const hist = (session.historico || []).slice(-8);
       hist.push({ role:'user', content: mensagem });
       try {
@@ -818,10 +873,48 @@ exports.handler = async (event) => {
         });
         const d = await r.json();
         if (d.error || !d.content) throw new Error('Claude error');
-        const reply = d.content[0].text || '';
-        hist.push({ role:'assistant', content: reply });
-        await saveSession(sid, { state:'PROTOCOLO', historico: hist });
-        return respond(reply);
+        let reply = d.content[0].text || '';
+
+        // Extrai o nome do produto do bloco ---PRODUTOS--- e remove do texto
+        let msgProdutos = '';
+        const matchProd = reply.match(/---PRODUTOS---([\s\S]*?)---FIM---/);
+        if (matchProd) {
+          const nomeProduto = matchProd[1].trim();
+          reply = reply.replace(/---PRODUTOS---([\s\S]*?)---FIM---/, '').trim();
+
+          // Busca no cache
+          const tudo = await buscarTodosCache();
+          const termos = nomeProduto.toLowerCase().split(/[\s\/,+]+/).filter(p => p.length > 2);
+          const linhas = filtrarCache(tudo, termos.slice(0, 2)); // usa os 2 primeiros termos
+          const unicas = [...new Set(linhas)].slice(0, 10);
+
+          if (unicas.length) {
+            const promo = await carregarPromocaoAtiva();
+            const avisoPromo = promo && promo.desconto_pct
+              ? `\n🔥 *${promo.titulo}* — ${promo.desconto_pct}% de desconto aplicado automaticamente no link!\n`
+              : '';
+            msgProdutos =
+              `🛒 *Produtos disponíveis — ${nomeProduto.toUpperCase()}:*\n${avisoPromo}\n` +
+              formatarLista(unicas) +
+              `\n\n*Digite o número para comprar ou *menu* para ver todas as categorias.*`;
+
+            // Salva lista na sessão para o cliente poder selecionar
+            await saveSession(sid, {
+              state: 'PROTOCOLO',
+              historico: hist.concat([{ role:'assistant', content: reply }]),
+              listaProtocolo: parseProdutos(unicas)
+            });
+          } else {
+            msgProdutos = `🛒 Para ver todos os produtos disponíveis, *digite menu*.`;
+            await saveSession(sid, { state:'PROTOCOLO', historico: hist.concat([{ role:'assistant', content: reply }]) });
+          }
+        } else {
+          hist.push({ role:'assistant', content: reply });
+          await saveSession(sid, { state:'PROTOCOLO', historico: hist });
+        }
+
+        return respond(reply, msgProdutos);
+
       } catch(e) {
         console.error('PROTOCOLO ERRO:', e.message);
         await saveSession(sid, { state:'PROTOCOLO', historico: hist });
