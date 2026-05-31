@@ -3,6 +3,7 @@
 const INFINITEPAY_TAG = 'vitaflowoficial';
 const FIREBASE_URL    = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const GAS_URL         = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
+const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.html';
 
 // ── Tabela de fretes ──────────────────────────────────────────────────────────
 const FRETES = {
@@ -193,6 +194,32 @@ function getFreteOpcoes(uf) {
   return opts.length ? opts : null;
 }
 
+// ── Gera link do recibo ───────────────────────────────────────────────────────
+function gerarLinkRecibo(orderNsu, nome, cpf, email, pagto, prod, qtd, precoProd, frete, total) {
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  const params = [];
+  params.push('pedido=' + encodeURIComponent(orderNsu));
+  if (nome)  params.push('nome='  + encodeURIComponent(nome));
+  if (cpf)   params.push('cpf='   + encodeURIComponent(cpf));
+  if (email) params.push('email=' + encodeURIComponent(email));
+  params.push('data='  + encodeURIComponent(hoje));
+  params.push('pagto=' + encodeURIComponent(pagto));
+  params.push('total=' + encodeURIComponent(total.toFixed(2)));
+
+  const prods = [{ nome: prod + ' x' + qtd, quantidade: qtd, preco_unit: precoProd }];
+  const prodsJson = JSON.stringify(prods);
+  // btoa para base64 (Node.js)
+  const prodsB64 = Buffer.from(encodeURIComponent(prodsJson)).toString('base64');
+  params.push('produtos=' + prodsB64);
+
+  if (frete) {
+    params.push('frete=' + encodeURIComponent(frete.label));
+    params.push('frete_v=' + encodeURIComponent(frete.valor.toFixed(2)));
+  }
+
+  return RECIBO_BASE + '?' + params.join('&');
+}
+
 // ── Firebase: sessão ──────────────────────────────────────────────────────────
 async function getSession(sid) {
   try {
@@ -305,7 +332,7 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode:200, headers, body:'' };
   if (event.httpMethod !== 'POST')    return { statusCode:405, headers, body: JSON.stringify({error:'Method not allowed'}) };
 
-  const respond = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:r, resposta2:'', resposta3:'', transferir:false }) });
+  const respond = (r, r2='', r3='') => ({ statusCode:200, headers, body: JSON.stringify({ resposta:r, resposta2:r2, resposta3:r3, transferir:false }) });
   const transferir = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:r, resposta2:'', resposta3:'', transferir:true }) });
 
   try {
@@ -317,7 +344,7 @@ exports.handler = async (event) => {
     const num = parseInt(n);
     const ehMidia = ['image','video','document','audio','sticker'].includes(body.type);
 
-    console.log('MSG:', mensagem, '| SID:', sid);
+    console.log('MSG:', mensagem, '| SID:', sid, '| TYPE:', body.type);
 
     // ── Atalhos globais ───────────────────────────────────────────────────────
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
@@ -487,7 +514,6 @@ exports.handler = async (event) => {
         const dados = await buscarCache('hormonios');
         let linhas = filtrarCache(dados, termos);
 
-        // Opção 2 (testosterona geral): exclui enantato para não duplicar
         if (num === 2) {
           linhas = linhas.filter(l => !norm(l).includes('enantato'));
         }
@@ -579,7 +605,7 @@ exports.handler = async (event) => {
     // ESTADO (para calcular frete)
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'ESTADO') {
-      const uf = n.replace(/[^a-z]/g,'').toUpperCase().slice(0,2);
+      const uf = mensagem.trim().toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
       const opts = getFreteOpcoes(uf);
       if (!opts) return respond(`Estado *${uf || mensagem}* não reconhecido.\nDigite a sigla do seu estado (ex: RJ, SP, MG):`);
       const freteStr = opts.map((o, i) => `${emojis(i)} *${o.label}* — R$ ${o.valor.toFixed(2).replace('.',',')}`).join('\n');
@@ -626,7 +652,6 @@ exports.handler = async (event) => {
         const frete = session.freteSelecionado || {};
         const uf    = session.estadoCliente || '';
 
-        // Verifica promoção relâmpago ativa e aplica desconto nos produtos
         const promo = await carregarPromocaoAtiva();
         let totalFinal = session.total;
         let infoDesconto = '';
@@ -640,7 +665,6 @@ exports.handler = async (event) => {
         const desc  = `${prod.nome} x${qtd} + Frete ${frete.label} — ${uf}`;
         const link  = await gerarLinkInfinitePay(desc, totalFinal);
 
-        // Salva pedido pendente no Firebase
         try {
           const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
           await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${pKey}.json`, {
@@ -709,10 +733,10 @@ exports.handler = async (event) => {
       }
 
       // Todos os dados coletados → salvar pedido
-      const prod  = session.produtoSelecionado || {};
-      const qtd   = session.quantidade || 1;
-      const frete = session.freteSelecionado || {};
-      const total = session.total || 0;
+      const prod     = session.produtoSelecionado || {};
+      const qtd      = session.quantidade || 1;
+      const frete    = session.freteSelecionado || {};
+      const total    = session.total || 0;
       const num_pedido = await gerarNumeroPedido();
 
       if (num_pedido) {
@@ -732,20 +756,52 @@ exports.handler = async (event) => {
         );
       }
 
-      await deleteSession(sid);
-      return respond(
-        `✅ *Pedido ${num_pedido||''} registrado!*\n\n` +
-        `📦 ${prod.nome} x${qtd}\n` +
+      // ── Gera link do recibo ───────────────────────────────────────────────
+      const linkRecibo = gerarLinkRecibo(
+        num_pedido || 'VF-A',
+        coleta.nome,
+        coleta.cpf,
+        coleta.email || '',
+        'WhatsApp / Athena',
+        prod.nome,
+        qtd,
+        prod.preco,
+        frete,
+        total
+      );
+
+      // ── Mensagem 1: confirmação + recibo + rastreamento ───────────────────
+      const primeiroNome = (coleta.nome || '').split(' ')[0];
+      const msg1 =
+        `✅ *Pedido ${num_pedido||''} confirmado!*\n\n` +
+        `Olá, *${primeiroNome}*! Obrigada pela confiança na VitaFlow! 🧡\n\n` +
+        `📦 *${prod.nome}* x${qtd}\n` +
         `🚚 ${frete.label} — ${session.estadoCliente}\n` +
         `💰 R$ ${total.toFixed(2).replace('.',',')}\n\n` +
-        `🔍 *Rastreie em:*\nvitaflowoficial.com/pages/rastrear-pedido\n\n` +
-        `─────────────────────\n` +
-        `⚠️ *IMPORTANTE — VITAFLOW* ⚠️\n\n` +
-        `📹 *Grave vídeo da abertura da embalagem* — contínuo, sem cortes, desde a caixa fechada até retirar todos os itens.\n\n` +
-        `❗ Sem o vídeo não conseguimos abrir reclamação.\n\n` +
-        `─────────────────────\n` +
-        `Obrigada pela confiança! 🧡 — *Equipe VitaFlow*`
-      );
+        `🧾 *Seu recibo:*\n${linkRecibo}\n\n` +
+        `🔍 *Rastreie seu pedido em tempo real:*\nvitaflowoficial.com/pages/rastrear-pedido\n\n` +
+        `Use qualquer uma dessas informações para rastrear:\n` +
+        `• *Número do pedido:* ${num_pedido||''}\n` +
+        (coleta.cpf ? `• *CPF:* ${coleta.cpf}\n` : '') +
+        (coleta.email ? `• *E-mail:* ${coleta.email}\n` : '');
+
+      // ── Mensagem 2: aviso de filmar a abertura ────────────────────────────
+      const msg2 =
+        `⚠️ *AVISO IMPORTANTE — VITAFLOW* ⚠️\n\n` +
+        `Antes de receber seu pedido, leia com atenção. Essas instruções são essenciais para te ajudarmos em qualquer situação. 🙏\n\n` +
+        `📹 *1. FILME A ABERTURA DA EMBALAGEM*\n` +
+        `Ao receber, grave um vídeo contínuo e sem cortes — desde a embalagem fechada até retirar todos os itens.\n\n` +
+        `✅ Mostre a caixa fechada antes de abrir\n` +
+        `✅ Não pause nem corte o vídeo\n` +
+        `✅ Filme todos os produtos ao retirar da caixa\n\n` +
+        `❗ Sem o vídeo não conseguimos abrir reclamação junto à transportadora.\n\n` +
+        `📍 *2. ENDEREÇO E ALGUÉM PARA RECEBER*\n` +
+        `Deve haver uma pessoa disponível para receber pessoalmente. Não solicite deixar o pacote sem ninguém.\n\n` +
+        `💬 Qualquer problema, fale com a gente pelo WhatsApp imediatamente e envie o vídeo da abertura.\n\n` +
+        `— *Equipe VitaFlow* 🧡`;
+
+      await deleteSession(sid);
+      return respond(msg1, msg2);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
