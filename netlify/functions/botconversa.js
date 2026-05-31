@@ -686,8 +686,8 @@ exports.handler = async (event) => {
     // AGUARDAR COMPROVANTE
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'AGUARDAR_COMPROVANTE') {
-      const palavrasPag = ['paguei','pix feito','fiz o pix','transferi','pago','pix realizado','comprovante','ja paguei','ja transferi'];
-      const ehPagamento = ehMidia || palavrasPag.some(p => n.includes(p));
+      const palavrasPag = ['paguei','pix feito','fiz o pix','transferi','pago','pix realizado','comprovante','ja paguei','ja transferi','sim','yes','fiz','realizei','confirmado','feito','ok','okay'];
+      const ehPagamento = body.type || palavrasPag.some(p => n.includes(p));
       if (ehPagamento) {
         await saveSession(sid, { ...session, state:'COLETA_DADOS', coleta:{} });
         return respond(
