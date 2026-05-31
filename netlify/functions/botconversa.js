@@ -353,6 +353,53 @@ async function salvarPedidoGAS(pedido) {
   } catch {}
 }
 
+// ── Extração de dados do cliente via IA (igual ao Importar IA do Radar) ────────
+async function extrairDadosIA(texto) {
+  try {
+    const prompt = `Extraia os dados de cadastro do cliente do texto abaixo e retorne APENAS um objeto JSON válido, sem nenhum texto antes ou depois, sem markdown.
+
+Campos a extrair (use string vazia se não encontrar):
+- nome: nome completo da pessoa
+- cpf: CPF (apenas números ou formatado)
+- telefone: telefone/celular com DDD
+- email: e-mail
+- endereco: rua e número juntos
+- complemento: complemento (casa, apto, bloco). Se for "Casa" ou similar, mantenha
+- bairro: bairro
+- cidade: cidade
+- estado: sigla do estado (2 letras, ex: RJ, SP)
+- cep: CEP
+
+Texto do cliente:
+"""
+${texto}
+"""
+
+Retorne SOMENTE o JSON no formato:
+{"nome":"","cpf":"","telefone":"","email":"","endereco":"","complemento":"","bairro":"","cidade":"","estado":"","cep":""}`;
+
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
+      body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:600, messages:[{ role:'user', content: prompt }] })
+    });
+    const d = await r.json();
+    if (d.error || !d.content) return null;
+    const raw = d.content[0].text || '';
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]);
+    // Limpa estado para 2 letras maiúsculas
+    if (parsed.estado) parsed.estado = parsed.estado.toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
+    // Remove campos vazios para o merge não sobrescrever dados já coletados
+    Object.keys(parsed).forEach(k => { if (!parsed[k] || String(parsed[k]).trim().length < 1) delete parsed[k]; });
+    return parsed;
+  } catch(e) {
+    console.error('EXTRAIR IA ERRO:', e.message);
+    return null;
+  }
+}
+
 // ── Handler principal ─────────────────────────────────────────────────────────
 exports.handler = async (event) => {
   const headers = {
@@ -768,23 +815,8 @@ exports.handler = async (event) => {
     // COLETA DE DADOS
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'COLETA_DADOS') {
-      const linhas = mensagem.split('\n').map(l => l.trim()).filter(Boolean);
-      const dados  = {};
-      linhas.forEach(l => {
-        const nl = norm(l);
-        const val = l.split(':').slice(1).join(':').trim();
-        if (!val) return;
-        if (nl.startsWith('nome'))        dados.nome        = val;
-        else if (nl.startsWith('cpf'))    dados.cpf         = val;
-        else if (nl.startsWith('tel'))    dados.telefone    = val;
-        else if (nl.startsWith('email') || nl.startsWith('e-mail')) dados.email = val;
-        else if (nl.startsWith('rua') || nl.startsWith('endereco') || nl.startsWith('end')) dados.endereco = val;
-        else if (nl.startsWith('comp'))   dados.complemento = val;
-        else if (nl.startsWith('bairro')) dados.bairro      = val;
-        else if (nl.startsWith('cidade')) dados.cidade      = val;
-        else if (nl.startsWith('estado') || nl.startsWith('uf')) dados.estado = val;
-        else if (nl.startsWith('cep'))    dados.cep         = val;
-      });
+      // Extrai dados via IA (reconhece com ou sem rótulos, qualquer formato)
+      const dados = await extrairDadosIA(mensagem) || {};
 
       const coleta = { ...(session.coleta||{}), ...dados };
       const obrigatorios = ['nome','cpf','telefone','endereco','bairro','cidade','estado','cep'];
@@ -793,7 +825,7 @@ exports.handler = async (event) => {
       if (faltam.length > 0) {
         await saveSession(sid, { ...session, coleta });
         const nomesCampos = { nome:'Nome completo', cpf:'CPF', telefone:'Telefone', email:'E-mail', endereco:'Rua e número', bairro:'Bairro', cidade:'Cidade', estado:'Estado', cep:'CEP' };
-        return respond(`Faltam alguns dados:\n${faltam.map(f => '• '+nomesCampos[f]).join('\n')}\n\nPor favor, informe:`);
+        return respond(`Faltam alguns dados:\n${faltam.map(f => '• '+nomesCampos[f]).join('\n')}\n\nPor favor, me envie esses dados que faltam. 😊`);
       }
 
       // Todos os dados coletados → salvar pedido
