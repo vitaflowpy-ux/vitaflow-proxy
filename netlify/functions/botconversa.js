@@ -727,7 +727,7 @@ exports.handler = async (event) => {
 
         await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal });
         return respond(link
-          ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n📸 Após pagar, me envie o comprovante!\n_(print ou foto)_`
+          ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n📸 Após pagar:\n1️⃣ Envie o print ou foto do comprovante\n2️⃣ Digite *SIM* para eu confirmar seu pedido!`
           : `Acesse vitaflowoficial.com para finalizar seu pedido.`
         );
       }
@@ -759,7 +759,7 @@ exports.handler = async (event) => {
         `⏳ Você ainda tem um pedido em aberto!\n\n` +
         `📦 *${prodPend.nome || "Seu produto"}*\n` +
         `💰 *R$ ${totalPend.toFixed(2).replace(".",",")}*\n\n` +
-        `Seu link de pagamento ainda está ativo — é só pagar e me enviar o comprovante para eu liberar o envio! 🚀\n\n` +
+        `Seu link de pagamento ainda está ativo! Após pagar:\n1️⃣ Envie o print ou foto do comprovante\n2️⃣ Digite *SIM* para eu liberar o envio! 🚀\n\n` +
         `Se quiser cancelar e começar do zero, digite *menu*. 😊`
       );
     }
