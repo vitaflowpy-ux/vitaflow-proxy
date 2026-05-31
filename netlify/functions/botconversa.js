@@ -376,7 +376,8 @@ exports.handler = async (event) => {
     const num = parseInt(n);
     const ehMidia = ['image','video','document','audio','sticker'].includes(body.type);
 
-    console.log('MSG:', mensagem, '| SID:', sid, '| TYPE:', body.type);
+    console.log('MSG:', mensagem, '| SID:', sid, '| TYPE:', body.type, '| BODY_KEYS:', Object.keys(body).join(','));
+    if (body.type || body.mediaUrl || body.media_url || body.url || body.fileUrl) console.log('MIDIA DETECTADA:', JSON.stringify(body));
 
     // ── Atalhos globais ───────────────────────────────────────────────────────
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
@@ -664,16 +665,28 @@ exports.handler = async (event) => {
       const totalProd = prod.preco * qtd;
       const total     = totalProd + frete.valor;
 
+      // Aplica desconto já no resumo se houver promoção ativa
+      const promoResumo = await carregarPromocaoAtiva();
+      let totalComDesconto = total;
+      let linhaDesconto = '';
+      if (promoResumo && promoResumo.desconto_pct) {
+        const descPct = parseFloat(promoResumo.desconto_pct);
+        const descValor = totalProd * (descPct / 100);
+        totalComDesconto = totalProd - descValor + frete.valor;
+        linhaDesconto = `\n🔥 *${promoResumo.titulo}* (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}`;
+      }
+
       const resumo =
         `*📋 RESUMO DO PEDIDO*\n\n` +
         `📦 *${prod.nome}*\n` +
         `    ${qtd}x — R$ ${prod.preco.toFixed(2).replace('.',',')} un.\n` +
         `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
-        `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n\n` +
-        `💰 *Total: R$ ${total.toFixed(2).replace('.',',')}*\n\n` +
+        `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
+        linhaDesconto +
+        `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n` +
         `*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
 
-      await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, total });
+      await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, total: totalComDesconto });
       return respond(resumo);
     }
 
@@ -726,7 +739,10 @@ exports.handler = async (event) => {
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'AGUARDAR_COMPROVANTE') {
       const palavrasPag = ['paguei','pix feito','fiz o pix','transferi','pago','pix realizado','comprovante','ja paguei','ja transferi','sim','yes','fiz','realizei','confirmado','feito','ok','okay'];
-      const ehPagamento = body.type || palavrasPag.some(p => n.includes(p));
+      // BotConversa não manda body.type — detecta mídia por campos alternativos ou URL no texto
+      const ehMidiaBC = !!(body.type || body.mediaUrl || body.media_url || body.fileUrl || body.url || body.arquivo || body.file || body.caption !== undefined);
+      const ehUrlImagem = !!(mensagem && mensagem.match(/https?:\/\/[^\s]+(jpg|jpeg|png|gif|pdf|mp4|webp|ogg|opus)/i));
+      const ehPagamento = ehMidiaBC || ehUrlImagem || palavrasPag.some(p => n.includes(p));
       if (ehPagamento) {
         await saveSession(sid, { ...session, state:'COLETA_DADOS', coleta:{} });
         return respond(
