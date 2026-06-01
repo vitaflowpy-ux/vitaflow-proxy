@@ -1,6 +1,8 @@
 // netlify/functions/cache-colecoes.js
 // Scheduled Function — roda a cada 10 minutos
 // Busca todas as coleções do Shopify e salva no Firebase Realtime Database
+// Mantém o campo "dados" (nome|preço) intacto para Athena/Radar
+// e adiciona "produtos" (com foto) numa estrutura paralela para a tabela pública
 
 const SHOPIFY_STORE = 'vitaflow-7352';
 const STOREFRONT_TOKEN = 'b4b46a09460b7277f5d4625b9019daef'; // Storefront API token (público)
@@ -22,6 +24,7 @@ async function buscarColecaoShopify(handle) {
             node {
               title
               availableForSale
+              featuredImage { url }
               variants(first: 3) {
                 edges {
                   node {
@@ -68,6 +71,7 @@ async function buscarColecaoShopify(handle) {
   return todosProdutos;
 }
 
+// Formato texto "nome|preço" — INTACTO (Athena e Radar dependem disso)
 function formatarProdutos(produtos) {
   return produtos
     .filter(({ node: p }) => p.availableForSale)
@@ -90,14 +94,34 @@ function formatarProdutos(produtos) {
     .join('\n');
 }
 
-async function salvarFirebase(handle, dados) {
-  // Salva sem autenticação (regras do Firebase permitem escrita)
+// Formato estruturado COM FOTO — novo, para a tabela pública
+function formatarProdutosComFoto(produtos) {
+  return produtos
+    .filter(({ node: p }) => p.availableForSale)
+    .map(({ node: p }) => {
+      const variants = p.variants?.edges || [];
+      const disponiveis = variants.filter(({ node: v }) => v.availableForSale);
+      if (disponiveis.length === 0) return null;
+      // Menor preço entre as variantes disponíveis
+      const precos = disponiveis.map(({ node: v }) => parseFloat(v.price?.amount || 0)).filter(x => x > 0);
+      const preco = precos.length ? Math.min(...precos) : 0;
+      return {
+        nome: p.title,
+        preco,
+        foto: p.featuredImage?.url || ''
+      };
+    })
+    .filter(Boolean);
+}
+
+async function salvarFirebase(handle, dados, produtos) {
   const url = `${FIREBASE_URL}/vitaflow_cache/colecoes/${handle}.json`;
   const res = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      dados,
+      dados,                                   // formato antigo (nome|preço) — INTACTO
+      produtos,                                // NOVO: array com nome, preço e foto
       atualizado_em: new Date().toISOString(),
       total: dados.split('\n').filter(Boolean).length
     })
@@ -117,8 +141,9 @@ exports.handler = async () => {
       console.log(`Buscando coleção: ${handle}`);
       const produtos = await buscarColecaoShopify(handle);
       const dados = formatarProdutos(produtos);
+      const produtosComFoto = formatarProdutosComFoto(produtos);
       const total = dados.split('\n').filter(Boolean).length;
-      await salvarFirebase(handle, dados);
+      await salvarFirebase(handle, dados, produtosComFoto);
       console.log(`✅ ${handle}: ${total} produtos salvos`);
       resultados.push({ handle, total, ok: true });
     } catch (err) {
