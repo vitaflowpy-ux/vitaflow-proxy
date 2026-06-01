@@ -7,7 +7,7 @@
 const SHOPIFY_STORE = 'vitaflow-7352';
 const STOREFRONT_TOKEN = 'b4b46a09460b7277f5d4625b9019daef'; // Storefront API token (público)
 const FIREBASE_URL = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
-const COLECOES = ['10-mais-vendidos', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
+const COLECOES = ['10-mais-vendidos', 'emagrecedores', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
 
 async function buscarColecaoShopify(handle) {
   let todosProdutos = [];
