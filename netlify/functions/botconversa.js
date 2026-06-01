@@ -226,8 +226,19 @@ function getFreteOpcoes(uf) {
   return opts.length ? opts : null;
 }
 
-// ── Gera link do recibo ───────────────────────────────────────────────────────
-function gerarLinkRecibo(orderNsu, nome, cpf, email, pagto, prod, qtd, precoProd, frete, total) {
+// ── Carrinho: helpers ─────────────────────────────────────────────────────────
+function totalCarrinho(carrinho) {
+  return (carrinho || []).reduce((acc, item) => acc + (item.preco * item.qtd), 0);
+}
+
+function resumoCarrinho(carrinho) {
+  return (carrinho || []).map(item =>
+    `📦 *${item.nome}*\n    ${item.qtd}x — R$ ${item.preco.toFixed(2).replace('.',',')} un. = R$ ${(item.preco*item.qtd).toFixed(2).replace('.',',')}`
+  ).join('\n');
+}
+
+// ── Gera link do recibo (carrinho com múltiplos itens) ─────────────────────────
+function gerarLinkRecibo(orderNsu, nome, cpf, email, pagto, carrinho, frete, total) {
   const hoje = new Date().toLocaleDateString('pt-BR');
   const params = [];
   params.push('pedido=' + encodeURIComponent(orderNsu));
@@ -238,9 +249,10 @@ function gerarLinkRecibo(orderNsu, nome, cpf, email, pagto, prod, qtd, precoProd
   params.push('pagto=' + encodeURIComponent(pagto));
   params.push('total=' + encodeURIComponent(total.toFixed(2)));
 
-  const prods = [{ nome: prod + ' x' + qtd, quantidade: qtd, preco_unit: precoProd }];
+  const prods = (carrinho || []).map(item => ({
+    nome: item.nome + ' x' + item.qtd, quantidade: item.qtd, preco_unit: item.preco
+  }));
   const prodsJson = JSON.stringify(prods);
-  // btoa para base64 (Node.js)
   const prodsB64 = Buffer.from(encodeURIComponent(prodsJson)).toString('base64');
   params.push('produtos=' + prodsB64);
 
@@ -318,9 +330,13 @@ async function enviarTelegram(texto) {
   } catch {}
 }
 
-async function gerarLinkInfinitePay(valorProduto, valorFrete, orderNsu) {
+async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoPct) {
   try {
-    const items = [{ quantity:1, price: Math.round(valorProduto*100), description: 'Suplemento Alimentar' }];
+    const items = (carrinho || []).map(item => {
+      let precoUnit = item.preco;
+      if (descontoPct) precoUnit = item.preco * (1 - descontoPct/100);
+      return { quantity: item.qtd, price: Math.round(precoUnit*100), description: 'Suplemento Alimentar' };
+    });
     if (valorFrete && valorFrete > 0) {
       items.push({ quantity:1, price: Math.round(valorFrete*100), description: 'Frete' });
     }
@@ -397,9 +413,7 @@ Retorne SOMENTE o JSON no formato:
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     const parsed = JSON.parse(jsonMatch[0]);
-    // Limpa estado para 2 letras maiúsculas
     if (parsed.estado) parsed.estado = parsed.estado.toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
-    // Remove campos vazios para o merge não sobrescrever dados já coletados
     Object.keys(parsed).forEach(k => { if (!parsed[k] || String(parsed[k]).trim().length < 1) delete parsed[k]; });
     return parsed;
   } catch(e) {
@@ -454,9 +468,9 @@ exports.handler = async (event) => {
     const session = await getSession(sid);
     const state = session.state || 'MENU';
 
-    // ── Atalho global para frete (qualquer estado exceto quando já está no fluxo) ──
+    // ── Atalho global para frete ──────────────────────────────────────────────
     const ehPerguntaFrete = ["frete","entrega","envio","prazo","transportadora","pac","sedex"].some(p => n.includes(p));
-    if (ehPerguntaFrete && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS"].includes(state)) {
+    if (ehPerguntaFrete && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS","CARRINHO"].includes(state)) {
       await saveSession(sid, { ...session, state:"ESTADO" });
       return respond("🚚 *Calcular frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...");
     }
@@ -470,17 +484,17 @@ exports.handler = async (event) => {
         const dados = await buscarCache('10-mais-vendidos');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*🔥 MAIS VENDIDOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
       if (num === 2) {
-        await saveSession(sid, { state:'PEPTIDEOS' });
+        await saveSession(sid, { ...session, state:'PEPTIDEOS' });
         return respond(MENU_PEPTIDEOS);
       }
 
       if (num === 3) {
-        await saveSession(sid, { state:'HORMONIOS' });
+        await saveSession(sid, { ...session, state:'HORMONIOS' });
         return respond(MENU_HORMONIOS);
       }
 
@@ -488,7 +502,7 @@ exports.handler = async (event) => {
         const dados = await buscarCache('gh');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*⚡ GH*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
@@ -496,7 +510,7 @@ exports.handler = async (event) => {
         const dados = await buscarCache('promocoes');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhuma promoção ativa no momento. *Digite menu* para voltar.');
-        await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*🔥 PROMOÇÕES*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
@@ -504,17 +518,17 @@ exports.handler = async (event) => {
         const dados = await buscarCache('outros');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*📦 OUTROS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
       if (num === 7) {
-        await saveSession(sid, { state:'FABRICANTES' });
+        await saveSession(sid, { ...session, state:'FABRICANTES' });
         return respond(MENU_FABRICANTES);
       }
 
       if (num === 8) {
-        await saveSession(sid, { state:'PROTOCOLO', historico:[] });
+        await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] });
         return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_');
       }
 
@@ -522,7 +536,6 @@ exports.handler = async (event) => {
         return respond('*📦 RASTREAR PEDIDO*\n\nNosso setor de logística te atende diretamente!\n\n👉 wa.me/447537155718\n\nInforme: número do pedido, CPF e nome completo. Eles resolvem rapidinho! 💪');
       }
 
-      // Atalho PROMO
       if (n === 'promo' || n === 'promocao' || n.includes('promocao relampago') || n.includes('promoção')) {
         const promo = await carregarPromocaoAtiva();
         if (!promo) return respond('Não há promoção relâmpago ativa no momento. 😊\n\nVeja nossa coleção de promoções permanentes digitando *5*.\n\n_Digite *menu* para voltar_');
@@ -538,31 +551,19 @@ exports.handler = async (event) => {
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'PEPTIDEOS') {
       const mapa = {
-        1: ['retatrutida'],
-        2: ['tirzepatida'],
-        3: ['semaglutida'],
-        4: ['bpc-157', 'bpc157'],
-        5: ['tb-500', 'tb500'],
-        6: ['ghk-cu', 'ghkcu'],
-        7: ['klow'],
-        8: ['glow'],
-        9: ['ss-31', 'ss31'],
-        10: ['mots-c', 'motsc'],
-        11: ['ipamorelin'],
-        12: ['cjc-1295', 'cjc1295'],
-        13: ['pt-141', 'pt141'],
-        14: ['aod-9604', 'aod9604'],
-        15: ['cbl-514', 'cbl514'],
-        16: ['epitalon'],
-        17: ['nad'],
-        18: ['tesamorelin'],
+        1: ['retatrutida'], 2: ['tirzepatida'], 3: ['semaglutida'],
+        4: ['bpc-157', 'bpc157'], 5: ['tb-500', 'tb500'], 6: ['ghk-cu', 'ghkcu'],
+        7: ['klow'], 8: ['glow'], 9: ['ss-31', 'ss31'], 10: ['mots-c', 'motsc'],
+        11: ['ipamorelin'], 12: ['cjc-1295', 'cjc1295'], 13: ['pt-141', 'pt141'],
+        14: ['aod-9604', 'aod9604'], 15: ['cbl-514', 'cbl514'], 16: ['epitalon'],
+        17: ['nad'], 18: ['tesamorelin'],
       };
 
       if (mapa[num]) {
         const dados = await buscarCache('peptideos');
         const linhas = filtrarCache(dados, mapa[num]);
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_PEPTIDEOS}`);
-        await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*${mapa[num][0].toUpperCase()}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
@@ -574,7 +575,7 @@ exports.handler = async (event) => {
           return !todosTermos.some(t => nProd.includes(norm(t)));
         });
         if (!linhas.length) return respond(`Nenhum outro peptídeo encontrado.\n\n${MENU_PEPTIDEOS}`);
-        await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*OUTROS PEPTÍDEOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
@@ -608,13 +609,9 @@ exports.handler = async (event) => {
         const { termos, label } = mapa[num];
         const dados = await buscarCache('hormonios');
         let linhas = filtrarCache(dados, termos);
-
-        if (num === 2) {
-          linhas = linhas.filter(l => !norm(l).includes('enantato'));
-        }
-
+        if (num === 2) linhas = linhas.filter(l => !norm(l).includes('enantato'));
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_HORMONIOS}`);
-        await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*${label}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
@@ -626,7 +623,7 @@ exports.handler = async (event) => {
           return !todosTermos.some(t => nProd.includes(norm(t)));
         });
         if (!linhas.length) return respond(`Nenhum outro hormônio encontrado.\n\n${MENU_HORMONIOS}`);
-        await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*OUTROS HORMÔNIOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
@@ -649,12 +646,12 @@ exports.handler = async (event) => {
         const linhas = filtrarCache(tudo, fabMap[num]);
         const unicas = [...new Set(linhas)];
         if (!unicas.length) return respond(`Nenhum produto de *${fabMap[num]}* disponível.\n\n${MENU_FABRICANTES}`);
-        await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas) });
         return respond(`*${fabMap[num].toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
       }
 
       if (num === 18) {
-        await saveSession(sid, { state:'BUSCA_LIVRE' });
+        await saveSession(sid, { ...session, state:'BUSCA_LIVRE' });
         return respond('Digite o nome do fabricante que procura:');
       }
 
@@ -662,7 +659,7 @@ exports.handler = async (event) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // BUSCA LIVRE (fabricante digitado)
+    // BUSCA LIVRE
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'BUSCA_LIVRE') {
       if (!mensagem || mensagem.length < 2) return respond('Por favor, digite o nome do fabricante:');
@@ -670,7 +667,7 @@ exports.handler = async (event) => {
       const linhas = filtrarCache(tudo, mensagem);
       const unicas = [...new Set(linhas)];
       if (!unicas.length) return respond(`Nenhum produto de *${mensagem}* encontrado.\n\n${MENU_FABRICANTES}`);
-      await saveSession(sid, { state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas) });
+      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas) });
       return respond(`*${mensagem.toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
     }
 
@@ -688,12 +685,40 @@ exports.handler = async (event) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // QUANTIDADE
+    // QUANTIDADE → adiciona ao carrinho
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'QUANTIDADE') {
       if (!num || num < 1 || num > 99) return respond('Por favor, informe uma quantidade válida (1 a 99):');
-      await saveSession(sid, { ...session, state:'ESTADO', quantidade: num });
-      return respond(`*De qual estado você é?*\nExemplo: RJ, SP, MG, DF, BA...`);
+      const prod = session.produtoSelecionado || {};
+      const carrinho = session.carrinho || [];
+      carrinho.push({ nome: prod.nome, preco: prod.preco, qtd: num });
+
+      const subtotal = totalCarrinho(carrinho);
+      await saveSession(sid, { ...session, state:'CARRINHO', carrinho });
+      return respond(
+        `✅ Adicionado ao carrinho:\n📦 *${prod.nome}* x${num}\n\n` +
+        `🛒 *Seu carrinho* (${carrinho.length} ${carrinho.length>1?'itens':'item'}):\n` +
+        `${resumoCarrinho(carrinho)}\n\n` +
+        `💰 *Subtotal: R$ ${subtotal.toFixed(2).replace('.',',')}*\n_(frete calculado no fechamento)_\n\n` +
+        `*O que deseja fazer?*\n1️⃣ Adicionar mais produtos\n2️⃣ Finalizar compra`
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CARRINHO (adicionar mais ou finalizar)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (state === 'CARRINHO') {
+      if (num === 1) {
+        // Volta ao menu principal para escolher mais produtos (mantém o carrinho)
+        const promo = await carregarPromocaoAtiva();
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond('🛒 Seu carrinho está guardado! Escolha mais produtos:\n\n' + buildMenuPrincipal(promo));
+      }
+      if (num === 2) {
+        await saveSession(sid, { ...session, state:'ESTADO' });
+        return respond(`*De qual estado você é?*\nExemplo: RJ, SP, MG, DF, BA...`);
+      }
+      return respond('Digite *1* para adicionar mais produtos ou *2* para finalizar a compra:');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -715,12 +740,10 @@ exports.handler = async (event) => {
       const opts = session.freteOpcoes || [];
       if (!num || num < 1 || num > opts.length) return respond(`Digite 1, 2 ou 3 para escolher o frete:`);
       const frete = opts[num - 1];
-      const prod  = session.produtoSelecionado || {};
-      const qtd   = session.quantidade || 1;
-      const totalProd = prod.preco * qtd;
+      const carrinho = session.carrinho || [];
+      const totalProd = totalCarrinho(carrinho);
       const total     = totalProd + frete.valor;
 
-      // Aplica desconto já no resumo se houver promoção ativa
       const promoResumo = await carregarPromocaoAtiva();
       let totalComDesconto = total;
       let linhaDesconto = '';
@@ -733,10 +756,9 @@ exports.handler = async (event) => {
 
       const resumo =
         `*📋 RESUMO DO PEDIDO*\n\n` +
-        `📦 *${prod.nome}*\n` +
-        `    ${qtd}x — R$ ${prod.preco.toFixed(2).replace('.',',')} un.\n` +
+        `${resumoCarrinho(carrinho)}\n\n` +
         `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
-        `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
+        `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}` +
         linhaDesconto +
         `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n` +
         `*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
@@ -750,75 +772,62 @@ exports.handler = async (event) => {
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'CONFIRMAR') {
       if (num === 2) {
-        await saveSession(sid, { state:'MENU' });
+        await deleteSession(sid);
         return respond('Tudo bem! Quando quiser, estou aqui. 😊\n\n' + MENU_PRINCIPAL);
       }
       if (num === 1) {
-        const prod  = session.produtoSelecionado || {};
-        const qtd   = session.quantidade || 1;
+        const carrinho = session.carrinho || [];
         const frete = session.freteSelecionado || {};
         const uf    = session.estadoCliente || '';
 
         const promo = await carregarPromocaoAtiva();
+        const descPct = (promo && promo.desconto_pct) ? parseFloat(promo.desconto_pct) : 0;
         let totalProdFinal = session.totalProd;
         let totalFinal = session.total;
         let infoDesconto = '';
-        if (promo && promo.desconto_pct) {
-          const descPct = parseFloat(promo.desconto_pct);
+        if (descPct) {
           const descValor = session.totalProd * (descPct / 100);
           totalProdFinal = session.totalProd - descValor;
           totalFinal = totalProdFinal + frete.valor;
           infoDesconto = `\n🔥 *${promo.titulo}* (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}\n💰 *Total com desconto: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
         }
 
-        // Gera número do pedido ANTES do link (para amarrar no webhook InfinitePay)
         const orderNsu = await gerarNumeroPedido();
+        const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descPct);
 
-        // Link InfinitePay: produto genérico "Suplemento Alimentar" + Frete separados
-        const link = await gerarLinkInfinitePay(totalProdFinal, frete.valor, orderNsu);
-
-        // Salva pedido pendente no Firebase com todos os dados que já temos
+        // Salva pedido pendente no Firebase
         try {
           const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
           await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${pKey}.json`, {
             method:'PUT', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
-              phone: sid,
-              order_nsu: orderNsu,
-              produto: prod.nome,
-              quantidade: qtd,
-              frete: frete.label,
-              estado: uf,
-              valor: totalFinal,
-              ts: Date.now()
+              phone: sid, order_nsu: orderNsu,
+              produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
+              quantidade: carrinho.reduce((a,i)=>a+i.qtd,0),
+              frete: frete.label, estado: uf, valor: totalFinal, ts: Date.now()
             })
           });
         } catch {}
 
-        // Alerta IMEDIATO no Telegram — você sabe do pedido mesmo se o cliente sumir
+        const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
         await enviarTelegram(
           `🟡 *PEDIDO EM ABERTO (Athena)*\n\n` +
-          `📦 ${orderNsu || '—'}\n` +
-          `🛒 ${prod.nome} x${qtd}\n` +
+          `📦 ${orderNsu || '—'}\n${itensTxt}\n` +
           `🚚 ${frete.label} — ${uf}\n` +
           `💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n` +
           `📱 ${sid}\n\n` +
           `⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`
         );
 
-        // Alerta também por email (via GAS) — só notifica, não escreve na planilha
         try {
           await fetch(GAS_URL, {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
-              action: 'alerta_pedido_aberto',
-              order_nsu: orderNsu,
-              produto: prod.nome,
-              quantidade: qtd,
-              frete: frete.label,
-              estado: uf,
-              valor: totalFinal.toFixed(2).replace('.',','),
-              phone: sid
+              action: 'alerta_pedido_aberto', order_nsu: orderNsu,
+              produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
+              quantidade: carrinho.reduce((a,i)=>a+i.qtd,0),
+              frete: frete.label, estado: uf,
+              valor: totalFinal.toFixed(2).replace('.',','), phone: sid
             })
           });
         } catch {}
@@ -837,7 +846,6 @@ exports.handler = async (event) => {
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'AGUARDAR_COMPROVANTE') {
       const palavrasPag = ['paguei','pix feito','fiz o pix','transferi','pago','pix realizado','comprovante','ja paguei','ja transferi','sim','yes','fiz','realizei','confirmado','feito','ok','okay'];
-      // BotConversa não manda body.type — detecta mídia por campos alternativos ou URL no texto
       const ehMidiaBC = !!(body.type || body.mediaUrl || body.media_url || body.fileUrl || body.url || body.arquivo || body.file || body.caption !== undefined);
       const ehUrlImagem = !!(mensagem && mensagem.match(/https?:\/\/[^\s]+(jpg|jpeg|png|gif|pdf|mp4|webp|ogg|opus)/i));
       const ehPagamento = ehMidiaBC || ehUrlImagem || palavrasPag.some(p => n.includes(p));
@@ -850,12 +858,11 @@ exports.handler = async (event) => {
           `Nome: \nCPF: \nTelefone: \nEmail: \nRua e número: \nComplemento: \nBairro: \nCidade: \nEstado: \nCEP: `
         );
       }
-      // Cliente mudou de assunto — relembrar pedido pendente de forma persuasiva
-      const prodPend = session.produtoSelecionado || {};
+      const carrinhoPend = session.carrinho || [];
       const totalPend = session.total || 0;
       return respond(
         `⏳ Você ainda tem um pedido em aberto!\n\n` +
-        `📦 *${prodPend.nome || "Seu produto"}*\n` +
+        `${resumoCarrinho(carrinhoPend)}\n` +
         `💰 *R$ ${totalPend.toFixed(2).replace(".",",")}*\n\n` +
         `Seu link de pagamento ainda está ativo! Após pagar:\n1️⃣ Envie o print ou foto do comprovante\n2️⃣ Digite *SIM* para eu liberar o envio! 🚀\n\n` +
         `Se quiser cancelar e começar do zero, digite *menu*. 😊`
@@ -866,9 +873,7 @@ exports.handler = async (event) => {
     // COLETA DE DADOS
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'COLETA_DADOS') {
-      // Extrai dados via IA (reconhece com ou sem rótulos, qualquer formato)
       const dados = await extrairDadosIA(mensagem) || {};
-
       const coleta = { ...(session.coleta||{}), ...dados };
       const obrigatorios = ['nome','cpf','telefone','endereco','bairro','cidade','estado','cep'];
       const faltam = obrigatorios.filter(c => !coleta[c] || coleta[c].length < 2);
@@ -879,51 +884,42 @@ exports.handler = async (event) => {
         return respond(`Faltam alguns dados:\n${faltam.map(f => '• '+nomesCampos[f]).join('\n')}\n\nPor favor, me envie esses dados que faltam. 😊`);
       }
 
-      // Todos os dados coletados → salvar pedido
-      const prod     = session.produtoSelecionado || {};
-      const qtd      = session.quantidade || 1;
+      const carrinho = session.carrinho || [];
       const frete    = session.freteSelecionado || {};
       const total    = session.total || 0;
-      // Reutiliza o número já gerado no momento do link (evita pedido duplicado)
       const num_pedido = session.orderNsu || await gerarNumeroPedido();
 
       if (num_pedido) {
+        const items = carrinho.map(i => ({
+          description: `${i.nome} x${i.qtd}`, quantity: i.qtd, price: Math.round(i.preco * 100)
+        }));
+        items.push({ description: `Frete ${frete.label} — ${session.estadoCliente}`, quantity: 1, price: Math.round(frete.valor * 100) });
+
         await salvarPedidoGAS({
           order_nsu: num_pedido,
           paid_amount: Math.round(total * 100),
           capture_method: 'whatsapp_athena',
           customer: { name: coleta.nome, email: (coleta.email||'nao_informado').toLowerCase(), phone_number: coleta.telefone, document: coleta.cpf },
           address: { street: coleta.endereco, number: '', complement: coleta.complemento||'', neighborhood: coleta.bairro, city: coleta.cidade, state: coleta.estado, cep: coleta.cep },
-          items: [
-            { description: `${prod.nome} x${qtd}`, quantity: qtd,  price: Math.round(prod.preco * 100) },
-            { description: `Frete ${frete.label} — ${session.estadoCliente}`, quantity: 1, price: Math.round(frete.valor * 100) }
-          ]
+          items
         });
+
+        const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
         await enviarTelegram(
-          `🤖 *VENDA ATHENA!*\n\n📦 ${num_pedido}\n👤 ${coleta.nome}\n🪪 ${coleta.cpf}\n📱 ${coleta.telefone}\n📧 ${coleta.email||'—'}\n🏠 ${coleta.endereco}${coleta.complemento?', '+coleta.complemento:''}, ${coleta.bairro}, ${coleta.cidade}-${coleta.estado}, ${coleta.cep}\n🛒 ${prod.nome} x${qtd}\n🚚 ${frete.label} ${session.estadoCliente}\n💰 R$ ${total.toFixed(2)}\n📱 ${sid}`
+          `🤖 *VENDA ATHENA!*\n\n📦 ${num_pedido}\n👤 ${coleta.nome}\n🪪 ${coleta.cpf}\n📱 ${coleta.telefone}\n📧 ${coleta.email||'—'}\n🏠 ${coleta.endereco}${coleta.complemento?', '+coleta.complemento:''}, ${coleta.bairro}, ${coleta.cidade}-${coleta.estado}, ${coleta.cep}\n${itensTxt}\n🚚 ${frete.label} ${session.estadoCliente}\n💰 R$ ${total.toFixed(2)}\n📱 ${sid}`
         );
       }
 
-      // ── Gera link do recibo ───────────────────────────────────────────────
       const linkRecibo = gerarLinkRecibo(
-        num_pedido || 'VF-A',
-        coleta.nome,
-        coleta.cpf,
-        coleta.email || '',
-        'WhatsApp / Athena',
-        prod.nome,
-        qtd,
-        prod.preco,
-        frete,
-        total
+        num_pedido || 'VF-A', coleta.nome, coleta.cpf, coleta.email || '',
+        'WhatsApp / Athena', carrinho, frete, total
       );
 
-      // ── Mensagem 1: confirmação + recibo + rastreamento ───────────────────
       const primeiroNome = (coleta.nome || '').split(' ')[0];
       const msg1 =
         `✅ *Pedido ${num_pedido||''} confirmado!*\n\n` +
         `Olá, *${primeiroNome}*! Obrigada pela confiança na VitaFlow! 🧡\n\n` +
-        `📦 *${prod.nome}* x${qtd}\n` +
+        `${resumoCarrinho(carrinho)}\n` +
         `🚚 ${frete.label} — ${session.estadoCliente}\n` +
         `💰 R$ ${total.toFixed(2).replace('.',',')}\n\n` +
         `🧾 *Seu recibo:*\n${linkRecibo}\n\n` +
@@ -933,7 +929,6 @@ exports.handler = async (event) => {
         (coleta.cpf ? `• *CPF:* ${coleta.cpf}\n` : '') +
         (coleta.email ? `• *E-mail:* ${coleta.email}\n` : '');
 
-      // ── Mensagem 2: aviso de filmar a abertura ────────────────────────────
       const msg2 =
         `⚠️ *AVISO IMPORTANTE — VITAFLOW* ⚠️\n\n` +
         `Antes de receber seu pedido, leia com atenção. Essas instruções são essenciais para te ajudarmos em qualquer situação. 🙏\n\n` +
@@ -956,10 +951,9 @@ exports.handler = async (event) => {
     // PROTOCOLO (única parte com IA)
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'PROTOCOLO') {
-      // Se cliente digitou número e há lista de produtos do protocolo anterior
       if (num && num >= 1 && session.listaProtocolo && num <= session.listaProtocolo.length) {
         const prod = session.listaProtocolo[num - 1];
-        await saveSession(sid, { state:'QUANTIDADE', produtoSelecionado: prod });
+        await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
         return respond(`Você escolheu:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.',',')}\n\n*Quantas unidades deseja?*\n_(Digite o número)_`);
       }
 
@@ -975,17 +969,15 @@ exports.handler = async (event) => {
         if (d.error || !d.content) throw new Error('Claude error');
         let reply = d.content[0].text || '';
 
-        // Extrai o nome do produto do bloco ---PRODUTOS--- e remove do texto
         let msgProdutos = '';
         const matchProd = reply.match(/---PRODUTOS---([\s\S]*?)---FIM---/);
         if (matchProd) {
           const nomeProduto = matchProd[1].trim();
           reply = reply.replace(/---PRODUTOS---([\s\S]*?)---FIM---/, '').trim();
 
-          // Busca no cache
           const tudo = await buscarTodosCache();
           const termos = nomeProduto.toLowerCase().split(/[\s\/,+]+/).filter(p => p.length > 2);
-          const linhas = filtrarCache(tudo, termos.slice(0, 2)); // usa os 2 primeiros termos
+          const linhas = filtrarCache(tudo, termos.slice(0, 2));
           const unicas = [...new Set(linhas)].slice(0, 10);
 
           if (unicas.length) {
@@ -998,26 +990,26 @@ exports.handler = async (event) => {
               formatarLista(unicas) +
               `\n\n*Digite o número para comprar ou *menu* para ver todas as categorias.*`;
 
-            // Salva lista na sessão para o cliente poder selecionar
             await saveSession(sid, {
+              ...session,
               state: 'PROTOCOLO',
               historico: hist.concat([{ role:'assistant', content: reply }]),
               listaProtocolo: parseProdutos(unicas)
             });
           } else {
             msgProdutos = `🛒 Para ver todos os produtos disponíveis, *digite menu*.`;
-            await saveSession(sid, { state:'PROTOCOLO', historico: hist.concat([{ role:'assistant', content: reply }]) });
+            await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist.concat([{ role:'assistant', content: reply }]) });
           }
         } else {
           hist.push({ role:'assistant', content: reply });
-          await saveSession(sid, { state:'PROTOCOLO', historico: hist });
+          await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist });
         }
 
         return respond(reply, msgProdutos);
 
       } catch(e) {
         console.error('PROTOCOLO ERRO:', e.message);
-        await saveSession(sid, { state:'PROTOCOLO', historico: hist });
+        await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist });
         return respond('Desculpe o delay! 😊 Pode repetir sua pergunta?\n\nOu *menu* para voltar.');
       }
     }
