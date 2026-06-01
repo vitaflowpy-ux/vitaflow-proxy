@@ -318,15 +318,23 @@ async function enviarTelegram(texto) {
   } catch {}
 }
 
-async function gerarLinkInfinitePay(produto, valor) {
+async function gerarLinkInfinitePay(valorProduto, valorFrete, orderNsu) {
   try {
+    const items = [{ quantity:1, price: Math.round(valorProduto*100), description: 'Suplemento Alimentar' }];
+    if (valorFrete && valorFrete > 0) {
+      items.push({ quantity:1, price: Math.round(valorFrete*100), description: 'Frete' });
+    }
+    const payload = {
+      handle: INFINITEPAY_TAG,
+      redirect_url: 'https://vitaflowoficial.com/pages/obrigado',
+      webhook_url: GAS_URL,
+      items
+    };
+    if (orderNsu) payload.order_nsu = orderNsu;
+
     const r = await fetch('https://api.checkout.infinitepay.io/links', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        handle: INFINITEPAY_TAG,
-        redirect_url: 'https://vitaflowoficial.com/pages/obrigado',
-        items: [{ quantity:1, price: Math.round(valor*100), description: produto }]
-      })
+      body: JSON.stringify(payload)
     });
     const d = await r.json();
     return d?.url || null;
@@ -752,27 +760,70 @@ exports.handler = async (event) => {
         const uf    = session.estadoCliente || '';
 
         const promo = await carregarPromocaoAtiva();
+        let totalProdFinal = session.totalProd;
         let totalFinal = session.total;
         let infoDesconto = '';
         if (promo && promo.desconto_pct) {
           const descPct = parseFloat(promo.desconto_pct);
           const descValor = session.totalProd * (descPct / 100);
-          totalFinal = session.totalProd - descValor + frete.valor;
+          totalProdFinal = session.totalProd - descValor;
+          totalFinal = totalProdFinal + frete.valor;
           infoDesconto = `\n🔥 *${promo.titulo}* (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}\n💰 *Total com desconto: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
         }
 
-        const desc  = `${prod.nome} x${qtd} + Frete ${frete.label} — ${uf}`;
-        const link  = await gerarLinkInfinitePay(desc, totalFinal);
+        // Gera número do pedido ANTES do link (para amarrar no webhook InfinitePay)
+        const orderNsu = await gerarNumeroPedido();
 
+        // Link InfinitePay: produto genérico "Suplemento Alimentar" + Frete separados
+        const link = await gerarLinkInfinitePay(totalProdFinal, frete.valor, orderNsu);
+
+        // Salva pedido pendente no Firebase com todos os dados que já temos
         try {
           const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
           await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${pKey}.json`, {
             method:'PUT', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ phone:sid, produto:desc, valor:session.total, ts:Date.now() })
+            body: JSON.stringify({
+              phone: sid,
+              order_nsu: orderNsu,
+              produto: prod.nome,
+              quantidade: qtd,
+              frete: frete.label,
+              estado: uf,
+              valor: totalFinal,
+              ts: Date.now()
+            })
           });
         } catch {}
 
-        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal });
+        // Alerta IMEDIATO no Telegram — você sabe do pedido mesmo se o cliente sumir
+        await enviarTelegram(
+          `🟡 *PEDIDO EM ABERTO (Athena)*\n\n` +
+          `📦 ${orderNsu || '—'}\n` +
+          `🛒 ${prod.nome} x${qtd}\n` +
+          `🚚 ${frete.label} — ${uf}\n` +
+          `💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n` +
+          `📱 ${sid}\n\n` +
+          `⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`
+        );
+
+        // Alerta também por email (via GAS) — só notifica, não escreve na planilha
+        try {
+          await fetch(GAS_URL, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              action: 'alerta_pedido_aberto',
+              order_nsu: orderNsu,
+              produto: prod.nome,
+              quantidade: qtd,
+              frete: frete.label,
+              estado: uf,
+              valor: totalFinal.toFixed(2).replace('.',','),
+              phone: sid
+            })
+          });
+        } catch {}
+
+        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu });
         return respond(link
           ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n📸 Após pagar:\n1️⃣ Envie o print ou foto do comprovante\n2️⃣ Digite *SIM* para eu confirmar seu pedido!`
           : `Acesse vitaflowoficial.com para finalizar seu pedido.`
@@ -833,7 +884,8 @@ exports.handler = async (event) => {
       const qtd      = session.quantidade || 1;
       const frete    = session.freteSelecionado || {};
       const total    = session.total || 0;
-      const num_pedido = await gerarNumeroPedido();
+      // Reutiliza o número já gerado no momento do link (evita pedido duplicado)
+      const num_pedido = session.orderNsu || await gerarNumeroPedido();
 
       if (num_pedido) {
         await salvarPedidoGAS({
