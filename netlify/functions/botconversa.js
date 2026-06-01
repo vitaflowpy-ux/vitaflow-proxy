@@ -5,6 +5,47 @@ const FIREBASE_URL    = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const GAS_URL         = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.html';
 
+// ── Atacado ───────────────────────────────────────────────────────────────────
+const TABELA_ATACADO_URL = 'https://drive.google.com/file/d/1olhYj0OW1cL0Wk0kk6-fct89EJff_1Ip/view';
+const WHATSAPP_ATACADO_1 = 'wa.me/5521998018028';
+const WHATSAPP_ATACADO_2 = 'wa.me/447537155723';
+
+const MSG_ATACADO = `*🏭 VENDAS NO ATACADO — VitaFlow*
+
+Que ótimo seu interesse! Aqui estão as condições do nosso atacado:
+
+💰 *Pedido mínimo:* R$ 3.000 por pedido
+📋 *Exclusivo* para produtos da tabela de atacado (itens fora da tabela não entram nessa modalidade)
+🔄 *Tabela atualizada diariamente* — os preços acompanham a flutuação do dólar, então valem para o dia da consulta
+🚚 *Logística diferenciada:* despacho em até 5 dias úteis após a compensação do pagamento (garante o controle de qualidade e a embalagem adequada). Após a postagem, os prazos de entrega por região seguem os mesmos do varejo.
+
+📥 *Baixe a tabela atualizada de hoje:*
+${TABELA_ATACADO_URL}
+
+⚠️ As vendas no atacado são feitas exclusivamente por um *consultor humano especializado* — eu (Athena) não processo esse tipo de pedido.
+
+*Quer que eu te redirecione para um dos nossos consultores de atacado?*
+1️⃣ Sim, quero falar com um consultor
+2️⃣ Não, voltar ao menu`;
+
+const MSG_PRAZO_VAREJO = `*📦 PRAZO DE POSTAGEM E ENTREGA — Varejo*
+
+⏱️ *Despacho:* em até *48 horas úteis* após a confirmação do pagamento.
+
+Após a postagem, os prazos estimados de entrega por região são:
+🟢 *Sudeste:* 2 a 5 dias úteis
+🔵 *Sul:* 3 a 5 dias úteis
+🟠 *Centro-Oeste:* 4 a 6 dias úteis
+🟡 *Nordeste:* 5 a 8 dias úteis
+🔴 *Norte:* 7 a 10 dias úteis
+
+_*Esses prazos são estimativas e podem variar conforme distância, condições climáticas e acesso rodoviário._`;
+
+const MSG_PERGUNTA_TIPO_PRAZO = `📦 *Sobre prazo de entrega* — me diz qual o tipo da sua compra:
+
+1️⃣ Compra normal (varejo)
+2️⃣ Compra no atacado (pedido mínimo R$ 3.000)`;
+
 // ── Tabela de fretes ──────────────────────────────────────────────────────────
 const FRETES = {
   RJ:{PAC:45,SEDEX:60,Transp:70},  SP:{PAC:45,SEDEX:60,Transp:55},
@@ -468,11 +509,80 @@ exports.handler = async (event) => {
     const session = await getSession(sid);
     const state = session.state || 'MENU';
 
-    // ── Atalho global para frete ──────────────────────────────────────────────
-    const ehPerguntaFrete = ["frete","entrega","envio","prazo","transportadora","pac","sedex"].some(p => n.includes(p));
-    if (ehPerguntaFrete && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS","CARRINHO"].includes(state)) {
-      await saveSession(sid, { ...session, state:"ESTADO" });
-      return respond("🚚 *Calcular frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...");
+    // ── Atalho global: ATACADO ────────────────────────────────────────────────
+    const ehAtacado = ["atacado","revenda","revender","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
+    if (ehAtacado && !["AGUARDAR_COMPROVANTE","COLETA_DADOS"].includes(state)) {
+      await saveSession(sid, { ...session, state:'ATACADO' });
+      return respond(MSG_ATACADO);
+    }
+
+    // ── Atalho global: PRAZO de entrega ───────────────────────────────────────
+    // (prazo é pergunta informativa — separado do cálculo de frete e da venda)
+    const ehPerguntaPrazo = ["prazo","quanto tempo","quantos dias","demora","chega em","tempo de entrega","prazo de entrega","prazo de postagem"].some(p => n.includes(p));
+    if (ehPerguntaPrazo && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS","CARRINHO","ATACADO","PRAZO_TIPO"].includes(state)) {
+      // Se já mencionou atacado na mesma frase, manda pro fluxo de atacado
+      if (ehAtacado) {
+        await saveSession(sid, { ...session, state:'ATACADO' });
+        return respond(MSG_ATACADO);
+      }
+      // Senão, pergunta se é varejo ou atacado
+      await saveSession(sid, { ...session, state:'PRAZO_TIPO' });
+      return respond(MSG_PERGUNTA_TIPO_PRAZO);
+    }
+
+    // ── Atalho global para frete (cálculo de valor) ───────────────────────────
+    // Opção B: mostra o frete e oferece escolher produto — NUNCA gera pedido vazio
+    const ehPerguntaFrete = ["frete","transportadora","pac","sedex","valor do envio","custo do envio","quanto e o frete","quanto fica o frete"].some(p => n.includes(p));
+    if (ehPerguntaFrete && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS","CARRINHO","ATACADO","PRAZO_TIPO","FRETE_AVULSO"].includes(state)) {
+      await saveSession(sid, { ...session, state:"FRETE_AVULSO" });
+      return respond("🚚 *Consultar frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ATACADO (resposta ao redirecionamento)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (state === 'ATACADO') {
+      if (num === 1) {
+        await enviarTelegram(`🏭 CLIENTE QUER ATACADO\n📱 ${sid}\n💬 Redirecionado para consultores de atacado`);
+        await saveSession(sid, { state:'MENU' });
+        return respond(MSG_ATACADO_CONTATOS);
+      }
+      if (num === 2) {
+        await saveSession(sid, { state:'MENU' });
+        return respond('Sem problema! 😊\n\n' + MENU_PRINCIPAL);
+      }
+      return respond('Digite *1* para falar com um consultor de atacado ou *2* para voltar ao menu:');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PRAZO_TIPO (cliente escolhe varejo ou atacado)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (state === 'PRAZO_TIPO') {
+      if (num === 1) {
+        await saveSession(sid, { state:'MENU' });
+        return respond(MSG_PRAZO_VAREJO + '\n\n_Digite *menu* para ver nossos produtos._');
+      }
+      if (num === 2) {
+        await saveSession(sid, { ...session, state:'ATACADO' });
+        return respond(MSG_ATACADO);
+      }
+      return respond('Digite *1* para compra normal (varejo) ou *2* para atacado:');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FRETE_AVULSO (consulta de frete sem produto — Opção B)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (state === 'FRETE_AVULSO') {
+      const uf = mensagem.trim().toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
+      const opts = getFreteOpcoes(uf);
+      if (!opts) return respond(`Estado *${uf || mensagem}* não reconhecido.\nDigite a sigla do seu estado (ex: RJ, SP, MG):`);
+      const freteStr = opts.map((o) => `• *${o.label}* — R$ ${o.valor.toFixed(2).replace('.',',')}`).join('\n');
+      await saveSession(sid, { state:'MENU' });
+      return respond(
+        `🚚 *Opções de frete para ${uf}:*\n\n${freteStr}\n\n` +
+        `💡 Recomendamos a *Transportadora* — inclui seguro grátis contra apreensão e extravio.\n\n` +
+        `Quer escolher um produto para comprar? É só digitar *menu* e navegar pelas categorias! 😊`
+      );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -741,6 +851,11 @@ exports.handler = async (event) => {
       if (!num || num < 1 || num > opts.length) return respond(`Digite 1, 2 ou 3 para escolher o frete:`);
       const frete = opts[num - 1];
       const carrinho = session.carrinho || [];
+      // Trava: nunca prosseguir com carrinho vazio
+      if (!carrinho.length) {
+        await saveSession(sid, { state:'MENU' });
+        return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL);
+      }
       const totalProd = totalCarrinho(carrinho);
       const total     = totalProd + frete.valor;
 
@@ -777,6 +892,11 @@ exports.handler = async (event) => {
       }
       if (num === 1) {
         const carrinho = session.carrinho || [];
+        // Trava: nunca gerar pedido com carrinho vazio
+        if (!carrinho.length) {
+          await saveSession(sid, { state:'MENU' });
+          return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL);
+        }
         const frete = session.freteSelecionado || {};
         const uf    = session.estadoCliente || '';
 
