@@ -30,6 +30,7 @@ async function buscarColecaoShopify(handle) {
                   node {
                     title
                     price { amount }
+                    compareAtPrice { amount }
                     availableForSale
                   }
                 }
@@ -105,9 +106,19 @@ function formatarProdutosComFoto(produtos) {
       // Menor preço entre as variantes disponíveis
       const precos = disponiveis.map(({ node: v }) => parseFloat(v.price?.amount || 0)).filter(x => x > 0);
       const preco = precos.length ? Math.min(...precos) : 0;
+      // Preço de comparação (riscado) da variante de menor preço
+      let compareAt = 0;
+      disponiveis.forEach(({ node: v }) => {
+        const pv = parseFloat(v.price?.amount || 0);
+        if (pv === preco) {
+          const c = parseFloat(v.compareAtPrice?.amount || 0);
+          if (c > preco) compareAt = c;
+        }
+      });
       return {
         nome: p.title,
         preco,
+        compare_at: compareAt,
         foto: p.featuredImage?.url || ''
       };
     })
