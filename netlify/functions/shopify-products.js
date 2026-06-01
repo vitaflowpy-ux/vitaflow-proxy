@@ -41,6 +41,25 @@ async function getAllPages(firstUrl) {
   return results;
 }
 
+// Decide se uma variante está disponível, com base no estoque REAL.
+// Regras (na ordem):
+//  - Se a variante NÃO gerencia estoque (inventory_management == null) → sempre disponível
+//  - Se gerencia e a política é "continue" (vende mesmo sem estoque) → sempre disponível
+//  - Se gerencia e a política é "deny" → disponível somente se inventory_quantity > 0
+function varianteDisponivel(v) {
+  // Não gerencia estoque → sempre disponível
+  if (!v.inventory_management) return true;
+  // Gerencia estoque mas permite vender sem estoque
+  if (v.inventory_policy === 'continue') return true;
+  // Gerencia estoque e política "deny": precisa de quantidade > 0
+  if (typeof v.inventory_quantity === 'number') {
+    return v.inventory_quantity > 0;
+  }
+  // Quantidade desconhecida com política deny → tratamos como INDISPONÍVEL
+  // (antes era assumido disponível — causa do "falso disponível")
+  return false;
+}
+
 exports.handler = async function(event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
 
@@ -59,26 +78,27 @@ exports.handler = async function(event) {
              t.includes('outro') || t.includes('mais vendid') || t.includes('promo');
     });
 
-    const products = await getAllPages(`${base}/products.json?limit=250&fields=id,title,variants,status`);
+    // IMPORTANTE: incluir os campos de estoque das variantes na query.
+    // Sem 'inventory_quantity', 'inventory_policy' e 'inventory_management'
+    // o cálculo de disponibilidade fica cego.
+    const products = await getAllPages(`${base}/products.json?limit=250&fields=id,title,status,variants`);
 
     const allProducts = {};
     products.forEach(p => {
       const variants = p.variants || [];
       const prices = variants.map(v => parseFloat(v.price)||0).filter(v => v > 0);
-      // Produto disponível se: status=active E pelo menos uma variante com estoque > 0
-      // ou sem controle de estoque (inventory_management nulo)
-      const available = p.status === 'active' && variants.some(v =>
-        !v.inventory_management ||
-        v.inventory_policy === 'continue' ||
-        (v.inventory_quantity !== undefined ? v.inventory_quantity > 0 : true)
-      );
+
+      // Produto disponível = status active E pelo menos UMA variante realmente disponível
+      const available = p.status === 'active' && variants.some(varianteDisponivel);
+
       allProducts[String(p.id)] = {
         id: String(p.id),
         name: p.title,
         price: prices.length ? Math.min(...prices) : 0,
         category: 'Outros',
         categories: [],
-        available,
+        status: p.status,                 // 'active' ou 'draft' — status real
+        available,                         // disponibilidade real por estoque
       };
     });
 
@@ -101,7 +121,7 @@ exports.handler = async function(event) {
     }));
 
     const result = Object.values(allProducts)
-      .map(p => ({ id: p.id, name: p.name, price: p.price, category: p.category, categories: p.categories, available: p.available }))
+      .map(p => ({ id: p.id, name: p.name, price: p.price, category: p.category, categories: p.categories, status: p.status, available: p.available }))
       .sort((a,b) => a.name.localeCompare(b.name, 'pt-BR'));
 
     return {
