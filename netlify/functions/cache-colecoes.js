@@ -5,9 +5,22 @@
 // e adiciona "produtos" (com foto) numa estrutura paralela para a tabela pública
 
 const SHOPIFY_STORE = 'vitaflow-7352';
-const STOREFRONT_TOKEN = 'b4b46a09460b7277f5d4625b9019daef'; // Storefront API token (público)
+const STOREFRONT_TOKEN = 'b4b46a09460b7277f5d4625b9019daef';
 const FIREBASE_URL = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
-const COLECOES = ['10-mais-vendidos', 'emagrecedores', 'peptideos', 'hormonios', 'gh', 'promocoes', 'outros'];
+const COLECOES = [
+  '10-mais-vendidos',
+  'emagrecedores',
+  'peptideos',
+  'hormonios',
+  'gh',
+  'promocoes',
+  'outros',
+  'emagrecimento',
+  'ganho-de-massa',
+  'saude-qualidade-de-vida',
+  'energia',
+  'recuperacao'
+];
 
 async function buscarColecaoShopify(handle) {
   let todosProdutos = [];
@@ -103,10 +116,8 @@ function formatarProdutosComFoto(produtos) {
       const variants = p.variants?.edges || [];
       const disponiveis = variants.filter(({ node: v }) => v.availableForSale);
       if (disponiveis.length === 0) return null;
-      // Menor preço entre as variantes disponíveis
       const precos = disponiveis.map(({ node: v }) => parseFloat(v.price?.amount || 0)).filter(x => x > 0);
       const preco = precos.length ? Math.min(...precos) : 0;
-      // Preço de comparação (riscado) da variante de menor preço
       let compareAt = 0;
       disponiveis.forEach(({ node: v }) => {
         const pv = parseFloat(v.price?.amount || 0);
@@ -131,8 +142,8 @@ async function salvarFirebase(handle, dados, produtos) {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      dados,                                   // formato antigo (nome|preço) — INTACTO
-      produtos,                                // NOVO: array com nome, preço e foto
+      dados,
+      produtos,
       atualizado_em: new Date().toISOString(),
       total: dados.split('\n').filter(Boolean).length
     })
