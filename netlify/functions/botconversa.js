@@ -55,12 +55,12 @@ const FRETES = {
   GO:{PAC:45,SEDEX:70,Transp:76},  MS:{PAC:45,SEDEX:85,Transp:80},
   BA:{PAC:58,SEDEX:90,Transp:80},  MT:{PAC:58,SEDEX:90,Transp:75},
   CE:{PAC:72,SEDEX:105,Transp:80}, PA:{PAC:87,SEDEX:105,Transp:110},
-  PE:{PAC:87,SEDEX:115,Transp:90}, TO:{PAC:87,SEDEX:105,Transp:110},
+  PE:{PAC:87,SEDEX:115,Transp:120},TO:{PAC:87,SEDEX:105,Transp:110},
   MA:{PAC:100,SEDEX:125,Transp:90},PB:{PAC:100,SEDEX:125,Transp:100},
   RN:{PAC:100,SEDEX:125,Transp:100},PI:{PAC:100,SEDEX:125,Transp:110},
   AL:{PAC:100,SEDEX:125,Transp:90},SE:{PAC:100,SEDEX:125,Transp:90},
   AM:{PAC:100,SEDEX:125,Transp:110},RO:{PAC:100,SEDEX:110,Transp:170},
-  AP:{PAC:100,SEDEX:125,Transp:120},RR:{PAC:130,SEDEX:110,Transp:null},
+  AP:{PAC:100,SEDEX:125,Transp:120},RR:{PAC:130,SEDEX:110,Transp:170},
   AC:{PAC:130,SEDEX:110,Transp:150},
 };
 
@@ -74,14 +74,17 @@ Estou aqui para te ajudar a encontrar os melhores produtos, tirar dúvidas técn
 *O que você procura hoje?*
 
 1️⃣ Mais Vendidos 🔥
-2️⃣ Peptídeos 💉
-3️⃣ Hormônios 💪
-4️⃣ GH ⚡
-5️⃣ Produtos em Promoção 🏷️
-6️⃣ Outros 📦
+2️⃣ Emagrecedores 💊
+3️⃣ Peptídeos 💉
+4️⃣ Hormônios 💪
+5️⃣ GH ⚡
+6️⃣ Produtos em Promoção 🏷️
 7️⃣ Buscar por Fabricante 🏭
 8️⃣ Protocolo / Dúvidas técnicas 🔬
-9️⃣ Rastrear meu pedido 📦`;
+9️⃣ Rastrear meu pedido 📦
+🔟 Outros 📦
+
+📋 Digite *TABELA* para ver a lista completa de preços`;
 
 // Menu principal dinâmico (adiciona promoção relâmpago se houver)
 function buildMenuPrincipal(promo) {
@@ -516,6 +519,13 @@ exports.handler = async (event) => {
       return respond(MSG_ATACADO);
     }
 
+    // ── Atalho global: TABELA DE PREÇOS (varejo) ──────────────────────────────
+    const ehTabela = ["tabela","lista de preco","lista de preços","catalogo","catálogo","tabela de preco","tabela de preços","lista completa","ver precos","ver preços"].some(p => n.includes(p));
+    if (ehTabela && !ehAtacado && !["AGUARDAR_COMPROVANTE","COLETA_DADOS"].includes(state)) {
+      await saveSession(sid, { state:'MENU' });
+      return respond('📋 *Tabela de Preços VitaFlow*\n\nVeja nossa lista completa de produtos, preços e disponibilidade em tempo real, sempre atualizada:\n\n👉 vitaflowoficial.com/pages/tabela\n\nVocê também pode comprar direto pelo site ou continuar comigo aqui. 😊\n\n_Digite *menu* para navegar pelas categorias._');
+    }
+
     // ── Atalho global: PRAZO de entrega ───────────────────────────────────────
     // (prazo é pergunta informativa — separado do cálculo de frete e da venda)
     const ehPerguntaPrazo = ["prazo","quanto tempo","quantos dias","demora","chega em","tempo de entrega","prazo de entrega","prazo de postagem"].some(p => n.includes(p));
@@ -599,16 +609,24 @@ exports.handler = async (event) => {
       }
 
       if (num === 2) {
+        const dados = await buscarCache('emagrecedores');
+        const linhas = dados.split('\n').filter(Boolean);
+        if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        return respond(`*💊 EMAGRECEDORES*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+      }
+
+      if (num === 3) {
         await saveSession(sid, { ...session, state:'PEPTIDEOS' });
         return respond(MENU_PEPTIDEOS);
       }
 
-      if (num === 3) {
+      if (num === 4) {
         await saveSession(sid, { ...session, state:'HORMONIOS' });
         return respond(MENU_HORMONIOS);
       }
 
-      if (num === 4) {
+      if (num === 5) {
         const dados = await buscarCache('gh');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
@@ -616,20 +634,12 @@ exports.handler = async (event) => {
         return respond(`*⚡ GH*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
-      if (num === 5) {
+      if (num === 6) {
         const dados = await buscarCache('promocoes');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhuma promoção ativa no momento. *Digite menu* para voltar.');
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*🔥 PROMOÇÕES*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
-      }
-
-      if (num === 6) {
-        const dados = await buscarCache('outros');
-        const linhas = dados.split('\n').filter(Boolean);
-        if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*📦 OUTROS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
       if (num === 7) {
@@ -644,6 +654,14 @@ exports.handler = async (event) => {
 
       if (num === 9) {
         return respond('*📦 RASTREAR PEDIDO*\n\nNosso setor de logística te atende diretamente!\n\n👉 wa.me/447537155718\n\nInforme: número do pedido, CPF e nome completo. Eles resolvem rapidinho! 💪');
+      }
+
+      if (num === 10) {
+        const dados = await buscarCache('outros');
+        const linhas = dados.split('\n').filter(Boolean);
+        if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        return respond(`*📦 OUTROS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
       if (n === 'promo' || n === 'promocao' || n.includes('promocao relampago') || n.includes('promoção')) {
