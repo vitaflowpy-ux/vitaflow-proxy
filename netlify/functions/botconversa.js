@@ -5,6 +5,11 @@ const FIREBASE_URL    = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const GAS_URL         = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.html';
 
+// ── Desconto Athena e Cupons ──────────────────────────────────────────────────
+const DESCONTO_ATHENA_PCT = 3;
+const FIRESTORE_PROJECT = 'pricehub-f0236';
+const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
+
 // ── Atacado ───────────────────────────────────────────────────────────────────
 const TABELA_ATACADO_URL = 'https://drive.google.com/file/d/1olhYj0OW1cL0Wk0kk6-fct89EJff_1Ip/view';
 const WHATSAPP_ATACADO_1 = 'wa.me/5521998018028';
@@ -95,6 +100,10 @@ function buildMenuPrincipal(promo) {
 🚨 *${promo.titulo}*
 🔥 ${promo.desconto_pct ? promo.desconto_pct + '% de desconto aplicado automaticamente no link de pagamento — sem cupom, sem complicação!' : promo.descricao || ''}
 👉 Digite *PROMO* para saber mais ou escolha um produto abaixo e o desconto já vem incluído!`;
+  } else {
+    menu += `
+
+🎁 *Comprando comigo você ganha 3% de desconto em todos os produtos!*`;
   }
   menu += `
 
@@ -349,6 +358,119 @@ async function carregarPromocaoAtiva() {
   } catch { return null; }
 }
 
+// ── Cupons (Firestore) ────────────────────────────────────────────────────────
+// Valida cupom e retorna { ok, docId, descontoReais, descTxt, motivo }
+async function validarCupom(codigo, subtotalProdutos) {
+  try {
+    const cod = (codigo || '').trim().toUpperCase();
+    if (!cod) return { ok:false, motivo:'Código vazio.' };
+    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=200`;
+    const resp = await fetch(url);
+    if (!resp.ok) return { ok:false, motivo:'Erro ao consultar cupom.' };
+    const data = await resp.json();
+    const docs = data.documents || [];
+    let found = null;
+    for (const doc of docs) {
+      const f = doc.fields || {};
+      if ((f.codigo && f.codigo.stringValue || '').toUpperCase() === cod) {
+        found = { id: doc.name.split('/').pop(), fields: f }; break;
+      }
+    }
+    if (!found) return { ok:false, motivo:'Cupom inválido ou não encontrado.' };
+    const f = found.fields;
+    const ativo = f.ativo ? f.ativo.booleanValue : true;
+    const tipo = f.tipo ? f.tipo.stringValue : 'pct';
+    const valor = parseFloat(f.valor ? (f.valor.doubleValue || f.valor.integerValue || 0) : 0);
+    const maxDesc = parseFloat(f.maxDesc ? (f.maxDesc.doubleValue || f.maxDesc.integerValue || 0) : 0);
+    const minPed = parseFloat(f.minPedido ? (f.minPedido.doubleValue || f.minPedido.integerValue || 0) : 0);
+    const tipoVal = f.tipoVal ? f.tipoVal.stringValue : 'sempre';
+    const maxUsos = parseInt(f.maxUsos ? (f.maxUsos.integerValue || 0) : 0);
+    const usosAtual = parseInt(f.usosAtual ? (f.usosAtual.integerValue || 0) : 0);
+    const expiraStr = f.expira && f.expira.timestampValue ? f.expira.timestampValue : null;
+
+    if (!ativo) return { ok:false, motivo:'Este cupom está inativo.' };
+    if (tipoVal === 'prazo' && expiraStr && new Date(expiraStr) < new Date()) return { ok:false, motivo:'Este cupom expirou.' };
+    if (tipoVal === 'unico' && usosAtual >= 1) return { ok:false, motivo:'Este cupom já foi utilizado.' };
+    if (tipoVal === 'usos' && maxUsos > 0 && usosAtual >= maxUsos) return { ok:false, motivo:'Este cupom atingiu o limite de usos.' };
+    if (minPed > 0 && subtotalProdutos < minPed) return { ok:false, motivo:`Pedido mínimo de R$ ${minPed.toFixed(2).replace('.',',')} para este cupom.` };
+
+    // Calcula desconto em reais (sempre sobre produtos, nunca frete)
+    let descontoReais = 0;
+    if (tipo === 'pct') {
+      descontoReais = subtotalProdutos * (valor/100);
+      if (maxDesc > 0) descontoReais = Math.min(descontoReais, maxDesc);
+    } else {
+      descontoReais = Math.min(valor, subtotalProdutos);
+    }
+    const descTxt = tipo === 'pct' ? `${valor}% off` : `R$ ${valor.toFixed(2).replace('.',',')} off`;
+    return { ok:true, docId: found.id, descontoReais, descTxt, codigo: cod };
+  } catch {
+    return { ok:false, motivo:'Erro ao verificar cupom. Tente novamente.' };
+  }
+}
+
+// Incrementa usosAtual — chamado SOMENTE quando o pedido é confirmado
+async function incrementarUsoCupom(docId) {
+  if (!docId) return;
+  try {
+    const getUrl = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow/${docId}?key=${FIRESTORE_KEY}`;
+    const docResp = await fetch(getUrl);
+    const docData = await docResp.json();
+    const usosAnt = parseInt((docData.fields && docData.fields.usosAtual && docData.fields.usosAtual.integerValue) || 0);
+    const patchUrl = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow/${docId}?key=${FIRESTORE_KEY}&updateMask.fieldPaths=usosAtual`;
+    await fetch(patchUrl, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ fields: { usosAtual: { integerValue: usosAnt + 1 } } })
+    });
+  } catch {}
+}
+
+// ── Fecha resumo no fluxo normal (3% Athena vs cupom — maior prevalece) ───────
+async function fecharResumoNormal(session, sid, cupomResultado, respond) {
+  const carrinho = session.carrinho || [];
+  const frete = session.freteSelecionado || {};
+  const totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
+
+  // Desconto Athena (3%) em reais
+  const descAthena = totalProd * (DESCONTO_ATHENA_PCT / 100);
+  const descCupom = cupomResultado && cupomResultado.ok ? cupomResultado.descontoReais : 0;
+
+  // Maior desconto prevalece (nunca acumula)
+  let descontoReais = descAthena;
+  let descontoLabel = `Desconto Athena (-${DESCONTO_ATHENA_PCT}%)`;
+  let cupomDocId = null;
+  let cupomCodigo = null;
+  if (descCupom > descAthena) {
+    descontoReais = descCupom;
+    descontoLabel = `Cupom ${cupomResultado.codigo} (${cupomResultado.descTxt})`;
+    cupomDocId = cupomResultado.docId;
+    cupomCodigo = cupomResultado.codigo;
+  }
+
+  const totalComDesconto = totalProd - descontoReais + frete.valor;
+  const linhaCupomInfo = (descCupom > 0 && descCupom <= descAthena)
+    ? `\n_(Seu cupom daria R$ ${descCupom.toFixed(2).replace('.',',')}, mas o desconto Athena de 3% é maior e foi aplicado!)_`
+    : '';
+
+  const resumo =
+    `*📋 RESUMO DO PEDIDO*\n\n` +
+    `${resumoCarrinho(carrinho)}\n\n` +
+    `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
+    `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
+    `🏷️ ${descontoLabel}: -R$ ${descontoReais.toFixed(2).replace('.',',')}` +
+    linhaCupomInfo +
+    `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n` +
+    `*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
+
+  await saveSession(sid, {
+    ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd,
+    descontoReais, descontoLabel, total: totalComDesconto,
+    descontoTipo: cupomDocId ? 'cupom' : 'athena',
+    cupomDocId, cupomCodigo
+  });
+  return respond(resumo);
+}
+
 // ── Firebase: cache de coleções ───────────────────────────────────────────────
 async function buscarCache(colecao) {
   try {
@@ -374,12 +496,22 @@ async function enviarTelegram(texto) {
   } catch {}
 }
 
-async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoPct) {
+async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReais) {
   try {
-    const items = (carrinho || []).map(item => {
-      let precoUnit = item.preco;
-      if (descontoPct) precoUnit = item.preco * (1 - descontoPct/100);
-      return { quantity: item.qtd, price: Math.round(precoUnit*100), description: 'Suplemento Alimentar' };
+    const subtotalBruto = (carrinho || []).reduce((s,i) => s + i.preco * i.qtd, 0);
+    const desc = descontoReais || 0;
+    let descRestante = Math.round(desc * 100); // em centavos
+    const arr = carrinho || [];
+    const items = arr.map((item, idx) => {
+      let precoCent = Math.round(item.preco * 100);
+      if (desc > 0 && subtotalBruto > 0) {
+        const proporcao = (item.preco * item.qtd) / subtotalBruto;
+        const descItemCent = idx === arr.length - 1 ? descRestante : Math.round(desc * 100 * proporcao);
+        descRestante -= descItemCent;
+        const descUnit = Math.floor(descItemCent / item.qtd);
+        precoCent = Math.max(1, precoCent - descUnit);
+      }
+      return { quantity: item.qtd, price: precoCent, description: 'Suplemento Alimentar' };
     });
     if (valorFrete && valorFrete > 0) {
       items.push({ quantity:1, price: Math.round(valorFrete*100), description: 'Frete' });
@@ -498,8 +630,24 @@ exports.handler = async (event) => {
 
     if (ehSaudacaoOuMenu) {
       const promo = await carregarPromocaoAtiva();
+      if (promo) {
+        // Há promoção relâmpago — oferece e pergunta se quer aproveitar
+        await saveSession(sid, { state:'PROMO_ESCOLHA', promoAtiva: promo });
+        const descTxt = promo.desconto_pct ? `${promo.desconto_pct}% de desconto` : (promo.descricao || '');
+        return respond(
+          `✨ *Olá! Bem-vindo à VitaFlow!* 🌿\n\n` +
+          `Eu sou a *Athena* 🤖💊 — sua consultora virtual.\n\n` +
+          `🚨 *PROMOÇÃO ATIVA: ${promo.titulo}*\n` +
+          `🔥 ${descTxt}\n` +
+          (promo.descricao && promo.desconto_pct ? `${promo.descricao}\n` : '') +
+          `\n⚠️ Durante a promoção não há aplicação de cupom nem o desconto padrão de 3% — *a promoção já é a melhor condição!*\n\n` +
+          `*Quer aproveitar esta promoção?*\n` +
+          `1️⃣ Sim, quero a promoção!\n` +
+          `2️⃣ Não, ver catálogo normal`
+        );
+      }
       await saveSession(sid, { state:'MENU' });
-      return respond(buildMenuPrincipal(promo));
+      return respond(buildMenuPrincipal(null));
     }
 
     // ── Atalho para atendente humano (sempre disponível) ──────────────────────
@@ -546,6 +694,31 @@ exports.handler = async (event) => {
     if (ehPerguntaFrete && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS","CARRINHO","ATACADO","PRAZO_TIPO","FRETE_AVULSO"].includes(state)) {
       await saveSession(sid, { ...session, state:"FRETE_AVULSO" });
       return respond("🚚 *Consultar frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PROMO_ESCOLHA (cliente decide se quer a promoção relâmpago)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (state === 'PROMO_ESCOLHA') {
+      const promo = session.promoAtiva || await carregarPromocaoAtiva();
+      if (num === 1) {
+        // Fluxo da promoção: ativa flag, sem cupom, sem 3%
+        const descPct = (promo && promo.desconto_pct) ? parseFloat(promo.desconto_pct) : 0;
+        await saveSession(sid, { state:'MENU', fluxoPromo:true, descontoPromoPct: descPct, promoTitulo: (promo&&promo.titulo)||'Promoção' });
+        return respond(
+          `🔥 *Promoção ativada!* O desconto será aplicado automaticamente no fechamento.\n\n` +
+          MENU_PRINCIPAL_BASE + `\n\n_Digite o número da opção_`
+        );
+      }
+      if (num === 2) {
+        // Fluxo normal: 3% Athena, com cupom
+        await saveSession(sid, { state:'MENU', fluxoPromo:false });
+        return respond(
+          `😊 Sem problema! No catálogo normal você ganha *3% de desconto* em todos os produtos comprando comigo.\n\n` +
+          MENU_PRINCIPAL_BASE + `\n\n_Digite o número da opção_`
+        );
+      }
+      return respond('Digite *1* para aproveitar a promoção ou *2* para ver o catálogo normal:');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -875,29 +1048,60 @@ exports.handler = async (event) => {
         return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL);
       }
       const totalProd = totalCarrinho(carrinho);
-      const total     = totalProd + frete.valor;
 
-      const promoResumo = await carregarPromocaoAtiva();
-      let totalComDesconto = total;
-      let linhaDesconto = '';
-      if (promoResumo && promoResumo.desconto_pct) {
-        const descPct = parseFloat(promoResumo.desconto_pct);
+      // FLUXO PROMOÇÃO: aplica desconto da promo, sem cupom, vai direto ao resumo
+      if (session.fluxoPromo) {
+        const descPct = session.descontoPromoPct || 0;
         const descValor = totalProd * (descPct / 100);
-        totalComDesconto = totalProd - descValor + frete.valor;
-        linhaDesconto = `\n🔥 *${promoResumo.titulo}* (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}`;
+        const totalComDesconto = totalProd - descValor + frete.valor;
+        const resumo =
+          `*📋 RESUMO DO PEDIDO*\n\n` +
+          `${resumoCarrinho(carrinho)}\n\n` +
+          `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
+          `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}` +
+          (descPct ? `\n🔥 *${session.promoTitulo||'Promoção'}* (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') +
+          `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n` +
+          `*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
+        await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo' });
+        return respond(resumo);
       }
 
-      const resumo =
-        `*📋 RESUMO DO PEDIDO*\n\n` +
-        `${resumoCarrinho(carrinho)}\n\n` +
-        `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
-        `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}` +
-        linhaDesconto +
-        `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n` +
-        `*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
+      // FLUXO NORMAL: pergunta se tem cupom (antes de dar o total)
+      await saveSession(sid, { ...session, state:'PERGUNTA_CUPOM', freteSelecionado: frete, totalProd });
+      return respond(
+        `Quase lá! 😊 Antes de fechar:\n\n` +
+        `🏷️ *Você tem um cupom de desconto?*\n\n` +
+        `1️⃣ Sim, tenho cupom\n` +
+        `2️⃣ Não, seguir sem cupom`
+      );
+    }
 
-      await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, total: totalComDesconto });
-      return respond(resumo);
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PERGUNTA_CUPOM (cliente diz se tem cupom)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (state === 'PERGUNTA_CUPOM') {
+      if (num === 1) {
+        await saveSession(sid, { ...session, state:'INFORMAR_CUPOM' });
+        return respond('Digite o *código do cupom*:');
+      }
+      if (num === 2) {
+        return await fecharResumoNormal(session, sid, null, respond);
+      }
+      return respond('Digite *1* se tem cupom ou *2* para seguir sem cupom:');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INFORMAR_CUPOM (cliente digita o código)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (state === 'INFORMAR_CUPOM') {
+      const carrinho = session.carrinho || [];
+      const totalProd = session.totalProd || totalCarrinho(carrinho);
+      const resultado = await validarCupom(mensagem, totalProd);
+      if (!resultado.ok) {
+        return respond(`❌ ${resultado.motivo}\n\nDigite outro código ou *menu* para recomeçar.\n_Ou digite *2* para seguir sem cupom._`);
+      }
+      // Cupom válido — segue para resumo comparando com 3% Athena
+      return await fecharResumoNormal(session, sid, resultado, respond);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -918,20 +1122,17 @@ exports.handler = async (event) => {
         const frete = session.freteSelecionado || {};
         const uf    = session.estadoCliente || '';
 
-        const promo = await carregarPromocaoAtiva();
-        const descPct = (promo && promo.desconto_pct) ? parseFloat(promo.desconto_pct) : 0;
-        let totalProdFinal = session.totalProd;
-        let totalFinal = session.total;
+        // Desconto já calculado no resumo (promo, athena ou cupom)
+        const descontoReais = session.descontoReais || 0;
+        const totalFinal = session.total;
         let infoDesconto = '';
-        if (descPct) {
-          const descValor = session.totalProd * (descPct / 100);
-          totalProdFinal = session.totalProd - descValor;
-          totalFinal = totalProdFinal + frete.valor;
-          infoDesconto = `\n🔥 *${promo.titulo}* (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}\n💰 *Total com desconto: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
+        if (descontoReais > 0) {
+          const lbl = session.descontoLabel || (session.descontoTipo === 'promo' ? (session.promoTitulo||'Promoção') : 'Desconto');
+          infoDesconto = `\n🏷️ ${lbl}: -R$ ${descontoReais.toFixed(2).replace('.',',')}\n💰 *Total: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
         }
 
         const orderNsu = await gerarNumeroPedido();
-        const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descPct);
+        const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais);
 
         // Salva pedido pendente no Firebase
         try {
@@ -970,7 +1171,7 @@ exports.handler = async (event) => {
           });
         } catch {}
 
-        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu });
+        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null });
         return respond(link
           ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n📸 Após pagar:\n1️⃣ Envie o print ou foto do comprovante\n2️⃣ Digite *SIM* para eu confirmar seu pedido!`
           : `Acesse vitaflowoficial.com para finalizar seu pedido.`
@@ -1080,6 +1281,11 @@ exports.handler = async (event) => {
         `Deve haver uma pessoa disponível para receber pessoalmente. Não solicite deixar o pacote sem ninguém.\n\n` +
         `💬 Qualquer problema, fale com a gente pelo WhatsApp imediatamente e envie o vídeo da abertura.\n\n` +
         `— *Equipe VitaFlow* 🧡`;
+
+      // Incrementa uso do cupom SOMENTE agora (pedido confirmado)
+      if (session.cupomDocId) {
+        await incrementarUsoCupom(session.cupomDocId);
+      }
 
       await deleteSession(sid);
       return respond(msg1, msg2);
