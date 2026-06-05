@@ -17,12 +17,14 @@ exports.handler = async function(event) {
   if (!TRACK_KEY) return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: false, error: 'TRACK17_API_KEY não configurada no Netlify' }) };
 
   try {
-    const { number, order_id, carrier } = JSON.parse(event.body || '{}');
+    const { number, order_id, carrier, param } = JSON.parse(event.body || '{}');
     if (!number) return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: false, error: 'Número de rastreio vazio' }) };
 
     // Se o painel mandou a transportadora, usamos o código dela; senão, auto-detecção pelo número
     const item = { number: number, tag: order_id || '' };
     if (carrier) item.carrier = Number(carrier);
+    // Algumas transportadoras (ex.: J&T Express BR) exigem CPF/CNPJ do destinatário como 'param'
+    if (param) item.param = String(param);
 
     const resp = await fetch(API + '/register', {
       method: 'POST',
