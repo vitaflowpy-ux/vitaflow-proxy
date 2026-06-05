@@ -42,8 +42,32 @@ exports.handler = async function(event) {
 
     const errCode = rejected[0] && rejected[0].error && rejected[0].error.code;
     const errMsg  = (rejected[0] && rejected[0].error && rejected[0].error.message) || ('Resposta 17TRACK: ' + JSON.stringify(data));
-    // -18019901 = já estava registrado → tratamos como sucesso
+    // -18019901 = já estava registrado.
+    // Se temos CPF (param) ou transportadora (carrier) para gravar, ATUALIZA via /changeinfo
+    // (o /register ignora dados novos de um código já existente — por isso o CPF não "ia" antes).
     if (errCode === -18019901) {
+      if (param || carrier) {
+        const changeItem = { number: number };
+        if (carrier) changeItem.carrier = Number(carrier);
+        if (param) changeItem.param = String(param);
+        try {
+          const respC = await fetch(API + '/changeinfo', {
+            method: 'POST',
+            headers: { '17token': TRACK_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify([changeItem])
+          });
+          const dataC = await respC.json();
+          const acceptedC = (dataC && dataC.data && dataC.data.accepted) || [];
+          if (acceptedC.length > 0) {
+            return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: true, updated: true }) };
+          }
+          const errC = (dataC && dataC.data && dataC.data.rejected && dataC.data.rejected[0] && dataC.data.rejected[0].error) || {};
+          // se o changeinfo também recusar, devolve a info pra diagnóstico
+          return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: true, already_registered: true, update_failed: errC.message || true }) };
+        } catch (eC) {
+          return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: true, already_registered: true, update_error: eC.message }) };
+        }
+      }
       return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: true, already_registered: true }) };
     }
     return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: false, error: errMsg, code: errCode }) };
