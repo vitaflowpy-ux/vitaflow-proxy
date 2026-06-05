@@ -1,6 +1,8 @@
 // netlify/functions/create-product.js
-// GET  -> lista as coleções PERSONALIZADAS (manuais) da loja, para o seletor do Sync
-// POST -> cria produtos como rascunho no Shopify, com fabricante (vendor) e coleções
+// GET  -> lista coleções da loja (manuais E automáticas), para o seletor do Sync
+// POST -> cria produtos como rascunho com fabricante (vendor) e coleções:
+//         - coleção manual  -> entra via Collect API
+//         - coleção automática (smart por TAG) -> entra recebendo a tag da regra
 const SHOPIFY_DOMAIN = 'nv18ua-1w.myshopify.com';
 const SHOPIFY_TOKEN  = process.env.SHOPIFY_TOKEN;
 const API = '2025-01';
@@ -25,24 +27,55 @@ function shopify(path, method, body) {
   });
 }
 
-// Lista coleções personalizadas (manuais). Só nelas dá para adicionar produto via seleção.
+// Lista manuais (custom) + automáticas (smart), normalizando o formato
 async function listarColecoes() {
-  const res = await shopify('custom_collections.json?limit=250', 'GET');
-  const data = await res.json();
-  if (!res.ok) throw new Error(JSON.stringify(data.errors || data));
-  return (data.custom_collections || []).map(c => ({ id: c.id, title: c.title, handle: c.handle }));
+  const out = [];
+
+  const rc = await shopify('custom_collections.json?limit=250', 'GET');
+  const dc = await rc.json();
+  if (!rc.ok) throw new Error('custom_collections: ' + JSON.stringify(dc.errors || dc));
+  (dc.custom_collections || []).forEach(c => {
+    out.push({ id: c.id, title: c.title, handle: c.handle, type: 'custom' });
+  });
+
+  const rs = await shopify('smart_collections.json?limit=250', 'GET');
+  const ds = await rs.json();
+  if (!rs.ok) throw new Error('smart_collections: ' + JSON.stringify(ds.errors || ds));
+  (ds.smart_collections || []).forEach(c => {
+    out.push({
+      id: c.id, title: c.title, handle: c.handle, type: 'smart',
+      disjunctive: !!c.disjunctive,
+      rules: c.rules || []
+    });
+  });
+
+  // ordena alfabeticamente para o seletor
+  out.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'pt-BR'));
+  return out;
+}
+
+// Das regras de uma smart collection, devolve as TAGS que fazem o produto entrar nela.
+// Cobre o caso comum "tag equals X". Se não houver regra por tag, devolve [] (e sinalizamos).
+function tagsDaSmart(col) {
+  const tags = [];
+  (col.rules || []).forEach(r => {
+    if (r.column === 'tag' && (r.relation === 'equals' || r.relation === 'contains')) {
+      if (r.condition) tags.push(String(r.condition));
+    }
+  });
+  return tags;
 }
 
 exports.handler = async function(event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers: cors, body: '' };
 
-  // ── GET: devolve a lista de coleções para o seletor ──────────────────────────
+  // GET: lista de coleções para o seletor
   if (event.httpMethod === 'GET') {
     try {
       const colecoes = await listarColecoes();
       return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: true, colecoes }) };
     } catch (e) {
-      return { statusCode: 500, headers: cors, body: JSON.stringify({ ok: false, erro: e.message, colecoes: [] }) };
+      return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: false, erro: e.message, colecoes: [] }) };
     }
   }
 
@@ -52,15 +85,41 @@ exports.handler = async function(event) {
     const produtos = JSON.parse(event.body || '[]');
     if (!Array.isArray(produtos) || !produtos.length) throw new Error('Lista de produtos vazia');
 
+    // Mapa id -> coleção (tipo + regras), buscado uma vez por lote
+    let mapaCol = {};
+    try {
+      const todas = await listarColecoes();
+      todas.forEach(c => { mapaCol[String(c.id)] = c; });
+    } catch (e) { /* segue sem coleções se a busca falhar */ }
+
     const resultados = [];
     for (const p of produtos) {
       try {
+        const selecionadas = (Array.isArray(p.colecoes) ? p.colecoes : []).map(String);
+
+        // Separa: manuais (Collect) x automáticas (tags)
+        const idsCustom = [];
+        const tagsSmart = [];
+        const smartSemTag = [];
+        selecionadas.forEach(id => {
+          const col = mapaCol[id];
+          if (!col) { idsCustom.push(id); return; } // sem mapa: tenta Collect
+          if (col.type === 'custom') { idsCustom.push(id); return; }
+          const t = tagsDaSmart(col);
+          if (t.length) { t.forEach(x => tagsSmart.push(x)); }
+          else smartSemTag.push(col.title || id);
+        });
+
+        // Tags finais (sem duplicar)
+        const tagsFinais = Array.from(new Set(tagsSmart)).join(', ');
+
         const payload = {
           product: {
             title: p.nome,
             status: 'draft',
             product_type: p.categoria || 'Outros',
-            vendor: p.fabricante || p.marca || p.fonte || '', // fabricante explícito tem prioridade
+            vendor: p.fabricante || p.marca || p.fonte || '',
+            tags: tagsFinais,
             body_html: '',
             variants: [{
               price: String(p.preco || 0),
@@ -68,6 +127,7 @@ exports.handler = async function(event) {
             }],
           }
         };
+
         const res = await shopify('products.json', 'POST', payload);
         const data = await res.json();
 
@@ -80,11 +140,14 @@ exports.handler = async function(event) {
         const produtoId = data.product.id;
         const variantId = (data.product.variants && data.product.variants[0]) ? data.product.variants[0].id : null;
         const resultado = { nome: p.nome, ok: true, id: produtoId, variantId: variantId, ref: p.ref || null, colecoes_ok: 0, colecoes_falha: [] };
-        await sleep(550); // rate limit Shopify
+        await sleep(550);
 
-        // ── Adiciona às coleções (apenas IDs de coleções personalizadas) ─────────
-        const colecoes = Array.isArray(p.colecoes) ? p.colecoes : [];
-        for (const colId of colecoes) {
+        // Coleções automáticas por tag já entram sozinhas (contam como ok)
+        resultado.colecoes_ok += Array.from(new Set(tagsSmart)).length;
+        smartSemTag.forEach(t => resultado.colecoes_falha.push('auto sem tag: ' + t));
+
+        // Coleções manuais -> Collect
+        for (const colId of idsCustom) {
           if (!colId) continue;
           try {
             const cRes = await shopify('collects.json', 'POST', {
