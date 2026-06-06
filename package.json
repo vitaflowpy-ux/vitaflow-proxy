@@ -1,0 +1,10 @@
+{
+  "name": "vitaflow-proxy",
+  "version": "1.0.0",
+  "description": "Funcoes Netlify da VitaFlow (proxy, rastreio, atacado)",
+  "private": true,
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "pdfjs-dist": "3.11.174"
+  }
+}
