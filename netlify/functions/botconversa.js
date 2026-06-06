@@ -25,7 +25,7 @@ const PROMO_RELAMPAGO = {
     { nome: 'Caneta Synedica 40mg (Retatrutida)',      de: 2000, por: 1230 },
     { nome: 'Caneta Alluvi 40mg (Retatrutida)',        de: 1560, por: 1199 },
     { nome: 'Caneta ZPHC 60mg (Retatrutida)',          de: 2999, por: 2099 },
-    { nome: 'Caneta Veltrane Gold 90mg (Retatrutida)', de: 1499, por: 1249 },
+    { nome: 'Veltrane Gold 90mg (Retatrutida)',         de: 1499, por: 1249 },
   ],
 };
 function promoAtiva() {
