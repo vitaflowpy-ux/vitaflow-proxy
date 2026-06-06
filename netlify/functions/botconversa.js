@@ -1,4 +1,4 @@
-// botconversa.js — VitaFlow Athena v4 — Arquitetura menu-driven com máquina de estados
+// botconversa.js — VitaFlow Athena v4.1 — menu-driven + Promoção Relâmpago (definida no código)
 
 const INFINITEPAY_TAG = 'vitaflowoficial';
 const FIREBASE_URL    = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
@@ -9,6 +9,29 @@ const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.h
 const DESCONTO_ATHENA_PCT = 3;
 const FIRESTORE_PROJECT = 'pricehub-f0236';
 const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROMOÇÃO RELÂMPAGO  →  EDITE AQUI para trocar a promoção do dia
+//   • ativa:false  → desliga a promoção (a opção 6 e a palavra "promo" avisam que não há)
+//   • cada produto: nome (igual ao site), "de" (preço cheio) e "por" (preço promocional)
+//   • preço já é o final: a Athena NÃO aplica os 3% nem cupom em cima da promoção
+//   • compra é fechada SOMENTE com a Athena
+// ═══════════════════════════════════════════════════════════════════════════════
+const PROMO_RELAMPAGO = {
+  ativa: true,
+  titulo: 'PROMOÇÃO RELÂMPAGO',
+  link: 'https://vitaflowoficial.com/pages/promocoes',
+  produtos: [
+    { nome: 'Caneta Synedica 40mg',      de: 2000, por: 1230 },
+    { nome: 'Caneta Alluvi 40mg',        de: 1560, por: 1199 },
+    { nome: 'Caneta ZPHC 60mg',          de: 2999, por: 2099 },
+    { nome: 'Caneta Veltrane Gold 90mg', de: 1499, por: 1249 },
+  ],
+};
+function promoAtiva() {
+  return (PROMO_RELAMPAGO.ativa && PROMO_RELAMPAGO.produtos && PROMO_RELAMPAGO.produtos.length) ? PROMO_RELAMPAGO : null;
+}
+function reais(n) { return Number(n || 0).toLocaleString('pt-BR'); }
 
 // ── Atacado ───────────────────────────────────────────────────────────────────
 const TABELA_ATACADO_URL = 'https://drive.google.com/file/d/1olhYj0OW1cL0Wk0kk6-fct89EJff_1Ip/view';
@@ -32,6 +55,17 @@ ${TABELA_ATACADO_URL}
 *Quer que eu te redirecione para um dos nossos consultores de atacado?*
 1️⃣ Sim, quero falar com um consultor
 2️⃣ Não, voltar ao menu`;
+
+const MSG_ATACADO_CONTATOS = `*🏭 Consultores de Atacado — VitaFlow*
+
+Fale agora com um dos nossos consultores especializados em atacado:
+
+📲 ${WHATSAPP_ATACADO_1}
+📲 ${WHATSAPP_ATACADO_2}
+
+Tenha em mãos a tabela de atacado e a lista de produtos que deseja. 😊
+
+_Digite *menu* para voltar ao início._`;
 
 const MSG_PRAZO_VAREJO = `*📦 PRAZO DE POSTAGEM E ENTREGA — Varejo*
 
@@ -83,23 +117,22 @@ Estou aqui para te ajudar a encontrar os melhores produtos, tirar dúvidas técn
 3️⃣ Peptídeos 💉
 4️⃣ Hormônios 💪
 5️⃣ GH ⚡
-6️⃣ Produtos em Promoção 🏷️
+6️⃣ Promoção Relâmpago ⚡
 7️⃣ Buscar por Fabricante 🏭
-8️⃣ Protocolo / Dúvidas técnicas 🔬
-9️⃣ Rastrear meu pedido 📦
-🔟 Outros 📦
+8️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
+9️⃣ Protocolo / Dúvidas técnicas 🔬
+🔟 Rastrear meu pedido 📦
 
 📋 Digite *TABELA* para ver a lista completa de preços`;
 
-// Menu principal dinâmico (adiciona promoção relâmpago se houver)
-function buildMenuPrincipal(promo) {
+// Menu principal dinâmico (mostra teaser da promoção relâmpago se houver)
+function buildMenuPrincipal() {
   let menu = MENU_PRINCIPAL_BASE;
+  const promo = promoAtiva();
   if (promo) {
     menu += `
 
-🚨 *${promo.titulo}*
-🔥 ${promo.desconto_pct ? promo.desconto_pct + '% de desconto aplicado automaticamente no link de pagamento — sem cupom, sem complicação!' : promo.descricao || ''}
-👉 Digite *PROMO* para saber mais ou escolha um produto abaixo e o desconto já vem incluído!`;
+🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 6* para ver as ofertas. ⚡`;
   } else {
     menu += `
 
@@ -117,27 +150,26 @@ _Digite o número da opção_`;
 
 const MENU_PEPTIDEOS = `*💊 PEPTÍDEOS*
 
-1️⃣ Retatrutida
-2️⃣ Tirzepatida
-3️⃣ Semaglutida
-4️⃣ BPC-157
-5️⃣ TB-500
-6️⃣ GHK-Cu
-7️⃣ Klow
-8️⃣ Glow
-9️⃣ SS-31
-🔟 MOTS-C
-11. Ipamorelin
-12. CJC-1295
-13. PT-141
-14. AOD-9604
-15. CBL-514
-16. Epitalon
-17. NAD+
-18. Tesamorelin
-19. Outros peptídeos
+1️⃣ BPC-157
+2️⃣ TB-500
+3️⃣ GHK-Cu
+4️⃣ Klow
+5️⃣ Glow
+6️⃣ SS-31
+7️⃣ MOTS-C
+8️⃣ Ipamorelin
+9️⃣ CJC-1295
+🔟 PT-141
+11. AOD-9604
+12. CBL-514
+13. Epitalon
+14. NAD+
+15. Tesamorelin
+16. Outros peptídeos
 
-_Digite o número ou *menu* para voltar_`;
+_Digite o número ou *menu* para voltar_
+
+_Procurando Retatrutida, Tirzepatida ou Semaglutida? Estão em *Emagrecedores* (opção 2)._`;
 
 const MENU_HORMONIOS = `*💉 HORMÔNIOS*
 
@@ -168,19 +200,18 @@ const MENU_FABRICANTES = `*🏭 BUSCAR POR FABRICANTE*
 3️⃣ Landerlan
 4️⃣ Muscle Labs
 5️⃣ Alpha Pharma
-6️⃣ XL Peptides
-7️⃣ Health Peptides
-8️⃣ Alluvi Healthcare
-9️⃣ Lipoless
-🔟 Cooper Pharma
-11. Neuroceptix
-12. King Pharma
-13. Synedica
-14. NeoPeptides
-15. Eurogold
-16. Novax Pharmaceuticals
-17. Bratva Labs
-18. Outro fabricante (digitar nome)
+6️⃣ Health Peptides
+7️⃣ Alluvi Healthcare
+8️⃣ Lipoless
+9️⃣ Cooper Pharma
+🔟 Neuroceptix
+11. King Pharma
+12. Synedica
+13. NeoPeptides
+14. Eurogold
+15. Novax Pharmaceuticals
+16. Bratva Labs
+17. Outro fabricante (digitar nome)
 
 _Digite o número ou *menu* para voltar_`;
 
@@ -290,6 +321,33 @@ function resumoCarrinho(carrinho) {
   ).join('\n');
 }
 
+// ── Lista da Promoção Relâmpago (mensagem) ────────────────────────────────────
+function listaPromoMsg(promo) {
+  const linhas = promo.produtos.map((p,i) =>
+    `${emojis(i)} *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`
+  ).join('\n');
+  return `⚡ *${promo.titulo}* — exclusiva comigo (Athena) e enquanto durarem os estoques! 🔥\n\n` +
+    `${linhas}\n\n` +
+    `_Sem cupom e sem o 3% — o preço promocional já é a melhor condição._\n` +
+    `👉 Detalhes: ${promo.link}\n\n` +
+    `*Digite o número do produto para comprar:*`;
+}
+
+// Abre a promoção (usado pela palavra "promo" e pela opção 6). Retorna a mensagem ou null se não houver promoção.
+async function abrirPromo(session, sid) {
+  const promo = promoAtiva();
+  if (!promo) return null;
+  await saveSession(sid, {
+    ...session,
+    state: 'LISTA_PRODUTOS',
+    fluxoPromo: true,
+    descontoPromoPct: 0,                 // preço já é o promocional — não aplica desconto extra
+    promoTitulo: promo.titulo,
+    produtoLista: promo.produtos.map(p => ({ nome: p.nome, preco: p.por })),
+  });
+  return listaPromoMsg(promo);
+}
+
 // ── Gera link do recibo (carrinho com múltiplos itens) ─────────────────────────
 function gerarLinkRecibo(orderNsu, nome, cpf, email, pagto, carrinho, frete, total) {
   const hoje = new Date().toLocaleDateString('pt-BR');
@@ -342,20 +400,6 @@ async function deleteSession(sid) {
     const k = sid.replace(/[^a-zA-Z0-9]/g,'_');
     await fetch(`${FIREBASE_URL}/vitaflow_sessions/${k}.json`, { method:'DELETE' });
   } catch {}
-}
-
-// ── Firebase: promoção relâmpago ──────────────────────────────────────────────
-async function carregarPromocaoAtiva() {
-  try {
-    const r = await fetch(`${FIREBASE_URL}/vitaflow_promocoes.json`);
-    const data = await r.json();
-    if (!data) return null;
-    const hoje = new Date().toISOString().slice(0,10);
-    const ativas = Object.values(data).filter(p =>
-      p && p.ativo && (!p.inicio || p.inicio <= hoje) && (!p.fim || p.fim >= hoje)
-    );
-    return ativas.length ? ativas[0] : null;
-  } catch { return null; }
 }
 
 // ── Cupons (Firestore) ────────────────────────────────────────────────────────
@@ -481,7 +525,7 @@ async function buscarCache(colecao) {
 }
 
 async function buscarTodosCache() {
-  const cols = ['peptideos','hormonios','gh','promocoes','outros','10-mais-vendidos'];
+  const cols = ['peptideos','hormonios','gh','emagrecedores','outros','10-mais-vendidos'];
   const resultados = await Promise.all(cols.map(c => buscarCache(c)));
   return resultados.join('\n');
 }
@@ -624,30 +668,27 @@ exports.handler = async (event) => {
     console.log('MSG:', mensagem, '| SID:', sid, '| TYPE:', body.type, '| BODY_KEYS:', Object.keys(body).join(','));
     if (body.type || body.mediaUrl || body.media_url || body.url || body.fileUrl) console.log('MIDIA DETECTADA:', JSON.stringify(body));
 
-    // ── Atalhos globais ───────────────────────────────────────────────────────
+    const session = await getSession(sid);
+    const state = session.state || 'MENU';
+
+    // ── Atalho global: PROMOÇÃO RELÂMPAGO (palavra "promo") — PRIORIDADE sobre saudação ──
+    // Quem vem pelo link da página manda "Olá! Quero aproveitar a promoção relâmpago",
+    // que contém "promo" → cai direto na lista da promoção (não na saudação).
+    const ehPromo = n.includes('promo');
+    if (ehPromo && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state)) {
+      const msg = await abrirPromo(session, sid);
+      if (msg) return respond(msg);
+      await saveSession(sid, { state:'MENU' });
+      return respond('No momento não temos Promoção Relâmpago ativa. 😊\n\n' + buildMenuPrincipal());
+    }
+
+    // ── Atalhos globais: saudação / menu ──────────────────────────────────────
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
     const ehSaudacaoOuMenu = n === 'menu' || n === 'inicio' || n === 'voltar' || n === 'start' || saudacoes.some(s => n === s || n.startsWith(s+' ') || n.startsWith(s+'!'));
 
     if (ehSaudacaoOuMenu) {
-      const promo = await carregarPromocaoAtiva();
-      if (promo) {
-        // Há promoção relâmpago — oferece e pergunta se quer aproveitar
-        await saveSession(sid, { state:'PROMO_ESCOLHA', promoAtiva: promo });
-        const descTxt = promo.desconto_pct ? `${promo.desconto_pct}% de desconto` : (promo.descricao || '');
-        return respond(
-          `✨ *Olá! Bem-vindo à VitaFlow!* 🌿\n\n` +
-          `Eu sou a *Athena* 🤖💊 — sua consultora virtual.\n\n` +
-          `🚨 *PROMOÇÃO ATIVA: ${promo.titulo}*\n` +
-          `🔥 ${descTxt}\n` +
-          (promo.descricao && promo.desconto_pct ? `${promo.descricao}\n` : '') +
-          `\n⚠️ Durante a promoção não há aplicação de cupom nem o desconto padrão de 3% — *a promoção já é a melhor condição!*\n\n` +
-          `*Quer aproveitar esta promoção?*\n` +
-          `1️⃣ Sim, quero a promoção!\n` +
-          `2️⃣ Não, ver catálogo normal`
-        );
-      }
       await saveSession(sid, { state:'MENU' });
-      return respond(buildMenuPrincipal(null));
+      return respond(buildMenuPrincipal());
     }
 
     // ── Atalho para atendente humano (sempre disponível) ──────────────────────
@@ -656,9 +697,6 @@ exports.handler = async (event) => {
       await deleteSession(sid);
       return transferir('Vou te transferir para um atendente agora! 😊 Aguarde um momento.');
     }
-
-    const session = await getSession(sid);
-    const state = session.state || 'MENU';
 
     // ── Atalho global: ATACADO ────────────────────────────────────────────────
     const ehAtacado = ["atacado","revenda","revender","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
@@ -675,50 +713,21 @@ exports.handler = async (event) => {
     }
 
     // ── Atalho global: PRAZO de entrega ───────────────────────────────────────
-    // (prazo é pergunta informativa — separado do cálculo de frete e da venda)
     const ehPerguntaPrazo = ["prazo","quanto tempo","quantos dias","demora","chega em","tempo de entrega","prazo de entrega","prazo de postagem"].some(p => n.includes(p));
     if (ehPerguntaPrazo && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS","CARRINHO","ATACADO","PRAZO_TIPO"].includes(state)) {
-      // Se já mencionou atacado na mesma frase, manda pro fluxo de atacado
       if (ehAtacado) {
         await saveSession(sid, { ...session, state:'ATACADO' });
         return respond(MSG_ATACADO);
       }
-      // Senão, pergunta se é varejo ou atacado
       await saveSession(sid, { ...session, state:'PRAZO_TIPO' });
       return respond(MSG_PERGUNTA_TIPO_PRAZO);
     }
 
     // ── Atalho global para frete (cálculo de valor) ───────────────────────────
-    // Opção B: mostra o frete e oferece escolher produto — NUNCA gera pedido vazio
     const ehPerguntaFrete = ["frete","transportadora","pac","sedex","valor do envio","custo do envio","quanto e o frete","quanto fica o frete"].some(p => n.includes(p));
     if (ehPerguntaFrete && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS","CARRINHO","ATACADO","PRAZO_TIPO","FRETE_AVULSO"].includes(state)) {
       await saveSession(sid, { ...session, state:"FRETE_AVULSO" });
       return respond("🚚 *Consultar frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // PROMO_ESCOLHA (cliente decide se quer a promoção relâmpago)
-    // ═══════════════════════════════════════════════════════════════════════════
-    if (state === 'PROMO_ESCOLHA') {
-      const promo = session.promoAtiva || await carregarPromocaoAtiva();
-      if (num === 1) {
-        // Fluxo da promoção: ativa flag, sem cupom, sem 3%
-        const descPct = (promo && promo.desconto_pct) ? parseFloat(promo.desconto_pct) : 0;
-        await saveSession(sid, { state:'MENU', fluxoPromo:true, descontoPromoPct: descPct, promoTitulo: (promo&&promo.titulo)||'Promoção' });
-        return respond(
-          `🔥 *Promoção ativada!* O desconto será aplicado automaticamente no fechamento.\n\n` +
-          MENU_PRINCIPAL_BASE + `\n\n_Digite o número da opção_`
-        );
-      }
-      if (num === 2) {
-        // Fluxo normal: 3% Athena, com cupom
-        await saveSession(sid, { state:'MENU', fluxoPromo:false });
-        return respond(
-          `😊 Sem problema! No catálogo normal você ganha *3% de desconto* em todos os produtos comprando comigo.\n\n` +
-          MENU_PRINCIPAL_BASE + `\n\n_Digite o número da opção_`
-        );
-      }
-      return respond('Digite *1* para aproveitar a promoção ou *2* para ver o catálogo normal:');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -808,11 +817,9 @@ exports.handler = async (event) => {
       }
 
       if (num === 6) {
-        const dados = await buscarCache('promocoes');
-        const linhas = dados.split('\n').filter(Boolean);
-        if (!linhas.length) return respond('Nenhuma promoção ativa no momento. *Digite menu* para voltar.');
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*🔥 PROMOÇÕES*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+        const msg = await abrirPromo(session, sid);
+        if (msg) return respond(msg);
+        return respond('No momento não temos *Promoção Relâmpago* ativa. 😊\n\n_Digite *menu* para ver as categorias._');
       }
 
       if (num === 7) {
@@ -821,43 +828,35 @@ exports.handler = async (event) => {
       }
 
       if (num === 8) {
-        await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] });
-        return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_');
-      }
-
-      if (num === 9) {
-        return respond('*📦 RASTREAR PEDIDO*\n\nNosso setor de logística te atende diretamente!\n\n👉 wa.me/447537155718\n\nInforme: número do pedido, CPF e nome completo. Eles resolvem rapidinho! 💪');
-      }
-
-      if (num === 10) {
         const dados = await buscarCache('outros');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*📦 OUTROS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+        return respond(`*📦 OUTROS (Botox, vitaminas e remédios em geral)*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
-      if (n === 'promo' || n === 'promocao' || n.includes('promocao relampago') || n.includes('promoção')) {
-        const promo = await carregarPromocaoAtiva();
-        if (!promo) return respond('Não há promoção relâmpago ativa no momento. 😊\n\nVeja nossa coleção de promoções permanentes digitando *5*.\n\n_Digite *menu* para voltar_');
-        return respond(`🚨 *${promo.titulo}*\n\n${promo.descricao}\n\n_Digite *menu* para ver nossos produtos_`);
+      if (num === 9) {
+        await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] });
+        return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_');
       }
 
-      const promo = await carregarPromocaoAtiva();
-      return respond('Opção inválida.\n\n' + buildMenuPrincipal(promo));
+      if (num === 10) {
+        return respond('*📦 RASTREAR PEDIDO*\n\nNosso setor de logística te atende diretamente!\n\n👉 wa.me/447537155718\n\nInforme: número do pedido, CPF e nome completo. Eles resolvem rapidinho! 💪');
+      }
+
+      return respond('Opção inválida.\n\n' + buildMenuPrincipal());
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // PEPTÍDEOS
+    // PEPTÍDEOS  (Retatrutida/Tirzepatida/Semaglutida agora ficam em Emagrecedores)
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'PEPTIDEOS') {
       const mapa = {
-        1: ['retatrutida'], 2: ['tirzepatida'], 3: ['semaglutida'],
-        4: ['bpc-157', 'bpc157'], 5: ['tb-500', 'tb500'], 6: ['ghk-cu', 'ghkcu'],
-        7: ['klow'], 8: ['glow'], 9: ['ss-31', 'ss31'], 10: ['mots-c', 'motsc'],
-        11: ['ipamorelin'], 12: ['cjc-1295', 'cjc1295'], 13: ['pt-141', 'pt141'],
-        14: ['aod-9604', 'aod9604'], 15: ['cbl-514', 'cbl514'], 16: ['epitalon'],
-        17: ['nad'], 18: ['tesamorelin'],
+        1: ['bpc-157', 'bpc157'], 2: ['tb-500', 'tb500'], 3: ['ghk-cu', 'ghkcu'],
+        4: ['klow'], 5: ['glow'], 6: ['ss-31', 'ss31'], 7: ['mots-c', 'motsc'],
+        8: ['ipamorelin'], 9: ['cjc-1295', 'cjc1295'], 10: ['pt-141', 'pt141'],
+        11: ['aod-9604', 'aod9604'], 12: ['cbl-514', 'cbl514'], 13: ['epitalon'],
+        14: ['nad'], 15: ['tesamorelin'],
       };
 
       if (mapa[num]) {
@@ -868,9 +867,9 @@ exports.handler = async (event) => {
         return respond(`*${mapa[num][0].toUpperCase()}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
 
-      if (num === 19) {
+      if (num === 16) {
         const dados = await buscarCache('peptideos');
-        const todosTermos = Object.values(mapa).flat();
+        const todosTermos = Object.values(mapa).flat().concat(['retatrutida','tirzepatida','semaglutida']);
         const linhas = dados.split('\n').filter(Boolean).filter(l => {
           const nProd = norm(l.split('|')[0]);
           return !todosTermos.some(t => nProd.includes(norm(t)));
@@ -932,14 +931,14 @@ exports.handler = async (event) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // FABRICANTES
+    // FABRICANTES  (XL Peptides removido)
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'FABRICANTES') {
       const fabMap = {
         1:'zphc', 2:'veltrane', 3:'landerlan', 4:'muscle labs', 5:'alpha pharma',
-        6:'xl peptides', 7:'health peptides', 8:'alluvi', 9:'lipoless',
-        10:'cooper pharma', 11:'neuroceptix', 12:'king pharma', 13:'synedica',
-        14:'neopeptides', 15:'eurogold', 16:'novax', 17:'bratva',
+        6:'health peptides', 7:'alluvi', 8:'lipoless', 9:'cooper pharma',
+        10:'neuroceptix', 11:'king pharma', 12:'synedica', 13:'neopeptides',
+        14:'eurogold', 15:'novax', 16:'bratva',
       };
 
       if (fabMap[num]) {
@@ -951,7 +950,7 @@ exports.handler = async (event) => {
         return respond(`*${fabMap[num].toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
       }
 
-      if (num === 18) {
+      if (num === 17) {
         await saveSession(sid, { ...session, state:'BUSCA_LIVRE' });
         return respond('Digite o nome do fabricante que procura:');
       }
@@ -1010,10 +1009,8 @@ exports.handler = async (event) => {
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'CARRINHO') {
       if (num === 1) {
-        // Volta ao menu principal para escolher mais produtos (mantém o carrinho)
-        const promo = await carregarPromocaoAtiva();
         await saveSession(sid, { ...session, state:'MENU' });
-        return respond('🛒 Seu carrinho está guardado! Escolha mais produtos:\n\n' + buildMenuPrincipal(promo));
+        return respond('🛒 Seu carrinho está guardado! Escolha mais produtos:\n\n' + buildMenuPrincipal());
       }
       if (num === 2) {
         await saveSession(sid, { ...session, state:'ESTADO' });
@@ -1042,14 +1039,13 @@ exports.handler = async (event) => {
       if (!num || num < 1 || num > opts.length) return respond(`Digite 1, 2 ou 3 para escolher o frete:`);
       const frete = opts[num - 1];
       const carrinho = session.carrinho || [];
-      // Trava: nunca prosseguir com carrinho vazio
       if (!carrinho.length) {
         await saveSession(sid, { state:'MENU' });
         return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL);
       }
       const totalProd = totalCarrinho(carrinho);
 
-      // FLUXO PROMOÇÃO: aplica desconto da promo, sem cupom, vai direto ao resumo
+      // FLUXO PROMOÇÃO: preço já é o promocional — sem cupom, sem 3%, vai direto ao resumo
       if (session.fluxoPromo) {
         const descPct = session.descontoPromoPct || 0;
         const descValor = totalProd * (descPct / 100);
@@ -1058,8 +1054,9 @@ exports.handler = async (event) => {
           `*📋 RESUMO DO PEDIDO*\n\n` +
           `${resumoCarrinho(carrinho)}\n\n` +
           `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
-          `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}` +
-          (descPct ? `\n🔥 *${session.promoTitulo||'Promoção'}* (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') +
+          `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
+          `🔥 *${session.promoTitulo||'Promoção Relâmpago'}* — preços promocionais já aplicados` +
+          (descPct ? `\n🏷️ Desconto extra (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') +
           `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n` +
           `*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
         await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo' });
@@ -1100,7 +1097,6 @@ exports.handler = async (event) => {
       if (!resultado.ok) {
         return respond(`❌ ${resultado.motivo}\n\nDigite outro código ou *menu* para recomeçar.\n_Ou digite *2* para seguir sem cupom._`);
       }
-      // Cupom válido — segue para resumo comparando com 3% Athena
       return await fecharResumoNormal(session, sid, resultado, respond);
     }
 
@@ -1114,7 +1110,6 @@ exports.handler = async (event) => {
       }
       if (num === 1) {
         const carrinho = session.carrinho || [];
-        // Trava: nunca gerar pedido com carrinho vazio
         if (!carrinho.length) {
           await saveSession(sid, { state:'MENU' });
           return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL);
@@ -1122,7 +1117,6 @@ exports.handler = async (event) => {
         const frete = session.freteSelecionado || {};
         const uf    = session.estadoCliente || '';
 
-        // Desconto já calculado no resumo (promo, athena ou cupom)
         const descontoReais = session.descontoReais || 0;
         const totalFinal = session.total;
         let infoDesconto = '';
@@ -1134,7 +1128,6 @@ exports.handler = async (event) => {
         const orderNsu = await gerarNumeroPedido();
         const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais);
 
-        // Salva pedido pendente no Firebase
         try {
           const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
           await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${pKey}.json`, {
@@ -1325,9 +1318,9 @@ exports.handler = async (event) => {
           const unicas = [...new Set(linhas)].slice(0, 10);
 
           if (unicas.length) {
-            const promo = await carregarPromocaoAtiva();
-            const avisoPromo = promo && promo.desconto_pct
-              ? `\n🔥 *${promo.titulo}* — ${promo.desconto_pct}% de desconto aplicado automaticamente no link!\n`
+            const promo = promoAtiva();
+            const avisoPromo = promo
+              ? `\n🔥 *${promo.titulo}* ativa! Digite *promo* pra ver as ofertas.\n`
               : '';
             msgProdutos =
               `🛒 *Produtos disponíveis — ${nomeProduto.toUpperCase()}:*\n${avisoPromo}\n` +
