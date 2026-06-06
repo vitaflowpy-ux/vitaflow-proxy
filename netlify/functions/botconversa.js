@@ -22,10 +22,10 @@ const PROMO_RELAMPAGO = {
   titulo: 'PROMOÇÃO RELÂMPAGO',
   link: 'https://vitaflowoficial.com/pages/promocoes',
   produtos: [
-    { nome: 'Caneta Synedica 40mg',      de: 2000, por: 1230 },
-    { nome: 'Caneta Alluvi 40mg',        de: 1560, por: 1199 },
-    { nome: 'Caneta ZPHC 60mg',          de: 2999, por: 2099 },
-    { nome: 'Caneta Veltrane Gold 90mg', de: 1499, por: 1249 },
+    { nome: 'Caneta Synedica 40mg (Retatrutida)',      de: 2000, por: 1230 },
+    { nome: 'Caneta Alluvi 40mg (Retatrutida)',        de: 1560, por: 1199 },
+    { nome: 'Caneta ZPHC 60mg (Retatrutida)',          de: 2999, por: 2099 },
+    { nome: 'Caneta Veltrane Gold 90mg (Retatrutida)', de: 1499, por: 1249 },
   ],
 };
 function promoAtiva() {
@@ -328,7 +328,6 @@ function listaPromoMsg(promo) {
   ).join('\n');
   return `⚡ *${promo.titulo}* — exclusiva comigo (Athena) e enquanto durarem os estoques! 🔥\n\n` +
     `${linhas}\n\n` +
-    `_Sem cupom e sem o 3% — o preço promocional já é a melhor condição._\n` +
     `👉 Detalhes: ${promo.link}\n\n` +
     `*Digite o número do produto para comprar:*`;
 }
