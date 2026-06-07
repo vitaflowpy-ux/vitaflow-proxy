@@ -3,6 +3,9 @@
 // POST -> cria produtos como rascunho com fabricante (vendor) e coleções:
 //         - coleção manual  -> entra via Collect API
 //         - coleção automática (smart por TAG) -> entra recebendo a tag da regra
+//         Estoque na criação segue o fornecedor: se p.esgotado === true,
+//         nasce ESGOTADO (rastrear estoque + não vender sem estoque + qtd 0);
+//         senão nasce DISPONÍVEL (sem rastrear estoque).
 const SHOPIFY_DOMAIN = 'nv18ua-1w.myshopify.com';
 const SHOPIFY_TOKEN  = process.env.SHOPIFY_TOKEN;
 const API = '2025-01';
@@ -66,6 +69,16 @@ function tagsDaSmart(col) {
   return tags;
 }
 
+// Pega o primeiro location ativo da loja (para zerar a quantidade dos esgotados)
+async function getLocationId() {
+  try {
+    const res = await shopify('locations.json', 'GET');
+    const data = await res.json();
+    const loc = (data.locations || []).find(l => l.active) || (data.locations || [])[0];
+    return loc ? loc.id : null;
+  } catch (e) { return null; }
+}
+
 exports.handler = async function(event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers: cors, body: '' };
 
@@ -92,6 +105,9 @@ exports.handler = async function(event) {
       todas.forEach(c => { mapaCol[String(c.id)] = c; });
     } catch (e) { /* segue sem coleções se a busca falhar */ }
 
+    // Location (só busca uma vez; usado para zerar quantidade dos esgotados)
+    const locationId = await getLocationId();
+
     const resultados = [];
     for (const p of produtos) {
       try {
@@ -113,18 +129,22 @@ exports.handler = async function(event) {
         // Tags finais (sem duplicar)
         const tagsFinais = Array.from(new Set(tagsSmart)).join(', ');
 
+        // Estoque conforme o fornecedor:
+        // esgotado -> rastrear estoque + não vender sem estoque (qtd zerada depois)
+        // disponível -> sem rastrear estoque
+        const esgotado = p.esgotado === true;
+        const variante = esgotado
+          ? { price: String(p.preco || 0), inventory_management: 'shopify', inventory_policy: 'deny' }
+          : { price: String(p.preco || 0), inventory_management: null, inventory_policy: 'continue' };
+
         const payload = {
           product: {
             title: p.nome,
             status: 'draft',
-            product_type: p.categoria || 'Outros',
             vendor: p.fabricante || p.marca || p.fonte || '',
             tags: tagsFinais,
             body_html: '',
-            variants: [{
-              price: String(p.preco || 0),
-              inventory_management: null,
-            }],
+            variants: [variante],
           }
         };
 
@@ -138,9 +158,22 @@ exports.handler = async function(event) {
         }
 
         const produtoId = data.product.id;
-        const variantId = (data.product.variants && data.product.variants[0]) ? data.product.variants[0].id : null;
-        const resultado = { nome: p.nome, ok: true, id: produtoId, variantId: variantId, ref: p.ref || null, colecoes_ok: 0, colecoes_falha: [] };
+        const variant0  = (data.product.variants && data.product.variants[0]) ? data.product.variants[0] : null;
+        const variantId = variant0 ? variant0.id : null;
+        const resultado = { nome: p.nome, ok: true, id: produtoId, variantId: variantId, ref: p.ref || null, esgotado: esgotado, colecoes_ok: 0, colecoes_falha: [] };
         await sleep(550);
+
+        // Se nasceu esgotado, zera a quantidade no local de estoque
+        if (esgotado && variant0 && variant0.inventory_item_id && locationId) {
+          try {
+            await shopify('inventory_levels/set.json', 'POST', {
+              location_id: locationId,
+              inventory_item_id: variant0.inventory_item_id,
+              available: 0
+            });
+          } catch (ze) { /* ignora; produto já fica deny */ }
+          await sleep(550);
+        }
 
         // Coleções automáticas por tag já entram sozinhas (contam como ok)
         resultado.colecoes_ok += Array.from(new Set(tagsSmart)).length;
