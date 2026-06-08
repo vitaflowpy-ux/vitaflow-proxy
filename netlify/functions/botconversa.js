@@ -542,6 +542,24 @@ async function deleteSession(sid) {
     await fetch(`${FIREBASE_URL}/vitaflow_sessions/${k}.json`, { method:'DELETE' });
   } catch {}
 }
+
+// ── ENTREGA 4: Negociação ─────────────────────────────────────────────────────
+const NEGOCIACAO_PCT_TOTAL = 5; // teto total (3% Athena + 2% extra). Nunca sobre valor já descontado.
+async function lerPending(sid) {
+  try {
+    const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
+    const r = await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${pKey}.json`);
+    const d = await r.json();
+    return d ? { pKey, ...d } : null;
+  } catch { return null; }
+}
+async function salvarPendingMerge(pKey, patch) {
+  try {
+    await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${pKey}.json`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch)
+    });
+  } catch {}
+}
 async function validarCupom(codigo, subtotalProdutos) {
   try {
     const cod = (codigo || '').trim().toUpperCase();
@@ -762,6 +780,37 @@ exports.handler = async (event) => {
       await enviarTelegram(`🔔 CLIENTE QUER HUMANO\n📱 ${sid}\n💬 ${mensagem}`);
       await deleteSession(sid);
       return transferir('Vou te transferir para um atendente agora! 😊 Aguarde um momento.');
+    }
+
+    // ── NEGOCIAÇÃO (Entrega 4): reclamou do preço → libera teto de 5% (só quem entrou com os 3% Athena) ──
+    const palavrasNegoc = ['caro','ta caro','muito caro','salgado','ta salgado','preco alto','mais barato','abaixa','abaixar','baixa o preco','desconto','condicao','melhora o preco','faz por menos','ta puxado','pesado no bolso','sem condicao'];
+    if (palavrasNegoc.some(p => n.includes(p)) && state !== 'COLETA_DADOS') {
+      const pend = await lerPending(sid);
+      if (pend && pend.descontoTipo === 'athena' && !pend.negociado) {
+        const carrinho = pend.carrinho || [];
+        const frete = pend.freteSelecionado || {};
+        const totalProd = carrinho.reduce((s,i)=>s + i.preco*i.qtd, 0);
+        if (totalProd > 0) {
+          const novoDesc = totalProd * (NEGOCIACAO_PCT_TOTAL/100); // 5% sobre o subtotal ORIGINAL
+          const novoTotal = totalProd - novoDesc + (frete.valor||0);
+          const novoLink = await gerarLinkInfinitePay(carrinho, frete.valor, pend.order_nsu, novoDesc);
+          const lbl = `Desconto especial (-${NEGOCIACAO_PCT_TOTAL}%)`;
+          await salvarPendingMerge(pend.pKey, { negociado:true, descontoReais:novoDesc, descontoLabel:lbl, total:novoTotal, link: novoLink || pend.link || '' });
+          await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', carrinho, freteSelecionado:frete, estadoCliente: pend.estado || session.estadoCliente, total:novoTotal, descontoReais:novoDesc, descontoLabel:lbl, descontoTipo:'athena', orderNsu:pend.order_nsu, cupomDocId:null, cupomCodigo:null });
+          await enviarTelegram(`🤝 *NEGOCIAÇÃO (Athena)*\n📦 ${pend.order_nsu||'—'}\n📱 ${sid}\n💸 Desconto especial ${NEGOCIACAO_PCT_TOTAL}% → R$ ${novoTotal.toFixed(2).replace('.',',')}`);
+          return respond(
+            `Olha, vou fazer uma condição ESPECIAL pra você fechar agora comigo! 🤝\n\n` +
+            `Consegui liberar *${NEGOCIACAO_PCT_TOTAL}% de desconto* — o máximo que posso dar — no seu pedido:\n\n` +
+            `${resumoCarrinho(carrinho)}\n` +
+            `🚚 ${frete.label||'Frete'} — ${pend.estado||''}\n` +
+            `🏷️ ${lbl}\n` +
+            `💰 *Novo total: R$ ${novoTotal.toFixed(2).replace('.',',')}*\n\n` +
+            (novoLink ? `💳 *Link atualizado com o desconto:*\n${novoLink}\n\n` : '') +
+            `📸 Após pagar, envie o comprovante ou digite *SIM* que eu libero seu envio! 🚀`
+          );
+        }
+      }
+      // sem pedido elegível (cupom maior, promoção, ou já negociado) → segue o fluxo normal
     }
 
     const ehAtacado = ["atacado","revenda","revender","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
