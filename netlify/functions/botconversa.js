@@ -1133,9 +1133,22 @@ exports.handler = async (event) => {
             method:'PUT', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
               phone: sid, order_nsu: orderNsu,
+              // texto/labels (compat com e-mail/telegram/alertas)
               produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
               quantidade: carrinho.reduce((a,i)=>a+i.qtd,0),
-              frete: frete.label, estado: uf, valor: totalFinal, ts: Date.now()
+              frete: frete.label, estado: uf, valor: totalFinal, ts: Date.now(),
+              // ESTRUTURADO (fonte da verdade): permite reconstruir a sessão no pagamento,
+              // mesmo que o cliente mude de assunto, veja outro produto ou digite "menu".
+              carrinho: carrinho,
+              freteSelecionado: frete,
+              estadoCliente: uf,
+              total: totalFinal,
+              descontoReais: descontoReais,
+              descontoLabel: session.descontoLabel || '',
+              descontoTipo: session.descontoTipo || '',
+              cupomDocId: session.cupomDocId || null,
+              cupomCodigo: session.cupomCodigo || null,
+              link: link || ''   // link de pagamento (para reenviar nos lembretes de 3h / 24h)
             })
           });
         } catch {}
