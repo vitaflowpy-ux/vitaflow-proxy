@@ -11,7 +11,7 @@ const FIRESTORE_PROJECT = 'pricehub-f0236';
 const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
 
 const PROMO_RELAMPAGO = {
-  ativa: true,
+  ativa: false,   // dormente — reativar trocando para true quando quiser usar a Relâmpago de novo
   titulo: 'PROMOÇÃO RELÂMPAGO',
   link: 'https://vitaflowoficial.com/pages/promocoes',
   produtos: [
@@ -25,6 +25,25 @@ function promoAtiva() {
   return (PROMO_RELAMPAGO.ativa && PROMO_RELAMPAGO.produtos && PROMO_RELAMPAGO.produtos.length) ? PROMO_RELAMPAGO : null;
 }
 function reais(n) { return Number(n || 0).toLocaleString('pt-BR'); }
+
+// ── Promoção em destaque no menu (anúncio de cupom, sem fluxo de preço fixo) ────
+const PROMO_ANUNCIO = {
+  ativa: true,
+  label: 'Promoção Dia dos Namorados 💘',   // texto da opção 8 no menu
+  cupom: 'NAMORADOS12',
+  validade: '12/06',
+};
+function anuncioPromoMsg() {
+  return `💘 *DIA DOS NAMORADOS VITAFLOW* 💘\n` +
+    `🔥 *12% DE DESCONTO EM TODO O SITE* 🔥\n\n` +
+    `O maior presente é ver quem você ama _saudável, confiante e no seu auge_. ✨\n\n` +
+    `🏷️ Use o cupom: *${PROMO_ANUNCIO.cupom}*\n` +
+    `⏰ *Válido somente até ${PROMO_ANUNCIO.validade}!* Depois disso, acabou.\n\n` +
+    `É bem simples: escolha seus produtos comigo (ou direto no site) e, na hora de fechar o pedido, *digite o cupom ${PROMO_ANUNCIO.cupom}* — eu aplico os *12% nos produtos* automaticamente. 💪🧡\n\n` +
+    `🎁 Presenteie seu par. Ou presenteie você mesmo — _autocuidado também é amor_. 😉\n\n` +
+    `👉 www.vitaflowoficial.com\n\n` +
+    `_Digite *menu* para ver as categorias e começar._`;
+}
 
 // ── Atacado ───────────────────────────────────────────────────────────────────
 const TABELA_ATACADO_URL = 'https://drive.google.com/file/d/1olhYj0OW1cL0Wk0kk6-fct89EJff_1Ip/view';
@@ -112,7 +131,7 @@ Estou aqui para te ajudar a encontrar os melhores produtos, tirar dúvidas técn
 5️⃣ GH ⚡
 6️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
 7️⃣ Buscar por Fabricante 🏭
-8️⃣ Promoção Relâmpago ⚡
+8️⃣ Promoção Dia dos Namorados 💘
 9️⃣ Protocolo / Dúvidas técnicas 🔬
 🔟 Rastrear meu pedido 📦
 
@@ -125,6 +144,10 @@ function buildMenuPrincipal() {
     menu += `
 
 🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 8* para ver as ofertas. ⚡`;
+  } else if (PROMO_ANUNCIO.ativa) {
+    menu += `
+
+💘 *DIA DOS NAMORADOS: 12% OFF em todo o site* com o cupom *${PROMO_ANUNCIO.cupom}* (até ${PROMO_ANUNCIO.validade})! Escolha *opção 8* para saber como usar.`;
   } else {
     menu += `
 
@@ -916,12 +939,13 @@ exports.handler = async (event) => {
     const session = await getSession(sid);
     const state = session.state || 'MENU';
 
-    const ehPromo = n.includes('promo');
+    const ehPromo = n.includes('promo') || n.includes('namorados');
     if (ehPromo && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state)) {
-      const msg = await abrirPromo(session, sid);
+      const msg = await abrirPromo(session, sid);     // se a Relâmpago for reativada, ela tem prioridade
       if (msg) return respond(msg);
+      if (PROMO_ANUNCIO.ativa) return respond(anuncioPromoMsg());
       await saveSession(sid, { state:'MENU' });
-      return respond('No momento não temos Promoção Relâmpago ativa. 😊\n\n' + buildMenuPrincipal());
+      return respond('No momento não temos promoção ativa. 😊\n\n' + buildMenuPrincipal());
     }
 
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
@@ -1056,9 +1080,10 @@ exports.handler = async (event) => {
       }
       if (num === 7) { await saveSession(sid, { ...session, state:'FABRICANTES' }); return respond(MENU_FABRICANTES); }
       if (num === 8) {
-        const msg = await abrirPromo(session, sid);
+        const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
         if (msg) return respond(msg);
-        return respond('No momento não temos *Promoção Relâmpago* ativa. 😊\n\n_Digite *menu* para ver as categorias._');
+        if (PROMO_ANUNCIO.ativa) return respond(anuncioPromoMsg());
+        return respond('No momento não temos promoção ativa. 😊\n\n_Digite *menu* para ver as categorias._');
       }
       if (num === 9) { await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] }); return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_'); }
       if (num === 10) {
