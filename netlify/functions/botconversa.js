@@ -256,12 +256,12 @@ const DICT_PRODUTOS = [
   { label:'Glow', tipo:'lista', colecao:'peptideos', filtro:['glow'], canonico:['glow'], apelidos:[] },
   { label:'SS-31', tipo:'lista', colecao:'peptideos', filtro:['ss-31','ss31'], canonico:['ss-31','ss31'], apelidos:[] },
   { label:'MOTS-C', tipo:'lista', colecao:'peptideos', filtro:['mots-c','motsc'], canonico:['mots-c','motsc'], apelidos:['mots'] },
-  { label:'PT-141', tipo:'lista', colecao:'peptideos', filtro:['pt-141','pt141'], canonico:['pt-141','pt141'], apelidos:[] },
+  { label:'PT-141', tipo:'lista', colecao:'peptideos', filtro:['pt-141','pt141'], canonico:['pt-141','pt141','pt 141'], apelidos:['bremelanotide'] },
   { label:'AOD-9604', tipo:'lista', colecao:'peptideos', filtro:['aod-9604','aod9604','aod'], canonico:['aod-9604','aod9604','aod'], apelidos:[] },
   { label:'CBL-514', tipo:'lista', colecao:'peptideos', filtro:['cbl-514','cbl514','cbl'], canonico:['cbl-514','cbl514','cbl'], apelidos:[] },
   { label:'Epitalon', tipo:'lista', colecao:'peptideos', filtro:['epitalon'], canonico:['epitalon','epithalon'], apelidos:[] },
   { label:'NAD+', tipo:'lista', colecao:'peptideos', filtro:['nad'], canonico:['nad+','nad'], apelidos:[] },
-  { label:'Tesamorelin', tipo:'lista', colecao:'peptideos', filtro:['tesamorelin'], canonico:['tesamorelin'], apelidos:['tesa'] },
+  { label:'Tesamorelin', tipo:'lista', colecao:'peptideos', filtro:['tesamorelin'], canonico:['tesamorelin','tesamorelina'], apelidos:['tesa','tesamorelim','tezamorelin'] },
   { label:'Água Bacteriostática', tipo:'busca_tudo', colecao:'', filtro:['bacteriostatica'],
     canonico:['agua bacteriostatica','bacteriostatica','agua bac'], apelidos:['bac'] },
   { label:'Testosterona', tipo:'submenu_testo', colecao:'hormonios', filtro:['testosterona'],
@@ -290,6 +290,22 @@ const DICT_PRODUTOS = [
   { label:'Botox', tipo:'lista', colecao:'outros', filtro:['botox'], canonico:['botox','toxina botulinica'], apelidos:['bota'] },
 ];
 
+// diferem por no máximo 1 edição (substituição/inserção/remoção) — pega erros como "tesamorelim" vs "tesamorelin"
+function _diff1(a, b) {
+  if (a === b) return true;
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  let i = 0, j = 0, diffs = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++diffs > 1) return false;
+    if (la > lb) i++;
+    else if (lb > la) j++;
+    else { i++; j++; }
+  }
+  if (i < la || j < lb) diffs++;
+  return diffs <= 1;
+}
 function termoBate(termo, nMsg) {
   const t = norm(termo);
   if (!t) return false;
@@ -297,6 +313,15 @@ function termoBate(termo, nMsg) {
   const palavras = nMsg.split(/[^a-z0-9+]+/).filter(Boolean);
   if (palavras.includes(t)) return true;
   if (t.length >= 4 && nMsg.includes(t)) return true;
+  // ignora espaço/hífen dos dois lados: "Pt 141" ~ "pt-141" ~ "pt141"
+  const tCompacto = t.replace(/[-\s]/g, '');
+  const msgCompacto = nMsg.replace(/[-\s]/g, '');
+  if (tCompacto.length >= 4 && msgCompacto.includes(tCompacto)) return true;
+  // grafia aproximada (1 letra) — só para termos longos, evita falso positivo
+  if (t.length >= 6) {
+    if (palavras.some(p => _diff1(p, t))) return true;
+    if (tCompacto.length >= 6 && palavras.some(p => _diff1(p.replace(/[-]/g, ''), tCompacto))) return true;
+  }
   return false;
 }
 
@@ -385,13 +410,9 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
     });
     return respond(`Você quis dizer *${e.label}*? 🤔\n\n1️⃣ Sim\n2️⃣ Não`);
   }
-  const erros = (session.errosSeguidos || 0) + 1;
-  if (erros >= 2) {
-    await saveSession(sid, { ...session, state:'MENU', errosSeguidos:0 });
-    return respond('Sem problema! Vou te mostrar o menu pra ficar mais fácil. 😊\n\n' + buildMenuPrincipal());
-  }
-  await saveSession(sid, { ...session, errosSeguidos: erros });
-  return respond(`Hmm, não encontrei esse item por aqui. 🤔\n\nVocê pode escolher um *número* da lista, digitar o *nome do produto* (ex.: retatrutida, stanozolol, gh) ou *menu* para voltar ao início.\n\n${menuStr}`);
+  // Não reconheceu: NÃO reseta pro menu — mantém o contexto atual e re-mostra a tela onde está.
+  await saveSession(sid, { ...session, errosSeguidos: (session.errosSeguidos || 0) + 1 });
+  return respond(`Hmm, não encontrei esse item por aqui. 🤔\n\nVocê pode escolher um *número* da lista, digitar o *nome do produto* (ex.: retatrutida, stanozolol, gh), *atendimento* para falar com uma pessoa ou *menu* para voltar ao início.\n\n${menuStr}`);
 }
 
 // ── System prompt exclusivo para protocolos ───────────────────────────────────
@@ -488,12 +509,23 @@ function resumoCarrinho(carrinho) {
     `📦 *${item.nome}*\n    ${item.qtd}x — R$ ${item.preco.toFixed(2).replace('.',',')} un. = R$ ${(item.preco*item.qtd).toFixed(2).replace('.',',')}`
   ).join('\n');
 }
+function msgCarrinhoMenu(carrinho) {
+  const subtotal = totalCarrinho(carrinho);
+  return `🛒 *Seu carrinho* (${carrinho.length} ${carrinho.length>1?'itens':'item'}):\n${resumoCarrinho(carrinho)}\n\n` +
+    `💰 *Subtotal: R$ ${subtotal.toFixed(2).replace('.',',')}*\n_(frete calculado no fechamento)_\n\n` +
+    `*O que deseja fazer?*\n1️⃣ Adicionar mais produtos\n2️⃣ Finalizar compra\n3️⃣ Remover um produto`;
+}
+function msgRemoverItem(carrinho) {
+  const linhas = (carrinho || []).map((it, i) => `${emojis(i)} *${it.nome}* x${it.qtd}`).join('\n');
+  return `🗑️ *Qual produto você quer remover?*\n\n${linhas}\n\n_Digite o número do item, ou *menu* para voltar._`;
+}
+const REM_INTENT = ['tirar','retirar','remover','excluir','apagar','tira produto','remove produto'];
 function listaPromoMsg(promo) {
   const linhas = promo.produtos.map((p,i) =>
     `${emojis(i)} *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`
   ).join('\n');
   return `⚡ *${promo.titulo}* — exclusiva comigo (Athena) e enquanto durarem os estoques! 🔥\n\n` +
-    `${linhas}\n\n👉 Detalhes: ${promo.link}\n\n*Digite o número do produto para comprar:*`;
+    `${linhas}\n\n👉 Detalhes: ${promo.link}\n\n*Digite o número do produto para comprar*, ou *menu* para voltar ao início.`;
 }
 async function abrirPromo(session, sid) {
   const promo = promoAtiva();
@@ -627,12 +659,16 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const totalComDesconto = totalProd - descontoReais + frete.valor;
   const linhaCupomInfo = (descCupom > 0 && descCupom <= descAthena)
     ? `\n_(Seu cupom daria R$ ${descCupom.toFixed(2).replace('.',',')}, mas o desconto Athena de 3% é maior e foi aplicado!)_` : '';
+  // Opção B: cupom discreto — só convida a digitar o código se nenhum cupom foi aplicado ainda
+  const linhaConviteCupom = !cupomDocId
+    ? `\n\n_Se você já tem um cupom, é só digitar o código agora._` : '';
   const resumo =
     `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
     `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
     `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
     `🏷️ ${descontoLabel}: -R$ ${descontoReais.toFixed(2).replace('.',',')}` + linhaCupomInfo +
-    `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
+    `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu` +
+    linhaConviteCupom;
   await saveSession(sid, {
     ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd,
     descontoReais, descontoLabel, total: totalComDesconto,
@@ -698,6 +734,82 @@ async function salvarPedidoGAS(pedido) {
     await fetch(GAS_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(pedido) });
   } catch {}
 }
+// Leitor determinístico de reserva — funciona mesmo se a IA falhar.
+// Detecta CPF (11 dígitos), CEP (8 dígitos / 00000-000), telefone (10-11 díg.), email,
+// estado (sigla UF) e mapeia as linhas de texto restantes para nome/endereço/bairro/cidade.
+const _UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+const _UF_NOME = {
+  acre:'AC', alagoas:'AL', amapa:'AP', amazonas:'AM', bahia:'BA', ceara:'CE', 'distrito federal':'DF',
+  'espirito santo':'ES', goias:'GO', maranhao:'MA', 'mato grosso':'MT', 'mato grosso do sul':'MS',
+  'minas gerais':'MG', para:'PA', paraiba:'PB', parana:'PR', pernambuco:'PE', piaui:'PI',
+  'rio de janeiro':'RJ', 'rio grande do norte':'RN', 'rio grande do sul':'RS', rondonia:'RO',
+  roraima:'RR', 'santa catarina':'SC', 'sao paulo':'SP', sergipe:'SE', tocantins:'TO'
+};
+function extrairDadosRegex(texto) {
+  const out = {};
+  if (!texto) return out;
+  const original = String(texto);
+  let resto = original;
+
+  // email
+  const mEmail = resto.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+  if (mEmail) { out.email = mEmail[0].toLowerCase(); resto = resto.replace(mEmail[0], ' '); }
+
+  // CEP (00000-000 ou 8 dígitos)
+  const mCep = resto.match(/\b\d{5}-?\d{3}\b/);
+  if (mCep) { out.cep = mCep[0].replace(/\D/g,''); resto = resto.replace(mCep[0], ' '); }
+
+  // CPF (11 dígitos, com ou sem máscara) — pega o primeiro bloco de 11 dígitos
+  const soDigitos = resto.replace(/[^\d]/g, ' ');
+  const mCpf = (resto.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/) || []);
+  if (mCpf[0]) { out.cpf = mCpf[0].replace(/\D/g,''); resto = resto.replace(mCpf[0], ' '); }
+  else {
+    const blocos = soDigitos.split(/\s+/).filter(Boolean);
+    const cpfCand = blocos.find(b => b.length === 11);
+    if (cpfCand) { out.cpf = cpfCand; resto = resto.replace(cpfCand, ' '); }
+  }
+
+  // telefone (10 ou 11 dígitos) — depois do CPF pra não confundir
+  const blocos2 = resto.replace(/[^\d]/g,' ').split(/\s+/).filter(Boolean);
+  const telCand = blocos2.find(b => b.length === 10 || b.length === 11);
+  if (telCand) { out.telefone = telCand; resto = resto.replace(telCand, ' '); }
+  else {
+    const mTel = resto.match(/\(?\d{2}\)?\s*9?\s*\d{4}[-\s]?\d{4}/);
+    if (mTel) { out.telefone = mTel[0].replace(/\D/g,''); resto = resto.replace(mTel[0], ' '); }
+  }
+
+  // linhas de texto restantes (sem os números já consumidos)
+  let linhas = resto.split(/\n|,/).map(l => l.replace(/\s+/g,' ').trim()).filter(l => l && l.replace(/\d/g,'').trim().length >= 2);
+
+  // estado: por sigla ou por nome
+  for (let i = 0; i < linhas.length; i++) {
+    const ln = norm(linhas[i]).replace(/[^a-z ]/g,'').trim();
+    if (_UF_NOME[ln]) { out.estado = _UF_NOME[ln]; linhas.splice(i,1); break; }
+    const up = linhas[i].toUpperCase().replace(/[^A-Z]/g,'');
+    if (up.length === 2 && _UFS.includes(up)) { out.estado = up; linhas.splice(i,1); break; }
+  }
+
+  // endereço: a linha que tem número de rua (dígitos no meio do texto)
+  let idxEnd = linhas.findIndex(l => /\d/.test(l) && /[a-zA-Z]{3,}/.test(l));
+  if (idxEnd >= 0) { out.endereco = linhas[idxEnd]; linhas.splice(idxEnd, 1); }
+
+  // complemento (obs/apto/bloco/casa/loja)
+  let idxComp = linhas.findIndex(l => /\b(ap|apto|apartamento|bloco|bl|casa|fundos|loja|obs|complemento|entregar)\b/i.test(norm(l)));
+  if (idxComp >= 0) { out.complemento = linhas[idxComp]; linhas.splice(idxComp, 1); }
+
+  // sobra: nome (primeira linha “de gente”), depois bairro, depois cidade
+  const sobra = linhas.filter(Boolean);
+  if (sobra.length) {
+    // nome = linha com pelo menos 2 palavras alfabéticas e sem dígito
+    let idxNome = sobra.findIndex(l => !/\d/.test(l) && l.trim().split(/\s+/).length >= 2);
+    if (idxNome < 0) idxNome = 0;
+    out.nome = sobra[idxNome]; sobra.splice(idxNome, 1);
+    if (sobra[0]) { out.bairro = sobra.shift(); }
+    if (sobra[0]) { out.cidade = sobra.shift(); }
+  }
+  return out;
+}
+
 async function extrairDadosIA(texto) {
   try {
     const prompt = `Extraia os dados de cadastro do cliente do texto abaixo e retorne APENAS um objeto JSON válido, sem nenhum texto antes ou depois, sem markdown.
@@ -771,15 +883,24 @@ exports.handler = async (event) => {
 
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
     const ehSaudacaoOuMenu = n === 'menu' || n === 'inicio' || n === 'voltar' || n === 'start' || saudacoes.some(s => n === s || n.startsWith(s+' ') || n.startsWith(s+'!'));
+    // COLETA_DADOS = pedido JÁ PAGO. Não deixa cair no menu por saudação; só sai com "menu" explícito.
+    if (ehSaudacaoOuMenu && state === 'COLETA_DADOS' && n !== 'menu') {
+      return respond('Seu pedido já está *pago e garantido*! 🧡 Só preciso dos dados de envio pra concluir.\n\nMe manda em linhas separadas: nome, CPF, telefone, rua e número, bairro, cidade, estado e CEP. 😊');
+    }
     if (ehSaudacaoOuMenu) {
       await saveSession(sid, { state:'MENU' });
       return respond(buildMenuPrincipal());
     }
 
-    if (['atendente','humano','vendedor','pessoa real','falar com alguem','falar com pessoa'].some(p => n.includes(p))) {
-      await enviarTelegram(`🔔 CLIENTE QUER HUMANO\n📱 ${sid}\n💬 ${mensagem}`);
-      await deleteSession(sid);
-      return transferir('Vou te transferir para um atendente agora! 😊 Aguarde um momento.');
+    const palavrasHumano = ['atendente','atendimento','humano','vendedor','pessoa real','falar com alguem','falar com pessoa','falar com atendimento','quero atendimento','suporte','reclamacao','reclamar'];
+    // Em estados críticos (carrinho/pedido pago) NÃO apaga a sessão — escala mas preserva o pedido.
+    const estadoCritico = ['CARRINHO','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    if (palavrasHumano.some(p => n.includes(p))) {
+      await enviarTelegram(`🔔 CLIENTE QUER HUMANO\n📱 ${sid}\n📍 Estado: ${state}\n💬 ${mensagem}`);
+      if (!estadoCritico) await deleteSession(sid);
+      return transferir(estadoCritico
+        ? 'Vou chamar um atendente pra te ajudar! 😊 Fica tranquilo que *seu pedido continua salvo* aqui comigo. Aguarde um momento.'
+        : 'Vou te transferir para um atendente agora! 😊 Aguarde um momento.');
     }
 
     // ── NEGOCIAÇÃO (Entrega 4): reclamou do preço → libera teto de 5% (só quem entrou com os 3% Athena) ──
@@ -1046,16 +1167,39 @@ exports.handler = async (event) => {
       carrinho.push({ nome: prod.nome, preco: prod.preco, qtd: num });
       const subtotal = totalCarrinho(carrinho);
       await saveSession(sid, { ...session, state:'CARRINHO', carrinho });
-      return respond(`✅ Adicionado ao carrinho:\n📦 *${prod.nome}* x${num}\n\n🛒 *Seu carrinho* (${carrinho.length} ${carrinho.length>1?'itens':'item'}):\n${resumoCarrinho(carrinho)}\n\n💰 *Subtotal: R$ ${subtotal.toFixed(2).replace('.',',')}*\n_(frete calculado no fechamento)_\n\n*O que deseja fazer?*\n1️⃣ Adicionar mais produtos\n2️⃣ Finalizar compra`);
+      return respond(`✅ Adicionado ao carrinho:\n📦 *${prod.nome}* x${num}\n\n${msgCarrinhoMenu(carrinho)}`);
     }
 
     if (state === 'CARRINHO') {
+      const carrinho = session.carrinho || [];
       if (num === 1) { await saveSession(sid, { ...session, state:'MENU' }); return respond('🛒 Seu carrinho está guardado! Escolha mais produtos:\n\n' + buildMenuPrincipal()); }
       if (num === 2) { await saveSession(sid, { ...session, state:'ESTADO' }); return respond(`*De qual estado você é?*\nExemplo: RJ, SP, MG, DF, BA...`); }
-      return respond('Digite *1* para adicionar mais produtos ou *2* para finalizar a compra:');
+      if (num === 3 || REM_INTENT.some(p => n.includes(p))) {
+        if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio. 🛒\n\n' + buildMenuPrincipal()); }
+        await saveSession(sid, { ...session, state:'REMOVER_ITEM' });
+        return respond(msgRemoverItem(carrinho));
+      }
+      return respond('Digite *1* para adicionar mais, *2* para finalizar ou *3* para remover um produto:');
+    }
+
+    if (state === 'REMOVER_ITEM') {
+      const carrinho = session.carrinho || [];
+      if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio. 🛒\n\n' + buildMenuPrincipal()); }
+      if (!num || num < 1 || num > carrinho.length) return respond(`Digite um número entre 1 e ${carrinho.length} para remover, ou *menu* para voltar.\n\n${msgRemoverItem(carrinho)}`);
+      const removido = carrinho.splice(num - 1, 1)[0];
+      if (!carrinho.length) {
+        await saveSession(sid, { ...session, state:'MENU', carrinho: [] });
+        return respond(`🗑️ *${removido.nome}* removido. Seu carrinho ficou vazio.\n\nEscolha um produto pra continuar:\n\n` + buildMenuPrincipal());
+      }
+      await saveSession(sid, { ...session, state:'CARRINHO', carrinho });
+      return respond(`🗑️ *${removido.nome}* removido!\n\n${msgCarrinhoMenu(carrinho)}`);
     }
 
     if (state === 'ESTADO') {
+      if (REM_INTENT.some(p => n.includes(p)) && (session.carrinho || []).length) {
+        await saveSession(sid, { ...session, state:'REMOVER_ITEM' });
+        return respond(msgRemoverItem(session.carrinho));
+      }
       const uf = mensagem.trim().toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
       const opts = getFreteOpcoes(uf);
       if (!opts) return respond(`Estado *${uf || mensagem}* não reconhecido.\nDigite a sigla do seu estado (ex: RJ, SP, MG):`);
@@ -1065,6 +1209,10 @@ exports.handler = async (event) => {
     }
 
     if (state === 'FRETE') {
+      if (REM_INTENT.some(p => n.includes(p)) && (session.carrinho || []).length) {
+        await saveSession(sid, { ...session, state:'REMOVER_ITEM' });
+        return respond(msgRemoverItem(session.carrinho));
+      }
       const opts = session.freteOpcoes || [];
       if (!num || num < 1 || num > opts.length) return respond(`Digite 1, 2 ou 3 para escolher o frete:`);
       const frete = opts[num - 1];
@@ -1085,8 +1233,8 @@ exports.handler = async (event) => {
         await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo' });
         return respond(resumo);
       }
-      await saveSession(sid, { ...session, state:'PERGUNTA_CUPOM', freteSelecionado: frete, totalProd });
-      return respond(`Quase lá! 😊 Antes de fechar:\n\n🏷️ *Você tem um cupom de desconto?*\n\n1️⃣ Sim, tenho cupom\n2️⃣ Não, seguir sem cupom`);
+      // Opção B: aplica os 3% e mostra o resumo direto; o cupom fica como convite discreto no resumo
+      return await fecharResumoNormal({ ...session, freteSelecionado: frete, totalProd }, sid, null, respond);
     }
 
     if (state === 'PERGUNTA_CUPOM') {
@@ -1151,6 +1299,18 @@ exports.handler = async (event) => {
           ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n📸 Após pagar:\n1️⃣ Envie o print ou foto do comprovante\n2️⃣ Digite *SIM* para eu confirmar seu pedido!`
           : `Acesse vitaflowoficial.com para finalizar seu pedido.`);
       }
+      // Opção B: cliente pode digitar um código de cupom aqui (não em promoção/negociação)
+      if (mensagem && mensagem.trim().length >= 3 && session.descontoTipo !== 'promo') {
+        const totalProd = session.totalProd || totalCarrinho(session.carrinho || []);
+        const resultado = await validarCupom(mensagem, totalProd);
+        if (resultado.ok) {
+          if (resultado.descontoReais > (session.descontoReais || 0)) {
+            return await fecharResumoNormal({ ...session, cupomDocId:null, cupomCodigo:null }, sid, resultado, respond);
+          }
+          return respond(`Seu cupom *${resultado.codigo}* daria R$ ${resultado.descontoReais.toFixed(2).replace('.',',')}, mas o desconto de 3% que já apliquei é maior 😉\n\nDigite *1* para confirmar ou *2* para voltar ao menu.`);
+        }
+        return respond(`❌ ${resultado.motivo}\n\nDigite *1* para confirmar com o desconto atual, ou *2* para voltar ao menu.`);
+      }
       return respond('Digite *1* para confirmar ou *2* para voltar ao menu:');
     }
 
@@ -1186,15 +1346,41 @@ exports.handler = async (event) => {
     // COLETA DE DADOS
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'COLETA_DADOS') {
-      const dados = await extrairDadosIA(mensagem) || {};
-      const coleta = { ...(session.coleta||{}), ...dados };
+      // Combina IA + leitor determinístico (regex). A IA preenche; o regex cobre o que faltar.
+      const dadosIA = await extrairDadosIA(mensagem) || {};
+      const dadosRegex = extrairDadosRegex(mensagem) || {};
+      const dadosNovos = { ...dadosRegex, ...dadosIA }; // IA tem prioridade quando preencheu
+      const coleta = { ...(session.coleta||{}) };
+      Object.keys(dadosNovos).forEach(k => { const v = dadosNovos[k]; if (v && String(v).trim().length >= 1 && !coleta[k]) coleta[k] = v; });
+      if (coleta.estado) coleta.estado = String(coleta.estado).toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
       const obrigatorios = ['nome','cpf','telefone','endereco','bairro','cidade','estado','cep'];
-      const faltam = obrigatorios.filter(c => !coleta[c] || coleta[c].length < 2);
+      const faltam = obrigatorios.filter(c => !coleta[c] || String(coleta[c]).length < 2);
 
       if (faltam.length > 0) {
-        await saveSession(sid, { ...session, coleta });
+        const tentativas = (session.coletaTentativas || 0) + 1;
+        // TRAVA: pedido já pago nunca volta ao menu. Após 3 tentativas, escala pra humano e mantém o pedido.
+        if (tentativas >= 3) {
+          await enviarTelegram(
+            `⚠️ *COLETA TRAVADA — pedido PAGO* (precisa de atendimento humano)\n` +
+            `📦 ${session.orderNsu || '—'}\n📱 ${sid}\n` +
+            `Faltando: ${faltam.join(', ')}\n` +
+            `Dados captados: ${JSON.stringify(coleta)}\n` +
+            `Última mensagem do cliente: ${mensagem}`
+          );
+          await saveSession(sid, { ...session, coleta, coletaTentativas: tentativas });
+          return respond(
+            `Obrigada! 🙏 Já recebi parte dos seus dados. Vou pedir pra um atendente *finalizar seu envio* com você pra não ter erro — seu *pedido está pago e garantido*. 😊\n\n` +
+            `Se quiser, pode reenviar os dados que faltam neste formato que eu também tento de novo:\n` +
+            `Nome: \nCPF: \nTelefone: \nRua e número: \nBairro: \nCidade: \nEstado: \nCEP: `
+          );
+        }
+        await saveSession(sid, { ...session, coleta, coletaTentativas: tentativas });
         const nomesCampos = { nome:'Nome completo', cpf:'CPF', telefone:'Telefone', email:'E-mail', endereco:'Rua e número', bairro:'Bairro', cidade:'Cidade', estado:'Estado', cep:'CEP' };
-        return respond(`Faltam alguns dados:\n${faltam.map(f => '• '+nomesCampos[f]).join('\n')}\n\nPor favor, me envie esses dados que faltam. 😊`);
+        return respond(
+          `Quase lá! 😊 Só preciso confirmar:\n${faltam.map(f => '• '+nomesCampos[f]).join('\n')}\n\n` +
+          `Pode me mandar tudo junto, em linhas separadas (não precisa dos rótulos):\n` +
+          `_Ex.: João da Silva / 000.000.000-00 / (11) 99999-9999 / Rua X 123 / Centro / São Paulo / SP / 00000-000_`
+        );
       }
 
       const carrinho = session.carrinho || [];
