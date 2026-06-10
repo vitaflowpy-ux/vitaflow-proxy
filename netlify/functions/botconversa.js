@@ -520,6 +520,49 @@ function msgRemoverItem(carrinho) {
   return `🗑️ *Qual produto você quer remover?*\n\n${linhas}\n\n_Digite o número do item, ou *menu* para voltar._`;
 }
 const REM_INTENT = ['tirar','retirar','remover','excluir','apagar','tira produto','remove produto'];
+
+// ── Rastreio de pedido (status da coluna F) ───────────────────────────────────
+const STATUS_INFO = {
+  'aguardando pagamento':              { emoji:'⏳',  exp:'O pedido foi gerado mas o pagamento ainda não foi confirmado.' },
+  'pedido confirmado':                 { emoji:'✅',  exp:'Seu pedido foi recebido e o pagamento confirmado. Em breve iniciaremos a separação.' },
+  'em separacao':                      { emoji:'📦',  exp:'Estamos preparando os produtos do seu pedido com controle de qualidade rigoroso.' },
+  'despachado':                        { emoji:'🚚',  exp:'Seu pedido foi entregue à transportadora.' },
+  'postado':                           { emoji:'📮',  exp:'Seu pedido saiu da sede da transportadora e está a caminho.' },
+  'em transferencia':                  { emoji:'🔄',  exp:'Seu pedido está em trânsito entre unidades a caminho da sua cidade.' },
+  'chegou a unidade de destino':       { emoji:'📍',  exp:'Seu pedido chegou à unidade de distribuição na sua cidade. A entrega será realizada em breve.' },
+  'em separacao no centro logistico':  { emoji:'🏢',  exp:'Seu pedido está sendo processado no centro logístico para sair para entrega.' },
+  'saiu para entrega':                 { emoji:'🛵',  exp:'Seu pedido está com o entregador e será entregue hoje. Fique atento!' },
+  'entregue':                          { emoji:'💚',  exp:'Pedido entregue com sucesso! Esperamos que aproveite seus produtos.' },
+  'encaminhado para fiscalizacao':     { emoji:'🔎',  exp:'O pedido passa por verificação de rotina pela fiscalização.' },
+  'fiscalizacao finalizada':           { emoji:'✔️',  exp:'A verificação foi concluída e o pedido segue seu fluxo normal.' },
+  'destinatario ausente':              { emoji:'🚪',  exp:'O entregador passou no endereço mas não encontrou ninguém. Nova tentativa será feita.' },
+  'endereco incorreto':                { emoji:'📌',  exp:'Houve um problema com o endereço de entrega; é preciso confirmar os dados.' },
+  'area com distribuicao':             { emoji:'🗺️',  exp:'A região tem particularidade na distribuição; verificando a melhor forma de entrega.' },
+  'pedido extraviado':                 { emoji:'⚠️',  exp:'O pedido foi extraviado durante o transporte.' },
+  'pedido apreendido':                 { emoji:'🚫',  exp:'O pedido foi retido/apreendido.' },
+  'reembolso realizado':               { emoji:'💸',  exp:'O reembolso do pedido foi efetuado.' },
+  'pedido cancelado':                  { emoji:'❌',  exp:'O pedido foi cancelado.' },
+};
+function statusBloco(pedido, statusTexto) {
+  const info = STATUS_INFO[norm(statusTexto)];
+  const emoji = info ? info.emoji : '📦';
+  const exp = info ? `\n_${info.exp}_` : '';
+  return `📦 *Pedido ${pedido}*\n${emoji} *${statusTexto || '—'}*${exp}`;
+}
+const RASTREIO_RODAPE =
+  `\n\n_Quer consultar outro? É só mandar o número do pedido, CPF ou e-mail._\n` +
+  `📞 Para mais informações sobre seu pedido, fale com a logística: 👉 wa.me/447537155718\n` +
+  `_Ou digite *menu* para voltar ao início._`;
+async function consultarStatusGAS(termo) {
+  try {
+    const r = await fetch(GAS_URL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'consultar_status', termo })
+    });
+    const d = await r.json();
+    return (d && d.success && Array.isArray(d.pedidos)) ? d.pedidos : [];
+  } catch { return []; }
+}
 function listaPromoMsg(promo) {
   const linhas = promo.produtos.map((p,i) =>
     `${emojis(i)} *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`
@@ -1018,8 +1061,28 @@ exports.handler = async (event) => {
         return respond(`*📦 OUTROS (Botox, vitaminas e remédios em geral)*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
       if (num === 9) { await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] }); return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_'); }
-      if (num === 10) { return respond('*📦 RASTREAR PEDIDO*\n\nNosso setor de logística te atende diretamente!\n\n👉 wa.me/447537155718\n\nInforme: número do pedido, CPF e nome completo. Eles resolvem rapidinho! 💪'); }
+      if (num === 10) {
+        await saveSession(sid, { ...session, state:'RASTREAR' });
+        return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido*, seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_(Pode digitar do jeito que for: com pontos, sem pontos, com traço... eu entendo.)_\n\n_Digite *menu* para voltar._`);
+      }
       return await tratarTextoLivre(session, sid, n, buildMenuPrincipal(), respond);
+    }
+
+    if (state === 'RASTREAR') {
+      const termo = (mensagem || '').trim();
+      const alnum = termo.replace(/[^a-zA-Z0-9@]/g, '');
+      if (alnum.length < 2) {
+        return respond(`Hmm, isso não parece um número de pedido, CPF ou e-mail. 🤔\n\nMe manda o *número do pedido*, o *CPF* (11 dígitos) ou o *e-mail* da compra.\n\n_Ou digite *menu* para voltar._`);
+      }
+      const pedidos = await consultarStatusGAS(termo);
+      if (!pedidos.length) {
+        return respond(`🔍 Não encontrei nenhum pedido com *esse dado*.\n\nConfere se digitou certo o *número do pedido*, *CPF* ou *e-mail* da compra e me manda de novo. 😊\n\n📞 Se preferir, fale com a logística: 👉 wa.me/447537155718\n_Ou digite *menu* para voltar._`);
+      }
+      if (pedidos.length === 1) {
+        return respond(statusBloco(pedidos[0].pedido, pedidos[0].status) + RASTREIO_RODAPE);
+      }
+      const blocos = pedidos.map(p => statusBloco(p.pedido, p.status)).join('\n\n');
+      return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
     }
 
     if (state === 'CONFIRMAR_PRODUTO') {
