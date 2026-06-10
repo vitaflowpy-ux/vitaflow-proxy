@@ -110,9 +110,9 @@ Estou aqui para te ajudar a encontrar os melhores produtos, tirar dúvidas técn
 3️⃣ Peptídeos 💉
 4️⃣ Hormônios 💪
 5️⃣ GH ⚡
-6️⃣ Promoção Relâmpago ⚡
+6️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
 7️⃣ Buscar por Fabricante 🏭
-8️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
+8️⃣ Promoção Relâmpago ⚡
 9️⃣ Protocolo / Dúvidas técnicas 🔬
 🔟 Rastrear meu pedido 📦
 
@@ -124,7 +124,7 @@ function buildMenuPrincipal() {
   if (promo) {
     menu += `
 
-🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 6* para ver as ofertas. ⚡`;
+🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 8* para ver as ofertas. ⚡`;
   } else {
     menu += `
 
@@ -1048,17 +1048,17 @@ exports.handler = async (event) => {
         return respond(`*⚡ GH*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
       if (num === 6) {
-        const msg = await abrirPromo(session, sid);
-        if (msg) return respond(msg);
-        return respond('No momento não temos *Promoção Relâmpago* ativa. 😊\n\n_Digite *menu* para ver as categorias._');
-      }
-      if (num === 7) { await saveSession(sid, { ...session, state:'FABRICANTES' }); return respond(MENU_FABRICANTES); }
-      if (num === 8) {
         const dados = await buscarCache('outros');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*📦 OUTROS (Botox, vitaminas e remédios em geral)*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+      }
+      if (num === 7) { await saveSession(sid, { ...session, state:'FABRICANTES' }); return respond(MENU_FABRICANTES); }
+      if (num === 8) {
+        const msg = await abrirPromo(session, sid);
+        if (msg) return respond(msg);
+        return respond('No momento não temos *Promoção Relâmpago* ativa. 😊\n\n_Digite *menu* para ver as categorias._');
       }
       if (num === 9) { await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] }); return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_'); }
       if (num === 10) {
