@@ -31,18 +31,38 @@ const PROMO_ANUNCIO = {
   ativa: true,
   label: 'Promoção Dia dos Namorados 💘',   // texto da opção 8 no menu
   cupom: 'NAMORADOS12',
+  pct: 12,                                   // desconto aplicado automaticamente no fluxo
   validade: '12/06',
 };
 function anuncioPromoMsg() {
   return `💘 *DIA DOS NAMORADOS VITAFLOW* 💘\n` +
     `🔥 *12% DE DESCONTO EM TODO O SITE* 🔥\n\n` +
     `O maior presente é ver quem você ama _saudável, confiante e no seu auge_. ✨\n\n` +
-    `🏷️ Use o cupom: *${PROMO_ANUNCIO.cupom}*\n` +
     `⏰ *Válido somente até ${PROMO_ANUNCIO.validade}!* Depois disso, acabou.\n\n` +
-    `É bem simples: escolha seus produtos comigo (ou direto no site) e, na hora de fechar o pedido, *digite o cupom ${PROMO_ANUNCIO.cupom}* — eu aplico os *12% nos produtos* automaticamente. 💪🧡\n\n` +
-    `🎁 Presenteie seu par. Ou presenteie você mesmo — _autocuidado também é amor_. 😉\n\n` +
-    `👉 www.vitaflowoficial.com\n\n` +
-    `_Digite *menu* para ver as categorias e começar._`;
+    `🎁 Presenteie seu par. Ou presenteie você mesmo — _autocuidado também é amor_. 😉`;
+}
+// Entra no FLUXO da promoção: marca a sessão com o desconto de 12% automático e leva ao menu de categorias.
+async function entrarFluxoNamorados(session, sid) {
+  await saveSession(sid, {
+    ...session, state:'MENU',
+    fluxoNamorados: true, descontoNamoradosPct: PROMO_ANUNCIO.pct,
+  });
+  return `💘 *PROMOÇÃO DIA DOS NAMORADOS ATIVADA!* 💘\n\n` +
+    `Prontinho! A partir de agora você tem *${PROMO_ANUNCIO.pct}% de desconto em qualquer produto* — eu aplico sozinha no fechamento, você não precisa digitar cupom nenhum. 🧡\n\n` +
+    `⏰ _Válido até ${PROMO_ANUNCIO.validade}._\n\n` +
+    `Agora é só escolher o que quiser:\n\n` + MENU_PRINCIPAL_BASE + `\n\n_Digite o número da opção (ou o nome do produto)._`;
+}
+
+// ── Grupo VIP (WhatsApp + Telegram) ───────────────────────────────────────────
+const GRUPO_WHATSAPP = 'https://chat.whatsapp.com/EoAPXSLrEsAEXHYolmVaN7';
+const GRUPO_TELEGRAM = 'https://t.me/referencias_vitaflow';
+function msgGrupoVip() {
+  return `🎉 *GRUPOS VIP VITAFLOW* 🎉\n\n` +
+    `Entra nos nossos grupos pra receber *promoções, novidades e ofertas exclusivas* em primeira mão! 🔥\n\n` +
+    `📱 *Grupo no WhatsApp:*\n${GRUPO_WHATSAPP}\n\n` +
+    `✈️ *Grupo no Telegram:*\n${GRUPO_TELEGRAM}\n\n` +
+    `_Dica: entra nos dois pra não perder nada. 😉_\n\n` +
+    `_Digite *menu* para voltar ao início._`;
 }
 
 // ── Atacado ───────────────────────────────────────────────────────────────────
@@ -359,6 +379,40 @@ function reconhecerProduto(nMsg) {
   return null;
 }
 
+// ── Detecção de intenção de RASTREIO (CPF, nº de pedido, e-mail, palavra) ──────
+// Número de pedido VitaFlow: VF-DDMM-XNNN (ex.: VF-0806-A003). Aceita variações de espaço/traço.
+function ehNumeroPedido(msg) {
+  const t = (msg || '').toUpperCase().replace(/\s/g,'');
+  return /VF-?\d{3,4}-?[A-Z]?\d{2,4}/.test(t);
+}
+function ehCPFsolto(msg) {
+  const d = (msg || '').replace(/\D/g,'');
+  // 11 dígitos e a mensagem é "majoritariamente" esse número (não um endereço com vários números)
+  if (d.length !== 11) return false;
+  const resto = (msg || '').replace(/[\d.\-\s/]/g,'').trim();
+  return resto.length <= 4; // tolera "cpf" antes do número
+}
+function ehIntencaoRastreio(nMsg, msgOriginal) {
+  const palavras = ['rastrear','rastreamento','rastreio','cade meu pedido','cadê meu pedido','meu pedido','onde esta meu pedido','onde está meu pedido','status do pedido','status do meu pedido','acompanhar pedido','codigo de rastreio'];
+  if (palavras.some(p => nMsg.includes(norm(p)))) return true;
+  if (ehNumeroPedido(msgOriginal)) return true;
+  if (ehCPFsolto(msgOriginal)) return true;
+  return false;
+}
+
+// Executa o rastreio direto (mesma lógica do estado RASTREAR), a partir de qualquer estado.
+async function fazerRastreio(termo, respond) {
+  const pedidos = await consultarStatusGAS((termo || '').trim());
+  if (!pedidos.length) {
+    return respond(`🔍 Não encontrei nenhum pedido com *esse dado*.\n\nConfere o *número do pedido*, *CPF* ou *e-mail* da compra e me manda de novo. 😊\n\n📞 Se preferir, fale com a logística: 👉 wa.me/447537155718\n_Ou digite *menu* para voltar._`);
+  }
+  if (pedidos.length === 1) {
+    return respond(statusBloco(pedidos[0].pedido, pedidos[0].status) + RASTREIO_RODAPE);
+  }
+  const blocos = pedidos.map(p => statusBloco(p.pedido, p.status)).join('\n\n');
+  return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
+}
+
 function filtrarEster(dados, ester, base) {
   const ne = norm(ester);
   const baseMap = {
@@ -423,6 +477,16 @@ async function resolverReconhecido(session, sid, e, respond) {
 async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   const rec = reconhecerProduto(nMsg);
   if (rec) {
+    const temCarrinho = (session.carrinho || []).length > 0;
+    // Se o cliente tem carrinho e pede outro produto, pergunta antes (carrinho fica salvo).
+    if (temCarrinho) {
+      const e = rec.entry;
+      await saveSession(sid, {
+        ...session, errosSeguidos:0, state:'CONFIRMAR_VER_PRODUTO',
+        pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], ester:e.ester||'' }
+      });
+      return respond(`Quer ver *${e.label}*? Seu carrinho fica salvo. 🛒\n\n1️⃣ Sim, ver ${e.label}\n2️⃣ Não, continuar de onde parei`);
+    }
     if (rec.modo === 'canonico') {
       return await resolverReconhecido(session, sid, rec.entry, respond);
     }
@@ -490,10 +554,11 @@ function emojis(i) {
   return i < 10 ? e[i] : `${i+1}.`;
 }
 function formatarLista(linhas) {
+  const SEP = '\n┈┈┈┈┈┈┈┈┈┈\n';
   return linhas.map((l, i) => {
     const [nome, preco] = l.split('|');
     return preco ? `${emojis(i)} *${nome.trim()}* — R$ ${preco.trim()}` : `${emojis(i)} *${nome.trim()}*`;
-  }).join('\n');
+  }).join(SEP);
 }
 function parseProdutos(linhas) {
   return linhas.map(l => {
@@ -710,6 +775,28 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const carrinho = session.carrinho || [];
   const frete = session.freteSelecionado || {};
   const totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
+
+  // FLUXO NAMORADOS: 12% automático sobre os produtos (nunca soma com os 3%; vale o maior, que é 12%).
+  if (session.fluxoNamorados) {
+    const pct = session.descontoNamoradosPct || PROMO_ANUNCIO.pct;
+    const descNamorados = totalProd * (pct / 100);
+    const totalComDesconto = totalProd - descNamorados + (frete.valor || 0);
+    const resumo =
+      `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
+      `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
+      `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
+      `💘 *Promoção Dia dos Namorados (-${pct}%)*: -R$ ${descNamorados.toFixed(2).replace('.',',')}\n\n` +
+      `💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n` +
+      `🎉 _Você economizou *R$ ${descNamorados.toFixed(2).replace('.',',')}* com a promoção dos Namorados!_ 🧡\n\n` +
+      `*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
+    await saveSession(sid, {
+      ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd,
+      descontoReais: descNamorados, descontoLabel: `Promoção Namorados (-${pct}%)`,
+      total: totalComDesconto, descontoTipo: 'namorados', cupomDocId: null, cupomCodigo: null
+    });
+    return respond(resumo);
+  }
+
   const descAthena = totalProd * (DESCONTO_ATHENA_PCT / 100);
   const descCupom = cupomResultado && cupomResultado.ok ? cupomResultado.descontoReais : 0;
   let descontoReais = descAthena;
@@ -815,63 +902,127 @@ function extrairDadosRegex(texto) {
   const out = {};
   if (!texto) return out;
   const original = String(texto);
-  let resto = original;
+
+  // ── ETAPA 1: extração por RÓTULOS (formato que a própria Athena pede) ──────
+  // Mapeia variações de rótulo para o campo. Cada linha "Rótulo: valor" é casada aqui.
+  const ROTULOS = [
+    { campo:'nome',        re:/^\s*nome\s*(completo)?\s*[:\-]\s*(.+)$/i },
+    { campo:'cpf',         re:/^\s*(cpf|documento|doc)\s*[:\-]\s*(.+)$/i },
+    { campo:'telefone',    re:/^\s*(telefone|tel|celular|cel|whats|whatsapp|fone)\s*[:\-]\s*(.+)$/i },
+    { campo:'email',       re:/^\s*(email|e-mail|e mail)\s*[:\-]\s*(.+)$/i },
+    { campo:'endereco',    re:/^\s*(rua e numero|rua e número|endereco|endereço|rua|logradouro|av|avenida)\s*[:\-]\s*(.+)$/i },
+    { campo:'complemento', re:/^\s*(complemento|compl|obs|observacao|observação|referencia|referência)\s*[:\-]\s*(.+)$/i },
+    { campo:'bairro',      re:/^\s*(bairro)\s*[:\-]\s*(.+)$/i },
+    { campo:'cidade',      re:/^\s*(cidade|municipio|município)\s*[:\-]\s*(.+)$/i },
+    { campo:'estado',      re:/^\s*(estado|uf)\s*[:\-]\s*(.+)$/i },
+    { campo:'cep',         re:/^\s*(cep)\s*[:\-]\s*(.+)$/i },
+  ];
+  const linhasOrig = original.split(/\r?\n/);
+  const linhasSemRotulo = [];
+  for (const linha of linhasOrig) {
+    let casou = false;
+    for (const r of ROTULOS) {
+      const m = linha.match(r.re);
+      if (m) {
+        const valor = (m[m.length - 1] || '').trim();
+        // só preenche se houver valor real depois do rótulo e o campo ainda não foi pego
+        if (valor && valor.replace(/[\s:.-]/g,'').length >= 1 && !out[r.campo]) {
+          if (r.campo === 'cpf')        out.cpf = valor.replace(/\D/g,'') || valor.trim();
+          else if (r.campo === 'cep')   out.cep = valor.replace(/\D/g,'') || valor.trim();
+          else if (r.campo === 'telefone') out.telefone = valor.replace(/\D/g,'') || valor.trim();
+          else if (r.campo === 'email') out.email = valor.toLowerCase();
+          else if (r.campo === 'estado') {
+            const nn = norm(valor).replace(/[^a-z ]/g,'').trim();
+            if (_UF_NOME[nn]) out.estado = _UF_NOME[nn];
+            else { const up = valor.toUpperCase().replace(/[^A-Z]/g,'').slice(0,2); if (up.length===2 && _UFS.includes(up)) out.estado = up; else out.estado = valor.trim(); }
+          }
+          else out[r.campo] = valor;
+        }
+        casou = true;
+        break;
+      }
+    }
+    if (!casou) linhasSemRotulo.push(linha);
+  }
+  // sanitiza valores que ainda têm dígitos onde não deveriam (cpf/tel/cep só números)
+  if (out.cpf && /\D/.test(out.cpf))  out.cpf = out.cpf.replace(/\D/g,'') || out.cpf;
+  if (out.cep && /\D/.test(out.cep))  out.cep = out.cep.replace(/\D/g,'') || out.cep;
+  if (out.telefone && /\D/.test(out.telefone)) out.telefone = out.telefone.replace(/\D/g,'') || out.telefone;
+
+  // ── ETAPA 2: heurística no que SOBROU (texto sem rótulos) ──────────────────
+  let resto = linhasSemRotulo.join('\n');
 
   // email
-  const mEmail = resto.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
-  if (mEmail) { out.email = mEmail[0].toLowerCase(); resto = resto.replace(mEmail[0], ' '); }
+  if (!out.email) { const mEmail = resto.match(/[\w.+-]+@[\w-]+\.[\w.-]+/); if (mEmail) { out.email = mEmail[0].toLowerCase(); resto = resto.replace(mEmail[0], ' '); } }
 
   // CEP (00000-000 ou 8 dígitos)
-  const mCep = resto.match(/\b\d{5}-?\d{3}\b/);
-  if (mCep) { out.cep = mCep[0].replace(/\D/g,''); resto = resto.replace(mCep[0], ' '); }
+  if (!out.cep) { const mCep = resto.match(/\b\d{5}-?\d{3}\b/); if (mCep) { out.cep = mCep[0].replace(/\D/g,''); resto = resto.replace(mCep[0], ' '); } }
 
-  // CPF (11 dígitos, com ou sem máscara) — pega o primeiro bloco de 11 dígitos
-  const soDigitos = resto.replace(/[^\d]/g, ' ');
-  const mCpf = (resto.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/) || []);
-  if (mCpf[0]) { out.cpf = mCpf[0].replace(/\D/g,''); resto = resto.replace(mCpf[0], ' '); }
-  else {
-    const blocos = soDigitos.split(/\s+/).filter(Boolean);
-    const cpfCand = blocos.find(b => b.length === 11);
-    if (cpfCand) { out.cpf = cpfCand; resto = resto.replace(cpfCand, ' '); }
+  // CPF (11 dígitos, com ou sem máscara)
+  if (!out.cpf) {
+    const soDigitos = resto.replace(/[^\d]/g, ' ');
+    const mCpf = (resto.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/) || []);
+    if (mCpf[0]) { out.cpf = mCpf[0].replace(/\D/g,''); resto = resto.replace(mCpf[0], ' '); }
+    else {
+      const blocos = soDigitos.split(/\s+/).filter(Boolean);
+      const cpfCand = blocos.find(b => b.length === 11);
+      if (cpfCand) { out.cpf = cpfCand; resto = resto.replace(cpfCand, ' '); }
+    }
   }
 
   // telefone (10 ou 11 dígitos) — depois do CPF pra não confundir
-  const blocos2 = resto.replace(/[^\d]/g,' ').split(/\s+/).filter(Boolean);
-  const telCand = blocos2.find(b => b.length === 10 || b.length === 11);
-  if (telCand) { out.telefone = telCand; resto = resto.replace(telCand, ' '); }
-  else {
-    const mTel = resto.match(/\(?\d{2}\)?\s*9?\s*\d{4}[-\s]?\d{4}/);
-    if (mTel) { out.telefone = mTel[0].replace(/\D/g,''); resto = resto.replace(mTel[0], ' '); }
+  if (!out.telefone) {
+    const blocos2 = resto.replace(/[^\d]/g,' ').split(/\s+/).filter(Boolean);
+    const telCand = blocos2.find(b => b.length === 10 || b.length === 11);
+    if (telCand) { out.telefone = telCand; resto = resto.replace(telCand, ' '); }
+    else {
+      const mTel = resto.match(/\(?\d{2}\)?\s*9?\s*\d{4}[-\s]?\d{4}/);
+      if (mTel) { out.telefone = mTel[0].replace(/\D/g,''); resto = resto.replace(mTel[0], ' '); }
+    }
   }
 
   // linhas de texto restantes (sem os números já consumidos)
   let linhas = resto.split(/\n|,/).map(l => l.replace(/\s+/g,' ').trim()).filter(l => l && l.replace(/\d/g,'').trim().length >= 2);
 
   // estado: por sigla ou por nome
-  for (let i = 0; i < linhas.length; i++) {
-    const ln = norm(linhas[i]).replace(/[^a-z ]/g,'').trim();
-    if (_UF_NOME[ln]) { out.estado = _UF_NOME[ln]; linhas.splice(i,1); break; }
-    const up = linhas[i].toUpperCase().replace(/[^A-Z]/g,'');
-    if (up.length === 2 && _UFS.includes(up)) { out.estado = up; linhas.splice(i,1); break; }
+  if (!out.estado) {
+    for (let i = 0; i < linhas.length; i++) {
+      const ln = norm(linhas[i]).replace(/[^a-z ]/g,'').trim();
+      if (_UF_NOME[ln]) { out.estado = _UF_NOME[ln]; linhas.splice(i,1); break; }
+      const up = linhas[i].toUpperCase().replace(/[^A-Z]/g,'');
+      if (up.length === 2 && _UFS.includes(up)) { out.estado = up; linhas.splice(i,1); break; }
+    }
   }
 
   // endereço: a linha que tem número de rua (dígitos no meio do texto)
-  let idxEnd = linhas.findIndex(l => /\d/.test(l) && /[a-zA-Z]{3,}/.test(l));
-  if (idxEnd >= 0) { out.endereco = linhas[idxEnd]; linhas.splice(idxEnd, 1); }
+  if (!out.endereco) {
+    let idxEnd = linhas.findIndex(l => /\d/.test(l) && /[a-zA-Z]{3,}/.test(l));
+    if (idxEnd >= 0) { out.endereco = linhas[idxEnd]; linhas.splice(idxEnd, 1); }
+  }
 
   // complemento (obs/apto/bloco/casa/loja)
-  let idxComp = linhas.findIndex(l => /\b(ap|apto|apartamento|bloco|bl|casa|fundos|loja|obs|complemento|entregar)\b/i.test(norm(l)));
-  if (idxComp >= 0) { out.complemento = linhas[idxComp]; linhas.splice(idxComp, 1); }
+  if (!out.complemento) {
+    let idxComp = linhas.findIndex(l => /\b(ap|apto|apartamento|bloco|bl|casa|fundos|loja|obs|complemento|entregar)\b/i.test(norm(l)));
+    if (idxComp >= 0) { out.complemento = linhas[idxComp]; linhas.splice(idxComp, 1); }
+  }
 
   // sobra: nome (primeira linha “de gente”), depois bairro, depois cidade
   const sobra = linhas.filter(Boolean);
   if (sobra.length) {
-    // nome = linha com pelo menos 2 palavras alfabéticas e sem dígito
-    let idxNome = sobra.findIndex(l => !/\d/.test(l) && l.trim().split(/\s+/).length >= 2);
-    if (idxNome < 0) idxNome = 0;
-    out.nome = sobra[idxNome]; sobra.splice(idxNome, 1);
-    if (sobra[0]) { out.bairro = sobra.shift(); }
-    if (sobra[0]) { out.cidade = sobra.shift(); }
+    if (!out.nome) {
+      let idxNome = sobra.findIndex(l => !/\d/.test(l) && l.trim().split(/\s+/).length >= 2);
+      if (idxNome < 0) idxNome = 0;
+      out.nome = sobra[idxNome]; sobra.splice(idxNome, 1);
+    }
+    if (!out.bairro && sobra[0]) { out.bairro = sobra.shift(); }
+    if (!out.cidade && sobra[0]) { out.cidade = sobra.shift(); }
+  }
+
+  // normaliza estado se veio por extenso pela etapa de rótulo
+  if (out.estado && out.estado.length > 2) {
+    const nn = norm(out.estado).replace(/[^a-z ]/g,'').trim();
+    if (_UF_NOME[nn]) out.estado = _UF_NOME[nn];
+    else { const up = out.estado.toUpperCase().replace(/[^A-Z]/g,'').slice(0,2); if (up.length===2 && _UFS.includes(up)) out.estado = up; }
   }
   return out;
 }
@@ -943,7 +1094,7 @@ exports.handler = async (event) => {
     if (ehPromo && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state)) {
       const msg = await abrirPromo(session, sid);     // se a Relâmpago for reativada, ela tem prioridade
       if (msg) return respond(msg);
-      if (PROMO_ANUNCIO.ativa) return respond(anuncioPromoMsg());
+      if (PROMO_ANUNCIO.ativa) return respond(await entrarFluxoNamorados(session, sid));
       await saveSession(sid, { state:'MENU' });
       return respond('No momento não temos promoção ativa. 😊\n\n' + buildMenuPrincipal());
     }
@@ -994,11 +1145,34 @@ exports.handler = async (event) => {
             `🏷️ ${lbl}\n` +
             `💰 *Novo total: R$ ${novoTotal.toFixed(2).replace('.',',')}*\n\n` +
             (novoLink ? `💳 *Link atualizado com o desconto:*\n${novoLink}\n\n` : '') +
-            `📸 Após pagar, envie o comprovante ou digite *SIM* que eu libero seu envio! 🚀`
+            `_Assim que você pagar, *eu confirmo automaticamente aqui* e já sigo com seu envio — não precisa enviar comprovante._ 🚀`
           );
         }
       }
       // sem pedido elegível (cupom maior, promoção, ou já negociado) → segue o fluxo normal
+    }
+
+    // ── Grupo VIP (WhatsApp/Telegram) ── reconhece pergunta sobre grupo/comunidade ──
+    const ehGrupo = (n.includes('grupo') || n.includes('comunidade') || n.includes('vip') || n.includes('telegram') ||
+      (n.includes('whats') && (n.includes('grupo') || n.includes('vip') || n.includes('comunidade'))))
+      && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    if (ehGrupo) {
+      return respond(msgGrupoVip());
+    }
+
+    // ── RASTREIO universal ── cliente manda CPF, nº de pedido ou pede rastreio em QUALQUER menu ──
+    // Trava: nunca em estados de pagamento. E não rouba número simples de menu (1-2 dígitos puros).
+    const ehNumeroSimplesMenu = /^\d{1,2}$/.test(n.trim());
+    if (!['AGUARDAR_COMPROVANTE','COLETA_DADOS','RASTREAR','PROTOCOLO'].includes(state)
+        && !ehNumeroSimplesMenu
+        && ehIntencaoRastreio(n, mensagem)) {
+      // Se só pediu "rastrear" sem informar o dado, leva ao estado RASTREAR pedindo o dado.
+      if (!ehNumeroPedido(mensagem) && !ehCPFsolto(mensagem) && !mensagem.includes('@')) {
+        await saveSession(sid, { ...session, state:'RASTREAR' });
+        return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido*, seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_Digite *menu* para voltar._`);
+      }
+      // Já mandou o dado (CPF/pedido/email) → rastreia direto, sem perder o estado de compra.
+      return await fazerRastreio(mensagem, respond);
     }
 
     const ehAtacado = ["atacado","revenda","revender","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
@@ -1082,7 +1256,7 @@ exports.handler = async (event) => {
       if (num === 8) {
         const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
         if (msg) return respond(msg);
-        if (PROMO_ANUNCIO.ativa) return respond(anuncioPromoMsg());
+        if (PROMO_ANUNCIO.ativa) return respond(await entrarFluxoNamorados(session, sid));
         return respond('No momento não temos promoção ativa. 😊\n\n_Digite *menu* para ver as categorias._');
       }
       if (num === 9) { await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] }); return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_'); }
@@ -1114,6 +1288,17 @@ exports.handler = async (event) => {
       if (num === 1) { const e = session.pendenteRec || {}; return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond); }
       if (num === 2) { await saveSession(sid, { ...session, state:'MENU', pendenteRec:null, errosSeguidos:0 }); return respond('Sem problema! 😊 Me diz o que você procura ou escolha uma opção:\n\n' + buildMenuPrincipal()); }
       return respond('Digite *1* para Sim ou *2* para Não:');
+    }
+
+    if (state === 'CONFIRMAR_VER_PRODUTO') {
+      // Cliente tinha carrinho e pediu outro produto. 1 = ver o produto (carrinho preservado). 2 = volta ao carrinho.
+      if (num === 1) { const e = session.pendenteRec || {}; return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond); }
+      if (num === 2) {
+        const carrinho = session.carrinho || [];
+        await saveSession(sid, { ...session, state:'CARRINHO', pendenteRec:null, errosSeguidos:0 });
+        return respond(`Beleza, voltando pro seu carrinho! 🛒\n\n${msgCarrinhoMenu(carrinho)}`);
+      }
+      return respond(`Digite *1* para ver o produto ou *2* para continuar de onde parou:`);
     }
 
     if (state === 'SUBMENU_TESTO') {
@@ -1267,7 +1452,9 @@ exports.handler = async (event) => {
         await saveSession(sid, { ...session, state:'REMOVER_ITEM' });
         return respond(msgRemoverItem(carrinho));
       }
-      return respond('Digite *1* para adicionar mais, *2* para finalizar ou *3* para remover um produto:');
+      // Se foi um número fora de 1-3, reforça as opções. Se foi texto, tenta entender (produto, etc.).
+      if (num && num >= 1) return respond('Digite *1* para adicionar mais, *2* para finalizar ou *3* para remover um produto:');
+      return await tratarTextoLivre(session, sid, n, msgCarrinhoMenu(carrinho), respond);
     }
 
     if (state === 'REMOVER_ITEM') {
@@ -1384,11 +1571,11 @@ exports.handler = async (event) => {
         } catch {}
         await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null });
         return respond(link
-          ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n📸 Após pagar:\n1️⃣ Envie o print ou foto do comprovante\n2️⃣ Digite *SIM* para eu confirmar seu pedido!`
+          ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
           : `Acesse vitaflowoficial.com para finalizar seu pedido.`);
       }
       // Opção B: cliente pode digitar um código de cupom aqui (não em promoção/negociação)
-      if (mensagem && mensagem.trim().length >= 3 && session.descontoTipo !== 'promo') {
+      if (mensagem && mensagem.trim().length >= 3 && session.descontoTipo !== 'promo' && session.descontoTipo !== 'namorados') {
         const totalProd = session.totalProd || totalCarrinho(session.carrinho || []);
         const resultado = await validarCupom(mensagem, totalProd);
         if (resultado.ok) {
@@ -1406,26 +1593,46 @@ exports.handler = async (event) => {
     // AGUARDAR COMPROVANTE
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'AGUARDAR_COMPROVANTE') {
-      const palavrasPag = ['paguei','pix feito','fiz o pix','transferi','pago','pix realizado','comprovante','ja paguei','ja transferi','sim','yes','fiz','realizei','confirmado','feito','ok','okay'];
+      // ⚠️ REGRA CRÍTICA: a Athena NUNCA confirma pagamento por palavra do cliente nem por comprovante.
+      // Somente o webhook real da InfinitePay (via GAS) confirma o pagamento e muda o estado para COLETA_DADOS.
+      // Aqui, o cliente que diz "paguei"/manda print apenas recebe acolhimento. Se insistir 2+ vezes, aciona suporte humano.
+      const palavrasPag = ['paguei','pix feito','fiz o pix','transferi','pago','pix realizado','comprovante','ja paguei','ja transferi','sim','yes','realizei','confirmado','feito','ok','okay','comprei','finalizei'];
       const ehMidiaBC = !!(body.type || body.mediaUrl || body.media_url || body.fileUrl || body.url || body.arquivo || body.file || body.caption !== undefined);
       const ehUrlImagem = !!(mensagem && mensagem.match(/https?:\/\/[^\s]+(jpg|jpeg|png|gif|pdf|mp4|webp|ogg|opus)/i));
-      const ehPagamento = ehMidiaBC || ehUrlImagem || palavrasPag.some(p => n.includes(p));
-      if (ehPagamento) {
-        await saveSession(sid, { ...session, state:'COLETA_DADOS', coleta:{} });
-        return respond(
-          `✅ *Pagamento recebido! Obrigado!* 🎉\n\n` +
-          `Agora preciso dos seus dados para o envio.\n` +
-          `*Envie tudo de uma vez neste formato:*\n\n` +
-          `Nome: \nCPF: \nTelefone: \nEmail: \nRua e número: \nComplemento: \nBairro: \nCidade: \nEstado: \nCEP: `
-        );
-      }
+      const dizQuePagou = ehMidiaBC || ehUrlImagem || palavrasPag.some(p => n.includes(p));
+
       const carrinhoPend = session.carrinho || [];
       const totalPend = session.total || 0;
+
+      if (dizQuePagou) {
+        const insist = (session.insistPagou || 0) + 1;
+        if (insist >= 2) {
+          // Insistiu 2+ vezes sem o webhook ter confirmado → aciona suporte humano, mas mantém o pedido.
+          await enviarTelegram(
+            `🔔 *CLIENTE DIZ QUE PAGOU — sem confirmação do webhook*\n` +
+            `📦 ${session.orderNsu || '—'}\n📱 ${sid}\n💰 R$ ${totalPend.toFixed(2).replace('.',',')}\n` +
+            `O cliente afirma ter pago ${insist}x e a InfinitePay ainda não confirmou. Verificar manualmente.`
+          );
+          await saveSession(sid, { ...session, insistPagou: insist });
+          return respond(
+            `Entendi! 🧡 Já *avisei nossa equipe* pra verificar seu pagamento manualmente — em instantes alguém te dá retorno por aqui.\n\n` +
+            `Pode ficar tranquilo: *seu pedido está guardado* e o link continua válido. Assim que o pagamento for localizado, eu sigo com seu envio na hora. 😊`
+          );
+        }
+        await saveSession(sid, { ...session, insistPagou: insist });
+        return respond(
+          `Recebido! 🧡 Assim que o pagamento cair, a *confirmação chega aqui automaticamente* e eu já sigo com seu envio — você não precisa enviar comprovante nem avisar.\n\n` +
+          `Se você já pagou e em alguns minutinhos eu não confirmar, é só me mandar *"paguei"* de novo que eu *aciono um atendente* pra verificar pra você. 😊\n\n` +
+          `_(Seu pedido está guardado e o link continua válido.)_`
+        );
+      }
+
+      // Mensagem padrão de pedido em aberto (não fala em "digite SIM" — só o pagamento confirma)
       return respond(
-        `⏳ Você ainda tem um pedido em aberto!\n\n` +
+        `⏳ Você tem um pedido em aberto aguardando pagamento:\n\n` +
         `${resumoCarrinho(carrinhoPend)}\n` +
         `💰 *R$ ${totalPend.toFixed(2).replace(".",",")}*\n\n` +
-        `Seu link de pagamento ainda está ativo! Após pagar:\n1️⃣ Envie o print ou foto do comprovante\n2️⃣ Digite *SIM* para eu liberar o envio! 🚀\n\n` +
+        `É só concluir o pagamento pelo seu link — assim que cair, *eu confirmo automaticamente aqui* e já pego seus dados de envio. 🚀\n\n` +
         `Se quiser cancelar e começar do zero, digite *menu*. 😊`
       );
     }
