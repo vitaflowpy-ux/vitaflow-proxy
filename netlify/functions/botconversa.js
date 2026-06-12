@@ -67,7 +67,7 @@ function msgGrupoVip() {
 
 // ── Atacado ───────────────────────────────────────────────────────────────────
 const TABELA_ATACADO_URL = 'https://drive.google.com/file/d/1olhYj0OW1cL0Wk0kk6-fct89EJff_1Ip/view';
-const WHATSAPP_ATACADO_1 = 'wa.me/5521998018028';
+const WHATSAPP_ATACADO_1 = 'wa.me/5521998367319';
 const WHATSAPP_ATACADO_2 = 'wa.me/447537155723';
 
 const MSG_ATACADO = `*🏭 VENDAS NO ATACADO — VitaFlow*
