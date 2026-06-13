@@ -59,7 +59,7 @@ const PROMO_ANUNCIO = { ativa: false };
 // Anúncio da promoção do momento (opção 8): mostra o produto, o link do grupo VIP e o link do produto.
 // O desconto NÃO é por fluxo — é aplicado por item no fechamento (ver fecharResumoNormal).
 async function anunciarLancamento(session, sid) {
-  await saveSession(sid, { ...session, state: 'MENU' });
+  await saveSession(sid, { ...session, state: 'PROMO_OFERECER' });
   const nomes = (PROMO_PRODUTO.produtos || []).join(', ');
   let msg = `${PROMO_PRODUTO.titulo}\n\n`;
   msg += `🔒 _Oferta exclusiva para membros do nosso grupo VIP._\n\n`;
@@ -69,8 +69,7 @@ async function anunciarLancamento(session, sid) {
   msg += `🎁 *${PROMO_PRODUTO.pct}% OFF até ${PROMO_PRODUTO.validade}!* O desconto é aplicado automaticamente nesse produto quando você fecha comigo. 🧡\n\n`;
   msg += `👀 *Ver o produto:*\n${PROMO_PRODUTO.linkProduto}\n\n`;
   msg += `📲 *Entre no nosso grupo VIP* (se ainda não for membro, é só entrar; se já for, é só seguir):\n${PROMO_PRODUTO.linkGrupo}\n\n`;
-  msg += `Quer que eu já adicione no seu carrinho? Me diga o nome do produto ou escolha pelo menu. 😉\n\n`;
-  msg += `_Digite *menu* para voltar._`;
+  msg += `Quer que eu já adicione no seu carrinho?\n\n1️⃣ Sim, quero a Retatrutida AQ\n2️⃣ Não, voltar ao menu`;
   return msg;
 }
 
@@ -1308,6 +1307,32 @@ exports.handler = async (event) => {
       }
       const blocos = pedidos.map(p => statusBloco(p.pedido, p.status)).join('\n\n');
       return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
+    }
+
+    if (state === 'PROMO_OFERECER') {
+      const r = n.trim().toLowerCase();
+      const sim = num === 1 || r === 'sim' || r === 's';
+      const nao = num === 2 || r === 'nao' || r === 'não' || r === 'n';
+      if (nao) {
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond('Sem problema! 😊\n\n' + buildMenuPrincipal());
+      }
+      if (sim) {
+        // busca o produto exato da promoção (preço real do cache) e leva para a quantidade
+        const nomePromo = (PROMO_PRODUTO.produtos || [])[0] || '';
+        const dados = await buscarCache('emagrecedores');
+        const linhas = String(dados || '').split('\n').filter(Boolean);
+        const lista = parseProdutos(linhas);
+        const achado = lista.find(p => _normNomeProd(p.nome) === _normNomeProd(nomePromo))
+                    || lista.find(p => _normNomeProd(p.nome).includes('retatrutida') && _normNomeProd(p.nome).includes('120') && _normNomeProd(p.nome).includes('aq'));
+        if (!achado || !achado.preco) {
+          await saveSession(sid, { ...session, state:'MENU' });
+          return respond('Opa, não consegui localizar o preço desse produto agora. 😅 Você encontra ele em *Emagrecedores* (opção 2) ou pelo link que te enviei.\n\n_Digite *menu* para voltar._');
+        }
+        await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: { nome: achado.nome, preco: achado.preco, colecao: 'emagrecedores' } });
+        return respond(`Ótima escolha! 🔥\n📦 *${achado.nome}*\n💰 R$ ${achado.preco.toFixed(2).replace('.',',')}\n_(já com seu desconto de ${PROMO_PRODUTO.pct}% aplicado no fechamento)_\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
+      }
+      return respond('Digite *1* para Sim ou *2* para Não. 😊');
     }
 
     if (state === 'CONFIRMAR_PRODUTO') {
