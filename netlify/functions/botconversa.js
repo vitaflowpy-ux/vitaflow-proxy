@@ -7,6 +7,33 @@ const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.h
 
 // ── Desconto Athena e Cupons ──────────────────────────────────────────────────
 const DESCONTO_ATHENA_PCT = 3;
+
+// ── PROMOÇÃO DO MOMENTO (editável) ───────────────────────────────────────────
+// Para trocar a promoção no futuro, edite só este bloco.
+// - Desconto por PRODUTO: liste os nomes EXATOS em `produtos`.
+// - Desconto por COLEÇÃO: liste os handles em `colecoes` (ex: 'peptideos','emagrecedores').
+// - Pode usar os dois ao mesmo tempo. Para desligar tudo: ativa:false.
+const PROMO_PRODUTO = {
+  ativa: true,
+  pct: 10,                                  // desconto da promoção (só nos itens que se encaixam)
+  validade: '16/06',
+  produtos: ['Retatrutida 120mg AQ diluída - ZPHC'],  // nomes exatos (1 ou vários)
+  colecoes: [],                             // handles de coleção (vazio = não usa coleção)
+  // textos do anúncio (opção 8)
+  titulo: '🔥 *LANÇAMENTO — RETATRUTIDA AQ 120mg (ZPHC)* 🔥',
+  linkProduto: 'https://vitaflowoficial.com/products/retatrutida-120mg-aq-diluida-zphc',
+  linkGrupo: 'https://chat.whatsapp.com/COklmK82NWu9zQkdALjchy',
+};
+function _normNomeProd(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim(); }
+// um item do carrinho entra na promoção se casar por NOME (produtos) ou por COLEÇÃO (colecoes)
+function ehProdutoPromo(item){
+  if (!PROMO_PRODUTO.ativa) return false;
+  const nome = typeof item === 'string' ? item : (item && item.nome);
+  const colItem = (item && typeof item === 'object') ? (item.colecao || '') : '';
+  const porNome = (PROMO_PRODUTO.produtos || []).some(p => _normNomeProd(p) === _normNomeProd(nome));
+  const porColecao = colItem && (PROMO_PRODUTO.colecoes || []).indexOf(colItem) >= 0;
+  return porNome || porColecao;
+}
 const FIRESTORE_PROJECT = 'pricehub-f0236';
 const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
 
@@ -26,31 +53,25 @@ function promoAtiva() {
 }
 function reais(n) { return Number(n || 0).toLocaleString('pt-BR'); }
 
-// ── Promoção em destaque no menu (anúncio de cupom, sem fluxo de preço fixo) ────
-const PROMO_ANUNCIO = {
-  ativa: true,
-  label: 'Promoção Dia dos Namorados 💘',   // texto da opção 8 no menu
-  cupom: 'NAMORADOS12',
-  pct: 12,                                   // desconto aplicado automaticamente no fluxo
-  validade: '12/06',
-};
-function anuncioPromoMsg() {
-  return `💘 *DIA DOS NAMORADOS VITAFLOW* 💘\n` +
-    `🔥 *12% DE DESCONTO EM TODO O SITE* 🔥\n\n` +
-    `O maior presente é ver quem você ama _saudável, confiante e no seu auge_. ✨\n\n` +
-    `⏰ *Válido somente até ${PROMO_ANUNCIO.validade}!* Depois disso, acabou.\n\n` +
-    `🎁 Presenteie seu par. Ou presenteie você mesmo — _autocuidado também é amor_. 😉`;
-}
-// Entra no FLUXO da promoção: marca a sessão com o desconto de 12% automático e leva ao menu de categorias.
-async function entrarFluxoNamorados(session, sid) {
-  await saveSession(sid, {
-    ...session, state:'MENU',
-    fluxoNamorados: true, descontoNamoradosPct: PROMO_ANUNCIO.pct,
-  });
-  return `💘 *PROMOÇÃO DIA DOS NAMORADOS ATIVADA!* 💘\n\n` +
-    `Prontinho! A partir de agora você tem *${PROMO_ANUNCIO.pct}% de desconto em qualquer produto* — eu aplico sozinha no fechamento, você não precisa digitar cupom nenhum. 🧡\n\n` +
-    `⏰ _Válido até ${PROMO_ANUNCIO.validade}._\n\n` +
-    `Agora é só escolher o que quiser:\n\n` + MENU_PRINCIPAL_BASE + `\n\n_Digite o número da opção (ou o nome do produto)._`;
+// ── PROMO_ANUNCIO: desligado (Namorados encerrado). A promoção atual é a PROMO_PRODUTO (opção 8). ──
+const PROMO_ANUNCIO = { ativa: false };
+
+// Anúncio da promoção do momento (opção 8): mostra o produto, o link do grupo VIP e o link do produto.
+// O desconto NÃO é por fluxo — é aplicado por item no fechamento (ver fecharResumoNormal).
+async function anunciarLancamento(session, sid) {
+  await saveSession(sid, { ...session, state: 'MENU' });
+  const nomes = (PROMO_PRODUTO.produtos || []).join(', ');
+  let msg = `${PROMO_PRODUTO.titulo}\n\n`;
+  msg += `🔒 _Oferta exclusiva para membros do nosso grupo VIP._\n\n`;
+  msg += `Chegou a *Retatrutida AQ 120mg da ZPHC* — a primeira da marca no formato *aquoso*! 💧\n\n`;
+  msg += `Já vem *diluída de fábrica*, sem etapa de reconstituição: você abre e aplica. O kit traz *2 viais de 60mg*. 💉\n\n`;
+  msg += `A fórmula usa estabilizadores específicos que mantêm o peptídeo íntegro no transporte e no armazenamento em temperatura ambiente. Produto autêntico, com *lacre holográfico* e *código de validação individual* em cada kit. ✅\n\n`;
+  msg += `🎁 *${PROMO_PRODUTO.pct}% OFF até ${PROMO_PRODUTO.validade}!* O desconto é aplicado automaticamente nesse produto quando você fecha comigo. 🧡\n\n`;
+  msg += `👀 *Ver o produto:*\n${PROMO_PRODUTO.linkProduto}\n\n`;
+  msg += `📲 *Entre no nosso grupo VIP* (se ainda não for membro, é só entrar; se já for, é só seguir):\n${PROMO_PRODUTO.linkGrupo}\n\n`;
+  msg += `Quer que eu já adicione no seu carrinho? Me diga o nome do produto ou escolha pelo menu. 😉\n\n`;
+  msg += `_Digite *menu* para voltar._`;
+  return msg;
 }
 
 // ── Grupo VIP (WhatsApp + Telegram) ───────────────────────────────────────────
@@ -151,7 +172,7 @@ Estou aqui para te ajudar a encontrar os melhores produtos, tirar dúvidas técn
 5️⃣ GH ⚡
 6️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
 7️⃣ Buscar por Fabricante 🏭
-8️⃣ Promoção Dia dos Namorados 💘
+8️⃣ Promoção do momento 🔥
 9️⃣ Protocolo / Dúvidas técnicas 🔬
 🔟 Rastrear meu pedido 📦
 
@@ -164,10 +185,10 @@ function buildMenuPrincipal() {
     menu += `
 
 🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 8* para ver as ofertas. ⚡`;
-  } else if (PROMO_ANUNCIO.ativa) {
+  } else if (PROMO_PRODUTO.ativa) {
     menu += `
 
-💘 *DIA DOS NAMORADOS: 12% OFF em todo o site* com o cupom *${PROMO_ANUNCIO.cupom}* (até ${PROMO_ANUNCIO.validade})! Escolha *opção 8* para saber como usar.`;
+🔥 *PROMOÇÃO DO MOMENTO* — desconto especial de *${PROMO_PRODUTO.pct}%* (até ${PROMO_PRODUTO.validade})! Escolha a *opção 8* para ver. ⚡`;
   } else {
     menu += `
 
@@ -757,7 +778,8 @@ async function validarCupom(codigo, subtotalProdutos) {
     if (tipo === 'pct') { descontoReais = subtotalProdutos * (valor/100); if (maxDesc > 0) descontoReais = Math.min(descontoReais, maxDesc); }
     else { descontoReais = Math.min(valor, subtotalProdutos); }
     const descTxt = tipo === 'pct' ? `${valor}% off` : `R$ ${valor.toFixed(2).replace('.',',')} off`;
-    return { ok:true, docId: found.id, descontoReais, descTxt, codigo: cod };
+    return { ok:true, docId: found.id, descontoReais, descTxt, codigo: cod,
+             tipo, pct: valor, maxDesc, valorFixo: valor };
   } catch { return { ok:false, motivo:'Erro ao verificar cupom. Tente novamente.' }; }
 }
 async function incrementarUsoCupom(docId) {
@@ -776,55 +798,63 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const frete = session.freteSelecionado || {};
   const totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
 
-  // FLUXO NAMORADOS: 12% automático sobre os produtos (nunca soma com os 3%; vale o maior, que é 12%).
-  if (session.fluxoNamorados) {
-    const pct = session.descontoNamoradosPct || PROMO_ANUNCIO.pct;
-    const descNamorados = totalProd * (pct / 100);
-    const totalComDesconto = totalProd - descNamorados + (frete.valor || 0);
-    const resumo =
-      `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
-      `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
-      `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
-      `💘 *Promoção Dia dos Namorados (-${pct}%)*: -R$ ${descNamorados.toFixed(2).replace('.',',')}\n\n` +
-      `💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n` +
-      `🎉 _Você economizou *R$ ${descNamorados.toFixed(2).replace('.',',')}* com a promoção dos Namorados!_ 🧡\n\n` +
-      `*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
-    await saveSession(sid, {
-      ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd,
-      descontoReais: descNamorados, descontoLabel: `Promoção Namorados (-${pct}%)`,
-      total: totalComDesconto, descontoTipo: 'namorados', cupomDocId: null, cupomCodigo: null
-    });
-    return respond(resumo);
-  }
+  // ── DESCONTO POR ITEM ──
+  // Retatrutida (promo): sempre 10% sobre ela. Demais itens: maior entre 3% Athena e cupom.
+  const itensPromo = carrinho.filter(i => ehProdutoPromo(i));
+  const itensNormais = carrinho.filter(i => !ehProdutoPromo(i));
+  const totalPromo = itensPromo.reduce((s,i)=>s+i.preco*i.qtd,0);
+  const totalNormais = itensNormais.reduce((s,i)=>s+i.preco*i.qtd,0);
 
-  const descAthena = totalProd * (DESCONTO_ATHENA_PCT / 100);
-  const descCupom = cupomResultado && cupomResultado.ok ? cupomResultado.descontoReais : 0;
-  let descontoReais = descAthena;
-  let descontoLabel = `Desconto Athena (-${DESCONTO_ATHENA_PCT}%)`;
-  let cupomDocId = null;
-  let cupomCodigo = null;
-  if (descCupom > descAthena) {
-    descontoReais = descCupom;
-    descontoLabel = `Cupom ${cupomResultado.codigo} (${cupomResultado.descTxt})`;
+  // desconto da promo (10% só na Retatrutida)
+  const descPromoProduto = totalPromo * (PROMO_PRODUTO.pct / 100);
+
+  // nos demais itens: 3% Athena vs cupom (vale o maior) — cupom incide só sobre os itens normais
+  const descAthenaNormais = totalNormais * (DESCONTO_ATHENA_PCT / 100);
+  let descCupomNormais = 0;
+  if (cupomResultado && cupomResultado.ok && totalNormais > 0) {
+    if (cupomResultado.tipo === 'pct') {
+      descCupomNormais = totalNormais * (cupomResultado.pct/100);
+      if (cupomResultado.maxDesc > 0) descCupomNormais = Math.min(descCupomNormais, cupomResultado.maxDesc);
+    } else {
+      descCupomNormais = Math.min(cupomResultado.valorFixo || cupomResultado.descontoReais || 0, totalNormais);
+    }
+  }
+  let descNormais = descAthenaNormais;
+  let labelNormais = `Desconto Athena (-${DESCONTO_ATHENA_PCT}%)`;
+  let cupomDocId = null, cupomCodigo = null;
+  if (descCupomNormais > descAthenaNormais) {
+    descNormais = descCupomNormais;
+    labelNormais = `Cupom ${cupomResultado.codigo} (${cupomResultado.descTxt})`;
     cupomDocId = cupomResultado.docId;
     cupomCodigo = cupomResultado.codigo;
   }
-  const totalComDesconto = totalProd - descontoReais + frete.valor;
-  const linhaCupomInfo = (descCupom > 0 && descCupom <= descAthena)
-    ? `\n_(Seu cupom daria R$ ${descCupom.toFixed(2).replace('.',',')}, mas o desconto Athena de 3% é maior e foi aplicado!)_` : '';
-  // Opção B: cupom discreto — só convida a digitar o código se nenhum cupom foi aplicado ainda
-  const linhaConviteCupom = !cupomDocId
+
+  const descontoReais = descPromoProduto + descNormais;
+  const totalComDesconto = totalProd - descontoReais + (frete.valor || 0);
+
+  let linhasDesc = '';
+  if (descPromoProduto > 0) {
+    linhasDesc += `🔥 *Lançamento Retatrutida (-${PROMO_PRODUTO.pct}%)*: -R$ ${descPromoProduto.toFixed(2).replace('.',',')}\n`;
+  }
+  if (descNormais > 0) {
+    linhasDesc += `🏷️ ${labelNormais}${itensPromo.length ? ' _(demais itens)_' : ''}: -R$ ${descNormais.toFixed(2).replace('.',',')}\n`;
+  }
+  const linhaCupomInfo = (descCupomNormais > 0 && descCupomNormais <= descAthenaNormais)
+    ? `\n_(Seu cupom daria R$ ${descCupomNormais.toFixed(2).replace('.',',')} nos demais itens, mas o desconto Athena de 3% é maior e foi aplicado!)_` : '';
+  const linhaConviteCupom = (!cupomDocId && totalNormais > 0)
     ? `\n\n_Se você já tem um cupom, é só digitar o código agora._` : '';
+
   const resumo =
     `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
     `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
     `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
-    `🏷️ ${descontoLabel}: -R$ ${descontoReais.toFixed(2).replace('.',',')}` + linhaCupomInfo +
-    `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu` +
+    linhasDesc + linhaCupomInfo +
+    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu` +
     linhaConviteCupom;
   await saveSession(sid, {
     ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd,
-    descontoReais, descontoLabel, total: totalComDesconto,
+    descontoReais, descontoLabel: (descPromoProduto>0?`Lançamento Retatrutida + `:'') + labelNormais,
+    total: totalComDesconto,
     descontoTipo: cupomDocId ? 'cupom' : 'athena', cupomDocId, cupomCodigo
   });
   return respond(resumo);
@@ -1094,7 +1124,7 @@ exports.handler = async (event) => {
     if (ehPromo && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state)) {
       const msg = await abrirPromo(session, sid);     // se a Relâmpago for reativada, ela tem prioridade
       if (msg) return respond(msg);
-      if (PROMO_ANUNCIO.ativa) return respond(await entrarFluxoNamorados(session, sid));
+      if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
       await saveSession(sid, { state:'MENU' });
       return respond('No momento não temos promoção ativa. 😊\n\n' + buildMenuPrincipal());
     }
@@ -1256,7 +1286,7 @@ exports.handler = async (event) => {
       if (num === 8) {
         const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
         if (msg) return respond(msg);
-        if (PROMO_ANUNCIO.ativa) return respond(await entrarFluxoNamorados(session, sid));
+        if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
         return respond('No momento não temos promoção ativa. 😊\n\n_Digite *menu* para ver as categorias._');
       }
       if (num === 9) { await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] }); return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_'); }
@@ -1437,7 +1467,7 @@ exports.handler = async (event) => {
       if (!num || num < 1 || num > 99) return respond('Por favor, informe uma quantidade válida (1 a 99):');
       const prod = session.produtoSelecionado || {};
       const carrinho = session.carrinho || [];
-      carrinho.push({ nome: prod.nome, preco: prod.preco, qtd: num });
+      carrinho.push({ nome: prod.nome, preco: prod.preco, qtd: num, colecao: prod.colecao || session.colecaoAtual || '' });
       const subtotal = totalCarrinho(carrinho);
       await saveSession(sid, { ...session, state:'CARRINHO', carrinho });
       return respond(`✅ Adicionado ao carrinho:\n📦 *${prod.nome}* x${num}\n\n${msgCarrinhoMenu(carrinho)}`);
