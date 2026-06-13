@@ -185,10 +185,6 @@ function buildMenuPrincipal() {
     menu += `
 
 🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 8* para ver as ofertas. ⚡`;
-  } else if (PROMO_PRODUTO.ativa) {
-    menu += `
-
-🔥 *PROMOÇÃO DO MOMENTO* — desconto especial de *${PROMO_PRODUTO.pct}%* (até ${PROMO_PRODUTO.validade})! Escolha a *opção 8* para ver. ⚡`;
   } else {
     menu += `
 
