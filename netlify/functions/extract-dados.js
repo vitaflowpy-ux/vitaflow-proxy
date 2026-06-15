@@ -1,6 +1,5 @@
 // netlify/functions/extract-dados.js
 // Proxy para chamada à API Anthropic — extrai dados de mensagem de venda
-
 exports.handler = async function(event) {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -8,15 +7,12 @@ exports.handler = async function(event) {
     'Access-Control-Allow-Headers': 'Content-Type',
     'Content-Type': 'application/json',
   };
-
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers, body: '' };
   }
-
   try {
     const { mensagem } = JSON.parse(event.body || '{}');
     if (!mensagem) throw new Error('mensagem vazia');
-
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -25,12 +21,11 @@ exports.handler = async function(event) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 1000,
         messages: [{
           role: 'user',
           content: `Extraia os dados desta conversa de venda e retorne APENAS um JSON válido, sem explicação, sem markdown:
-
 {
   "nome": "",
   "cpf": "",
@@ -46,7 +41,6 @@ exports.handler = async function(event) {
   "total": 0.00,
   "pagamento": ""
 }
-
 Regras:
 - CPF: formato 000.000.000-00
 - Telefone: formato (DD) 9XXXX-XXXX
@@ -57,24 +51,24 @@ Regras:
 - total: número em reais
 - pagamento: "PIX" ou "Cartão"
 - Campos não encontrados: string vazia ou 0
-
 Conversa:
 ${mensagem}`
         }]
       })
     });
-
     const data = await res.json();
+    // se a API retornar erro (modelo inválido, cota, etc.), expõe a causa real
+    if (data.error) {
+      throw new Error('API Anthropic: ' + (data.error.message || JSON.stringify(data.error)));
+    }
     const text = data.content?.[0]?.text || '{}';
     const clean = text.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
-
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify(parsed),
     };
-
   } catch (err) {
     return {
       statusCode: 500,
