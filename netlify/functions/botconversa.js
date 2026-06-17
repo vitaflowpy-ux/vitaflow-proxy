@@ -74,7 +74,7 @@ async function anunciarLancamento(session, sid) {
 }
 
 // ── Grupo VIP (WhatsApp + Telegram) ───────────────────────────────────────────
-const GRUPO_WHATSAPP = 'https://chat.whatsapp.com/EoAPXSLrEsAEXHYolmVaN7';
+const GRUPO_WHATSAPP = 'https://chat.whatsapp.com/COklmK82NWu9zQkdALjchy';
 const GRUPO_TELEGRAM = 'https://t.me/referencias_vitaflow';
 function msgGrupoVip() {
   return `🎉 *GRUPOS VIP VITAFLOW* 🎉\n\n` +
@@ -1767,25 +1767,42 @@ exports.handler = async (event) => {
         `${resumoCarrinho(carrinho)}\n` +
         `🚚 ${frete.label} — ${session.estadoCliente}\n` +
         `💰 R$ ${total.toFixed(2).replace('.',',')}\n\n` +
-        `🧾 *Seu recibo:*\n${linkRecibo}\n\n` +
-        `🔍 *Rastreie seu pedido em tempo real:*\nvitaflowoficial.com/pages/rastrear-pedido\n\n` +
+        `🧾 *Seu recibo completo:*\n${linkRecibo}\n\n` +
+        `⏱️ *Prazo de postagem:* até 48 horas úteis após a confirmação do pagamento.\n\n` +
+        `📦 *Prazos de entrega por região (após a postagem):*\n` +
+        `• Sudeste: 2 a 5 dias úteis\n` +
+        `• Sul: 3 a 5 dias úteis\n` +
+        `• Centro-Oeste: 4 a 6 dias úteis\n` +
+        `• Nordeste: 5 a 8 dias úteis\n` +
+        `• Norte: 7 a 10 dias úteis\n` +
+        `_*Estimativas, podem variar conforme distância e condições._\n\n` +
+        `🔍 *Rastreie seu pedido em tempo real:*\nvitaflowoficial.com/pages/rastrear-pedido\n` +
         `Use qualquer uma dessas informações para rastrear:\n` +
         `• *Número do pedido:* ${num_pedido||''}\n` +
         (coleta.cpf ? `• *CPF:* ${coleta.cpf}\n` : '') +
-        (coleta.email ? `• *E-mail:* ${coleta.email}\n` : '');
+        (coleta.email ? `• *E-mail:* ${coleta.email}\n` : '') +
+        `\n📲 *Entre nos nossos grupos oficiais!*\n` +
+        `Fique por dentro de promoções, lançamentos e avisos em primeira mão:\n` +
+        `💬 Grupo VIP no WhatsApp: ${GRUPO_WHATSAPP}\n` +
+        `✈️ Referências no Telegram: ${GRUPO_TELEGRAM}`;
 
       const msg2 =
+        `🚨 *IMPORTANTE — LEIA ATÉ O FINAL* 🚨\n\n` +
         `⚠️ *AVISO IMPORTANTE — VITAFLOW* ⚠️\n\n` +
         `Antes de receber seu pedido, leia com atenção. Essas instruções são essenciais para te ajudarmos em qualquer situação. 🙏\n\n` +
         `📹 *1. FILME A ABERTURA DA EMBALAGEM*\n` +
-        `Ao receber, grave um vídeo contínuo e sem cortes — desde a embalagem fechada até retirar todos os itens.\n\n` +
+        `Ao receber sua encomenda, grave um vídeo contínuo e sem cortes — desde a embalagem fechada até retirar todos os itens.\nIsso é obrigatório para qualquer tipo de reclamação.\n\n` +
         `✅ Mostre a caixa fechada antes de abrir\n` +
-        `✅ Não pause nem corte o vídeo\n` +
+        `✅ Não pause nem corte o vídeo em nenhum momento\n` +
         `✅ Filme todos os produtos ao retirar da caixa\n\n` +
-        `❗ Sem o vídeo não conseguimos abrir reclamação junto à transportadora.\n\n` +
-        `📍 *2. ENDEREÇO E ALGUÉM PARA RECEBER*\n` +
-        `Deve haver uma pessoa disponível para receber pessoalmente. Não solicite deixar o pacote sem ninguém.\n\n` +
-        `💬 Qualquer problema, fale com a gente pelo WhatsApp imediatamente e envie o vídeo da abertura.\n\n` +
+        `❗ Sem o vídeo, não conseguimos abrir reclamação junto à transportadora e não teremos como te ajudar.\n` +
+        `📌 Por quê? Já identificamos casos em que entregadores retiraram produtos da caixa e a lacram novamente de forma perfeita, sem deixar vestígio. O vídeo é a única prova possível nesses casos.\n\n` +
+        `📍 *2. ENDEREÇO COMPLETO E ALGUÉM PARA RECEBER*\n` +
+        `Informe seu endereço com todos os detalhes: rua, número, complemento, bloco, apartamento, bairro e ponto de referência.\nE, obrigatoriamente, deve haver uma pessoa disponível no local para receber o pedido pessoalmente.\n\n` +
+        `✅ Confira todos os dados antes de finalizar o pedido\n` +
+        `✅ Garanta que haverá alguém no endereço no dia da entrega\n` +
+        `❌ Não solicite deixar o pacote sem ninguém para receber. Já tivemos casos em que o cliente pediu isso e depois alegou não ter recebido — porém a transportadora apresentou comprovante de entrega. Nesse caso, não temos como ajudar.\n\n` +
+        `💬 Teve algum problema? Fale com a gente pelo WhatsApp assim que identificar qualquer divergência e envie o vídeo da abertura junto com os detalhes do pedido. Faremos tudo ao nosso alcance para resolver! 💪\n\n` +
         `— *Equipe VitaFlow* 🧡`;
 
       // Incrementa uso do cupom SOMENTE agora (pedido confirmado)
