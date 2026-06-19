@@ -1889,11 +1889,19 @@ exports.handler = async (event) => {
       const hist = (session.historico || []).slice(-8);
       hist.push({ role:'user', content: mensagem });
       try {
-        const r = await fetch('https://api.anthropic.com/v1/messages', {
-          method:'POST',
-          headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-          body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1500, system: PROTOCOLO_PROMPT, messages: hist })
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 9000);
+        let r;
+        try {
+          r = await fetch('https://api.anthropic.com/v1/messages', {
+            method:'POST',
+            headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
+            body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:800, system: PROTOCOLO_PROMPT, messages: hist }),
+            signal: controller.signal
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
         const d = await r.json();
         if (d.error || !d.content) throw new Error('Claude error');
         let reply = d.content[0].text || '';
