@@ -664,18 +664,27 @@ async function consultarStatusGAS(termo) {
   } catch { return []; }
 }
 function listaPromoMsg(promo) {
-  const linhas = promo.produtos.map((p,i) =>
-    `${emojis(i)} *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`
-  ).join('\n');
-  return `⚡ *${promo.titulo}* — exclusiva comigo (Athena) e enquanto durarem os estoques! 🔥\n\n` +
-    `${linhas}\n\n👉 Detalhes: ${promo.link}\n\n*Digite o número do produto para comprar*, ou *menu* para voltar ao início.`;
+  const p = promo.produtos[0];
+  return `⚡ *PROMOÇÃO RELÂMPAGO* ⚡\n\n` +
+    `*MyoMax Inibition™ — Alluvi Healthcare*\n` +
+    `🖊️ Caneta pré-preenchida · 200 IU / 3 mL\n\n` +
+    `Esse produto é um *inibidor avançado de miostatina* — a proteína que limita o crescimento muscular. Bloqueando ela, seu corpo para de frear os ganhos e começa a trabalhar *a seu favor*. 💪\n\n` +
+    `🔬 *Fórmula com:* HGH Fragment + Follistatin + CJC\n\n` +
+    `✅ Aumento de massa magra\n` +
+    `✅ Redução de gordura corporal\n` +
+    `✅ Recuperação acelerada\n` +
+    `✅ Mais definição muscular\n\n` +
+    `~R$ ${reais(p.de)} a unidade~ → *2 canetas por R$ ${reais(p.por)}* 🔥\n\n` +
+    `⏳ *Válido enquanto durar o estoque!*\n\n` +
+    `Quer aproveitar?\n\n1️⃣ Sim, quero!\n2️⃣ Não, voltar ao menu`;
 }
 async function abrirPromo(session, sid) {
   const promo = promoAtiva();
   if (!promo) return null;
   await saveSession(sid, {
-    ...session, state: 'LISTA_PRODUTOS', fluxoPromo: true, descontoPromoPct: 0,
-    promoTitulo: promo.titulo, produtoLista: promo.produtos.map(p => ({ nome: p.nome, preco: p.por })),
+    ...session, state: 'PROMO_OFERECER',
+    promoTitulo: promo.titulo,
+    promoProduto: promo.produtos[0],
   });
   return listaPromoMsg(promo);
 }
@@ -1314,19 +1323,13 @@ exports.handler = async (event) => {
         return respond('Sem problema! 😊\n\n' + buildMenuPrincipal());
       }
       if (sim) {
-        // busca o produto exato da promoção (preço real do cache) e leva para a quantidade
-        const nomePromo = (PROMO_PRODUTO.produtos || [])[0] || '';
-        const dados = await buscarCache('emagrecedores');
-        const linhas = String(dados || '').split('\n').filter(Boolean);
-        const lista = parseProdutos(linhas);
-        const achado = lista.find(p => _normNomeProd(p.nome) === _normNomeProd(nomePromo))
-                    || lista.find(p => _normNomeProd(p.nome).includes('retatrutida') && _normNomeProd(p.nome).includes('120') && _normNomeProd(p.nome).includes('aq'));
-        if (!achado || !achado.preco) {
+        const prod = session.promoProduto || (promoAtiva() || {}).produtos?.[0];
+        if (!prod) {
           await saveSession(sid, { ...session, state:'MENU' });
-          return respond('Opa, não consegui localizar o preço desse produto agora. 😅 Você encontra ele em *Emagrecedores* (opção 2) ou pelo link que te enviei.\n\n_Digite *menu* para voltar._');
+          return respond('Opa, não consegui localizar o produto agora. 😅\n\n_Digite *menu* para voltar._');
         }
-        await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: { nome: achado.nome, preco: achado.preco, colecao: 'emagrecedores' } });
-        return respond(`Ótima escolha! 🔥\n📦 *${achado.nome}*\n💰 R$ ${achado.preco.toFixed(2).replace('.',',')}\n_(já com seu desconto de ${PROMO_PRODUTO.pct}% aplicado no fechamento)_\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
+        await saveSession(sid, { ...session, state:'QUANTIDADE', fluxoPromo: true, promoTitulo: session.promoTitulo, produtoSelecionado: { nome: prod.nome, preco: prod.por } });
+        return respond(`Ótima escolha! 🔥\n📦 *${prod.nome}*\n💰 *R$ ${Number(prod.por).toFixed(2).replace('.',',')}*\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
       }
       return respond('Digite *1* para Sim ou *2* para Não. 😊');
     }
