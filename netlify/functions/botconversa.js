@@ -14,15 +14,14 @@ const DESCONTO_ATHENA_PCT = 3;
 // - Desconto por COLEÇÃO: liste os handles em `colecoes` (ex: 'peptideos','emagrecedores').
 // - Pode usar os dois ao mesmo tempo. Para desligar tudo: ativa:false.
 const PROMO_PRODUTO = {
-  ativa: true,
-  pct: 10,                                  // desconto da promoção (só nos itens que se encaixam)
-  validade: '16/06',
-  produtos: ['Retatrutida 120mg AQ diluída - ZPHC'],  // nomes exatos (1 ou vários)
-  colecoes: [],                             // handles de coleção (vazio = não usa coleção)
-  // textos do anúncio (opção 8)
-  titulo: '🔥 *LANÇAMENTO — RETATRUTIDA AQ 120mg (ZPHC)* 🔥',
-  linkProduto: 'https://vitaflowoficial.com/products/retatrutida-120mg-aq-diluida-zphc',
-  linkGrupo: 'https://chat.whatsapp.com/COklmK82NWu9zQkdALjchy',
+  ativa: false,
+  pct: 10,
+  validade: '',
+  produtos: [],
+  colecoes: [],
+  titulo: '',
+  linkProduto: '',
+  linkGrupo: '',
 };
 function _normNomeProd(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim(); }
 // um item do carrinho entra na promoção se casar por NOME (produtos) ou por COLEÇÃO (colecoes)
@@ -38,14 +37,11 @@ const FIRESTORE_PROJECT = 'pricehub-f0236';
 const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
 
 const PROMO_RELAMPAGO = {
-  ativa: false,   // dormente — reativar trocando para true quando quiser usar a Relâmpago de novo
-  titulo: 'PROMOÇÃO RELÂMPAGO',
-  link: 'https://vitaflowoficial.com/pages/promocoes',
+  ativa: true,
+  titulo: 'PROMOÇÃO RELÂMPAGO — MyoMax Inibition™',
+  link: 'https://vitaflowoficial.com/products/%F0%9F%94%A5-promocao-2duas-canetas-myomax-inibition-cjc-1295-hgh-frag-folistatin-%F0%9F%94%A5?_pos=2&_psq=Myomax&_ss=e&_v=1.0',
   produtos: [
-    { nome: 'Caneta Synedica 40mg (Retatrutida)',      de: 2000, por: 1230 },
-    { nome: 'Caneta Alluvi 40mg (Retatrutida)',        de: 1560, por: 1199 },
-    { nome: 'Caneta ZPHC 60mg (Retatrutida)',          de: 2999, por: 2099 },
-    { nome: 'Veltrane Gold 90mg (Retatrutida)',         de: 1499, por: 1249 },
+    { nome: 'MyoMax Inibition™ — 2 Canetas 200 IU / 3 mL (Alluvi Healthcare)', de: 1598, por: 999 },
   ],
 };
 function promoAtiva() {
