@@ -45,7 +45,6 @@ async function buscarColecaoShopify(handle) {
                     price { amount }
                     compareAtPrice { amount }
                     availableForSale
-                    quantityAvailable
                   }
                 }
               }
@@ -86,23 +85,13 @@ async function buscarColecaoShopify(handle) {
   return todosProdutos;
 }
 
-// Variante está disponível se:
-// - quantityAvailable é null → sem rastreamento de estoque → sempre disponível
-// - quantityAvailable > 0 → com rastreamento e tem estoque → disponível
-// - quantityAvailable === 0 → com rastreamento sem estoque → indisponível
-function varianteDisponivel({ node: v }) {
-  if (!v.availableForSale) return false;
-  if (v.quantityAvailable === null || v.quantityAvailable === undefined) return true;
-  return v.quantityAvailable > 0;
-}
-
 // Formato texto "nome|preço" — INTACTO (Athena e Radar dependem disso)
 function formatarProdutos(produtos) {
   return produtos
     .filter(({ node: p }) => p.availableForSale)
     .map(({ node: p }) => {
       const variants = p.variants?.edges || [];
-      const disponiveis = variants.filter(varianteDisponivel);
+      const disponiveis = variants.filter(({ node: v }) => v.availableForSale);
       if (disponiveis.length === 0) return null;
       if (disponiveis.length === 1) {
         const preco = parseFloat(disponiveis[0]?.node?.price?.amount || '0');
@@ -119,13 +108,13 @@ function formatarProdutos(produtos) {
     .join('\n');
 }
 
-// Formato estruturado COM FOTO — para a tabela pública
+// Formato estruturado COM FOTO — novo, para a tabela pública
 function formatarProdutosComFoto(produtos) {
   return produtos
     .filter(({ node: p }) => p.availableForSale)
     .map(({ node: p }) => {
       const variants = p.variants?.edges || [];
-      const disponiveis = variants.filter(varianteDisponivel);
+      const disponiveis = variants.filter(({ node: v }) => v.availableForSale);
       if (disponiveis.length === 0) return null;
       const precos = disponiveis.map(({ node: v }) => parseFloat(v.price?.amount || 0)).filter(x => x > 0);
       const preco = precos.length ? Math.min(...precos) : 0;
