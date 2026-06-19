@@ -2,7 +2,7 @@
   functions = "netlify/functions"
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
-[functions]
-  timeout = 26
 [functions."cache-colecoes"]
   schedule = "*/10 * * * *"
+[functions."botconversa"]
+  timeout = 26
