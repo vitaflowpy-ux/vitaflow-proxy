@@ -1869,9 +1869,9 @@ exports.handler = async (event) => {
     // PROTOCOLO (única parte com IA)
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'PROTOCOLO') {
-      if (num && num >= 1 && session.listaProtocolo && num <= session.listaProtocolo.length) {
+      if (num && num >= 1 && session.listaProtocolo && session.aguardandoEscolhaProduto && num <= session.listaProtocolo.length) {
         const prod = session.listaProtocolo[num - 1];
-        await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
+        await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod, listaProtocolo: null, aguardandoEscolhaProduto: false });
         return respond(`Você escolheu:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.',',')}\n\n*Quantas unidades deseja?*\n_(Digite o número)_`);
       }
 
@@ -1920,7 +1920,8 @@ exports.handler = async (event) => {
               ...session,
               state: 'PROTOCOLO',
               historico: hist.concat([{ role:'assistant', content: reply }]),
-              listaProtocolo: parseProdutos(unicas)
+              listaProtocolo: parseProdutos(unicas),
+              aguardandoEscolhaProduto: true
             });
           } else {
             msgProdutos = `🛒 Para ver todos os produtos disponíveis, *digite menu*.`;
@@ -1928,7 +1929,7 @@ exports.handler = async (event) => {
           }
         } else {
           hist.push({ role:'assistant', content: reply });
-          await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist });
+          await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist, listaProtocolo: null, aguardandoEscolhaProduto: false });
         }
 
         return respond(reply, msgProdutos);
