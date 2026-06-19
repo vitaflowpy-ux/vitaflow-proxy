@@ -46,7 +46,6 @@ async function buscarColecaoShopify(handle) {
                     compareAtPrice { amount }
                     availableForSale
                     quantityAvailable
-                    inventoryPolicy
                   }
                 }
               }
@@ -88,12 +87,13 @@ async function buscarColecaoShopify(handle) {
 }
 
 // Variante está disponível se:
-// - inventoryPolicy === 'CONTINUE' (sem rastreamento de estoque) → sempre disponível
-// - inventoryPolicy === 'DENY' (com rastreamento) → só se quantityAvailable > 0
+// - quantityAvailable é null → sem rastreamento de estoque → sempre disponível
+// - quantityAvailable > 0 → com rastreamento e tem estoque → disponível
+// - quantityAvailable === 0 → com rastreamento sem estoque → indisponível
 function varianteDisponivel({ node: v }) {
   if (!v.availableForSale) return false;
-  if (v.inventoryPolicy === 'CONTINUE') return true;
-  return (v.quantityAvailable || 0) > 0;
+  if (v.quantityAvailable === null || v.quantityAvailable === undefined) return true;
+  return v.quantityAvailable > 0;
 }
 
 // Formato texto "nome|preço" — INTACTO (Athena e Radar dependem disso)
