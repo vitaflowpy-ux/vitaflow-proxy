@@ -1,8 +1,8 @@
 [build]
   functions = "netlify/functions"
-
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
-
+[functions]
+  timeout = 26
 [functions."cache-colecoes"]
   schedule = "*/10 * * * *"
