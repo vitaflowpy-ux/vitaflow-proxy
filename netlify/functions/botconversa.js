@@ -664,27 +664,18 @@ async function consultarStatusGAS(termo) {
   } catch { return []; }
 }
 function listaPromoMsg(promo) {
-  const p = promo.produtos[0];
-  return `⚡ *PROMOÇÃO RELÂMPAGO* ⚡\n\n` +
-    `*MyoMax Inibition™ — Alluvi Healthcare*\n` +
-    `🖊️ Caneta pré-preenchida · 200 IU / 3 mL\n\n` +
-    `Esse produto é um *inibidor avançado de miostatina* — a proteína que limita o crescimento muscular. Bloqueando ela, seu corpo para de frear os ganhos e começa a trabalhar *a seu favor*. 💪\n\n` +
-    `🔬 *Fórmula com:* HGH Fragment + Follistatin + CJC\n\n` +
-    `✅ Aumento de massa magra\n` +
-    `✅ Redução de gordura corporal\n` +
-    `✅ Recuperação acelerada\n` +
-    `✅ Mais definição muscular\n\n` +
-    `~R$ ${reais(p.de)} a unidade~ → *2 canetas por R$ ${reais(p.por)}* 🔥\n\n` +
-    `⏳ *Válido enquanto durar o estoque!*\n\n` +
-    `Quer aproveitar?\n\n1️⃣ Sim, quero!\n2️⃣ Não, voltar ao menu`;
+  const linhas = promo.produtos.map((p,i) =>
+    `${emojis(i)} *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`
+  ).join('\n');
+  return `⚡ *${promo.titulo}* — exclusiva comigo (Athena) e enquanto durarem os estoques! 🔥\n\n` +
+    `${linhas}\n\n👉 Detalhes: ${promo.link}\n\n*Digite o número do produto para comprar*, ou *menu* para voltar ao início.`;
 }
 async function abrirPromo(session, sid) {
   const promo = promoAtiva();
   if (!promo) return null;
   await saveSession(sid, {
-    ...session, state: 'PROMO_OFERECER',
-    promoTitulo: promo.titulo,
-    promoProduto: promo.produtos[0],
+    ...session, state: 'LISTA_PRODUTOS', fluxoPromo: true, descontoPromoPct: 0,
+    promoTitulo: promo.titulo, produtoLista: promo.produtos.map(p => ({ nome: p.nome, preco: p.por })),
   });
   return listaPromoMsg(promo);
 }
@@ -1083,7 +1074,7 @@ Retorne SOMENTE o JSON no formato:
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-      body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:600, messages:[{ role:'user', content: prompt }] })
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:600, messages:[{ role:'user', content: prompt }] })
     });
     const d = await r.json();
     if (d.error || !d.content) return null;
@@ -1284,9 +1275,23 @@ exports.handler = async (event) => {
       }
       if (num === 7) { await saveSession(sid, { ...session, state:'FABRICANTES' }); return respond(MENU_FABRICANTES); }
       if (num === 8) {
-        const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
-        if (msg) return respond(msg);
-        if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
+        const temRelampago = promoAtiva();
+        const temProduto = PROMO_PRODUTO.ativa;
+        // Duas promoções ativas: mostra menu intermediário
+        if (temRelampago && true /* Copa sempre ativa */) {
+          await saveSession(sid, { ...session, state:'MENU_PROMOCOES' });
+          return respond(
+            `🔥 *Temos 2 promoções ativas no momento!* 🔥\n\n` +
+            `1️⃣ *Promoção Relâmpago — MyoMax Inibition™*\n` +
+            `   🖊️ 2 canetas por R$999 (de R$1.598)\n\n` +
+            `2️⃣ *Copa do Mundo — Desconto por gols do Brasil* ⚽\n` +
+            `   1 gol = 5% · 2 gols = 10% · 3+ gols = 15% OFF\n\n` +
+            `⚠️ _As promoções não são acumulativas._\n\n` +
+            `Qual você quer conhecer?`
+          );
+        }
+        if (temRelampago) { const msg = await abrirPromo(session, sid); if (msg) return respond(msg); }
+        if (temProduto) return respond(await anunciarLancamento(session, sid));
         return respond('No momento não temos promoção ativa. 😊\n\n_Digite *menu* para ver as categorias._');
       }
       if (num === 9) { await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] }); return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_'); }
@@ -1314,6 +1319,58 @@ exports.handler = async (event) => {
       return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
     }
 
+    if (state === 'MENU_PROMOCOES') {
+      if (num === 1) {
+        // MyoMax — fluxo normal
+        const msg = await abrirPromo(session, sid);
+        if (msg) return respond(msg);
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond('Promoção não disponível no momento. 😊\n\n_Digite *menu* para voltar._');
+      }
+      if (num === 2) {
+        // Copa do Mundo
+        await saveSession(sid, { ...session, state:'COPA_CUPOM' });
+        return respond(
+          `⚽ *PROMOÇÃO COPA DO MUNDO* 🇧🇷\n\n` +
+          `A cada gol do Brasil você ganha desconto em qualquer produto:\n\n` +
+          `⚽ 1 gol → *5% OFF*\n` +
+          `⚽⚽ 2 gols → *10% OFF*\n` +
+          `⚽⚽⚽ 3 gols ou mais → *15% OFF*\n\n` +
+          `O cupom é divulgado nos grupos imediatamente após o apito final — ou após o 3º gol do Brasil na partida.\n\n` +
+          `🗓️ *Próximos jogos:*\n` +
+          `⚽ Brasil x Haiti — 19/06 (Sex) às 21h30\n` +
+          `⚽ Escócia x Brasil — 24/06 (Qua) às 19h\n\n` +
+          `Você já tem o cupom da promoção?\n\n1️⃣ Sim, tenho o cupom!\n2️⃣ Não tenho cupom`
+        );
+      }
+      return respond('Digite *1* para MyoMax ou *2* para Copa do Mundo:');
+    }
+
+    if (state === 'COPA_CUPOM') {
+      const r = n.trim().toLowerCase();
+      const sim = num === 1 || r === 'sim' || r === 's';
+      const nao = num === 2 || r === 'nao' || r === 'não' || r === 'n';
+      if (sim) {
+        // Tem cupom — pede o código
+        await saveSession(sid, { ...session, state:'INFORMAR_CUPOM' });
+        return respond('Ótimo! 🎉 Digite o *código do cupom* que eu já aplico no seu pedido:');
+      }
+      if (nao) {
+        // Não tem cupom — manda links dos grupos
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond(
+          `Sem problema! 😊\n\n` +
+          `⚠️ *Atenção:* o cupom desta promoção *só existe nos dias de jogo do Brasil* e é válido por *apenas 2 horas* após o apito final — ou imediatamente após o 3º gol do Brasil na partida.\n\n` +
+          `Fora desse período não há cupom ativo para esta promoção.\n\n` +
+          `Para não perder, entre nos nossos grupos e fique de olho na divulgação:\n\n` +
+          `📱 *Grupo VIP (WhatsApp):*\nhttps://chat.whatsapp.com/COklmK82NWu9zQkdALjchy\n\n` +
+          `✈️ *Referências (Telegram):*\nhttps://t.me/referencias_vitaflow\n\n` +
+          `_Digite *menu* para voltar ao início._`
+        );
+      }
+      return respond('Digite *1* se tem cupom ou *2* se não tem:');
+    }
+
     if (state === 'PROMO_OFERECER') {
       const r = n.trim().toLowerCase();
       const sim = num === 1 || r === 'sim' || r === 's';
@@ -1323,13 +1380,19 @@ exports.handler = async (event) => {
         return respond('Sem problema! 😊\n\n' + buildMenuPrincipal());
       }
       if (sim) {
-        const prod = session.promoProduto || (promoAtiva() || {}).produtos?.[0];
-        if (!prod) {
+        // busca o produto exato da promoção (preço real do cache) e leva para a quantidade
+        const nomePromo = (PROMO_PRODUTO.produtos || [])[0] || '';
+        const dados = await buscarCache('emagrecedores');
+        const linhas = String(dados || '').split('\n').filter(Boolean);
+        const lista = parseProdutos(linhas);
+        const achado = lista.find(p => _normNomeProd(p.nome) === _normNomeProd(nomePromo))
+                    || lista.find(p => _normNomeProd(p.nome).includes('retatrutida') && _normNomeProd(p.nome).includes('120') && _normNomeProd(p.nome).includes('aq'));
+        if (!achado || !achado.preco) {
           await saveSession(sid, { ...session, state:'MENU' });
-          return respond('Opa, não consegui localizar o produto agora. 😅\n\n_Digite *menu* para voltar._');
+          return respond('Opa, não consegui localizar o preço desse produto agora. 😅 Você encontra ele em *Emagrecedores* (opção 2) ou pelo link que te enviei.\n\n_Digite *menu* para voltar._');
         }
-        await saveSession(sid, { ...session, state:'QUANTIDADE', fluxoPromo: true, promoTitulo: session.promoTitulo, produtoSelecionado: { nome: prod.nome, preco: prod.por } });
-        return respond(`Ótima escolha! 🔥\n📦 *${prod.nome}*\n💰 *R$ ${Number(prod.por).toFixed(2).replace('.',',')}*\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
+        await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: { nome: achado.nome, preco: achado.preco, colecao: 'emagrecedores' } });
+        return respond(`Ótima escolha! 🔥\n📦 *${achado.nome}*\n💰 R$ ${achado.preco.toFixed(2).replace('.',',')}\n_(já com seu desconto de ${PROMO_PRODUTO.pct}% aplicado no fechamento)_\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
       }
       return respond('Digite *1* para Sim ou *2* para Não. 😊');
     }
@@ -1829,7 +1892,7 @@ exports.handler = async (event) => {
         const r = await fetch('https://api.anthropic.com/v1/messages', {
           method:'POST',
           headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-          body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:1500, system: PROTOCOLO_PROMPT, messages: hist })
+          body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1500, system: PROTOCOLO_PROMPT, messages: hist })
         });
         const d = await r.json();
         if (d.error || !d.content) throw new Error('Claude error');
