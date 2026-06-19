@@ -1878,13 +1878,13 @@ exports.handler = async (event) => {
       hist.push({ role:'user', content: mensagem });
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        const timeoutId = setTimeout(() => controller.abort(), 24000);
         let r;
         try {
           r = await fetch('https://api.anthropic.com/v1/messages', {
             method:'POST',
             headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-            body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:800, system: PROTOCOLO_PROMPT, messages: hist }),
+            body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:800, system: PROTOCOLO_PROMPT, messages: hist }),
             signal: controller.signal
           });
         } finally {
