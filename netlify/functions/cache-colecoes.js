@@ -6,7 +6,7 @@
 // - inventory_management: 'shopify' + inventory_quantity <= 0 → indisponível
 
 const SHOPIFY_STORE = 'vitaflow-7352';
-const ADMIN_TOKEN = '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';
+const ADMIN_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const STOREFRONT_TOKEN = 'b4b46a09460b7277f5d4625b9019daef'; // mantido para fotos via Storefront
 const FIREBASE_URL = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 
