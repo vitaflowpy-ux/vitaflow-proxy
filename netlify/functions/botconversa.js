@@ -167,7 +167,7 @@ Estou aqui para te ajudar a encontrar os melhores produtos, tirar dúvidas técn
 5️⃣ GH ⚡
 6️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
 7️⃣ Buscar por Fabricante 🏭
-8️⃣ Promoção do momento 🔥
+8️⃣ Promoções do momento 🔥
 9️⃣ Protocolo / Dúvidas técnicas 🔬
 🔟 Rastrear meu pedido 📦
 
@@ -179,7 +179,7 @@ function buildMenuPrincipal() {
   if (promo) {
     menu += `
 
-🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 8* para ver as ofertas. ⚡`;
+🚨 *Temos promoções ativas no momento!* Digite *promo* ou escolha a *opção 8* para ver todas. ⚡`;
   } else {
     menu += `
 
