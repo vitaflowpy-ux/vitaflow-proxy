@@ -2,8 +2,8 @@
 // Recebe o código OAuth do Shopify e troca pelo token shpat_
 
 exports.handler = async (event) => {
-  const CLIENT_ID = 'cf3ac11bf9d1b25cd4e89f4fa534a9c7';
-  const CLIENT_SECRET = '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';
+  const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID || 'cf3ac11bf9d1b25cd4e89f4fa534a9c7';
+  const CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
   const SHOP = 'nv18ua-1w.myshopify.com';
 
   const params = event.queryStringParameters || {};
