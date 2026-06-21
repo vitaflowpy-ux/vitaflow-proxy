@@ -167,7 +167,7 @@ Estou aqui para te ajudar a encontrar os melhores produtos, tirar dúvidas técn
 5️⃣ GH ⚡
 6️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
 7️⃣ Buscar por Fabricante 🏭
-8️⃣ Promoções do momento 🔥
+8️⃣ Promoção do momento 🔥
 9️⃣ Protocolo / Dúvidas técnicas 🔬
 🔟 Rastrear meu pedido 📦
 
@@ -179,7 +179,7 @@ function buildMenuPrincipal() {
   if (promo) {
     menu += `
 
-🚨 *Temos promoções ativas no momento!* Digite *promo* ou escolha a *opção 8* para ver todas. ⚡`;
+🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 8* para ver as ofertas. ⚡`;
   } else {
     menu += `
 
@@ -515,25 +515,47 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
 }
 
 // ── System prompt exclusivo para protocolos ───────────────────────────────────
-const PROTOCOLO_PROMPT = `Você é a Athena, consultora VitaFlow. Especialista em peptídeos e hormônios. Direta e técnica.
+const PROTOCOLO_PROMPT = `Você é a Athena, consultora especialista da VitaFlow em peptídeos, hormônios e suplementação avançada. Você é uma vendedora brilhante: técnica, apaixonada pelo que faz e extremamente persuasiva — sem ser chata ou forçada.
 
-AO RECEBER O NOME DE UM PRODUTO — responda IMEDIATAMENTE nessa ordem:
+Seu papel é responder sobre protocolos, dosagens, mecanismos de ação, benefícios e cuidados de uso, E SEMPRE converter esse interesse em venda.
 
-1. *O que é:* mecanismo de ação em 2-3 linhas
-2. *Dosagem:* dose mínima eficaz e frequência
-3. *Ciclo:* duração e quanto dura o produto nessa dose
-4. *Cuidados:* principais pontos de atenção
-5. 💡 O acompanhamento profissional potencializa os resultados.
-6. Transição persuasiva usando o objetivo do cliente. Ex: "Já que você quer emagrecer e agora sabe como usar a Retatrutida, aqui estão nossas opções:"
-7. ---PRODUTOS---
+REGRAS TÉCNICAS:
+- Português brasileiro informal e caloroso
+- Informações detalhadas e precisas
+- Use doses MÍNIMAS eficazes e explique quanto tempo o produto dura com essas doses
+- NUNCA use ## ou ### — use apenas *negrito*
+- NUNCA mencione preços (você não tem acesso a eles)
+
+REGRAS ABSOLUTAS — NUNCA VIOLE:
+- NUNCA invente telefone, endereço, contato ou qualquer dado da empresa
+- NUNCA invente prazos — use SEMPRE os prazos oficiais abaixo
+- NUNCA invente produtos, marcas, disponibilidade ou estoque
+- Se não souber algo, diga que não tem essa informação e oriente a digitar *menu*
+
+FRETE E PRAZOS (use SEMPRE "prazo estimado" ao mencionar entrega):
+- Despacho: até 48 horas úteis após confirmação do pagamento
+- Prazos estimados de entrega por região (dias úteis, contados a partir do despacho):
+  Sudeste: 2 a 5 dias úteis | Sul: 3 a 5 dias úteis | Centro-Oeste: 4 a 6 dias úteis
+  Nordeste: 5 a 8 dias úteis | Norte: 7 a 10 dias úteis
+- Transportadoras disponíveis: Jadlog, J&T Express e Loggi
+- Modalidades: PAC, SEDEX (Correios) e Transportadora
+- Recomende sempre a Transportadora — inclui seguro grátis contra apreensão e extravio
+- Correios (PAC/SEDEX) NÃO possuem seguro
+
+REGRA DE OURO — SEMPRE ao final de cada resposta:
+1. Inclua: "💡 Como qualquer suplemento avançado, o acompanhamento profissional potencializa os resultados."
+2. Faça uma transição persuasiva para a compra, destacando urgência ou benefício único
+3. Termine com exatamente este bloco (substitua NOME_DO_PRODUTO pelo produto discutido):
+
+---PRODUTOS---
 NOME_DO_PRODUTO
 ---FIM---
 
-SE precisar do objetivo do cliente: faça 1 pergunta com opções numeradas. Depois que responder, dê o protocolo completo acima.
-
-PROIBIDO: pular o protocolo, fazer 2+ perguntas, mencionar preços, inventar dados, usar ## ou ###.
-
-Português informal e direto. Respostas curtas e objetivas.`;
+Exemplos de transições persuasivas (varie, não repita sempre a mesma):
+- "Esse é exatamente o tipo de resultado que nossos clientes estão tendo. Quer dar esse passo agora?"
+- "Temos opções disponíveis com entrega para todo o Brasil. Que tal aproveitar?"
+- "Muita gente que pergunta sobre esse protocolo acaba se surpreendendo com os resultados em poucas semanas. Quer começar?"
+- "A janela de oportunidade para resultados reais é agora. Posso te mostrar o que temos disponível?"`;
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 function norm(s) {
@@ -747,8 +769,15 @@ async function validarCupom(codigo, subtotalProdutos) {
     if (tipo === 'pct') { descontoReais = subtotalProdutos * (valor/100); if (maxDesc > 0) descontoReais = Math.min(descontoReais, maxDesc); }
     else { descontoReais = Math.min(valor, subtotalProdutos); }
     const descTxt = tipo === 'pct' ? `${valor}% off` : `R$ ${valor.toFixed(2).replace('.',',')} off`;
+    // produtos excluídos do cupom
+    const produtosExcluidos = f.produtosExcluidos && f.produtosExcluidos.arrayValue
+      ? (f.produtosExcluidos.arrayValue.values || []).map(v => v.stringValue || '')
+      : [];
+    const produtosExcluidosNomes = f.produtosExcluidosNomes && f.produtosExcluidosNomes.arrayValue
+      ? (f.produtosExcluidosNomes.arrayValue.values || []).map(v => v.stringValue || '')
+      : [];
     return { ok:true, docId: found.id, descontoReais, descTxt, codigo: cod,
-             tipo, pct: valor, maxDesc, valorFixo: valor };
+             tipo, pct: valor, maxDesc, valorFixo: valor, produtosExcluidos, produtosExcluidosNomes };
   } catch { return { ok:false, motivo:'Erro ao verificar cupom. Tente novamente.' }; }
 }
 async function incrementarUsoCupom(docId) {
@@ -778,14 +807,20 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const descPromoProduto = totalPromo * (PROMO_PRODUTO.pct / 100);
 
   // nos demais itens: 3% Athena vs cupom (vale o maior) — cupom incide só sobre os itens normais
+  // itens excluídos do cupom não recebem desconto de cupom
+  const exclIds = (cupomResultado && cupomResultado.produtosExcluidos) || [];
+  const itensNormaisCupom = exclIds.length
+    ? itensNormais.filter(i => !exclIds.includes(String(i.shopifyId || '')))
+    : itensNormais;
+  const totalNormaisCupom = itensNormaisCupom.reduce((s,i)=>s+i.preco*i.qtd, 0);
   const descAthenaNormais = totalNormais * (DESCONTO_ATHENA_PCT / 100);
   let descCupomNormais = 0;
-  if (cupomResultado && cupomResultado.ok && totalNormais > 0) {
+  if (cupomResultado && cupomResultado.ok && totalNormaisCupom > 0) {
     if (cupomResultado.tipo === 'pct') {
-      descCupomNormais = totalNormais * (cupomResultado.pct/100);
+      descCupomNormais = totalNormaisCupom * (cupomResultado.pct/100);
       if (cupomResultado.maxDesc > 0) descCupomNormais = Math.min(descCupomNormais, cupomResultado.maxDesc);
     } else {
-      descCupomNormais = Math.min(cupomResultado.valorFixo || cupomResultado.descontoReais || 0, totalNormais);
+      descCupomNormais = Math.min(cupomResultado.valorFixo || cupomResultado.descontoReais || 0, totalNormaisCupom);
     }
   }
   let descNormais = descAthenaNormais;
@@ -1052,7 +1087,7 @@ Retorne SOMENTE o JSON no formato:
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:600, messages:[{ role:'user', content: prompt }] })
+      body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:600, messages:[{ role:'user', content: prompt }] })
     });
     const d = await r.json();
     if (d.error || !d.content) return null;
@@ -1253,26 +1288,12 @@ exports.handler = async (event) => {
       }
       if (num === 7) { await saveSession(sid, { ...session, state:'FABRICANTES' }); return respond(MENU_FABRICANTES); }
       if (num === 8) {
-        const temRelampago = promoAtiva();
-        const temProduto = PROMO_PRODUTO.ativa;
-        // Duas promoções ativas: mostra menu intermediário
-        if (temRelampago && true /* Copa sempre ativa */) {
-          await saveSession(sid, { ...session, state:'MENU_PROMOCOES' });
-          return respond(
-            `🔥 *Temos 2 promoções ativas no momento!* 🔥\n\n` +
-            `1️⃣ *Promoção Relâmpago — MyoMax Inibition™*\n` +
-            `   🖊️ 2 canetas por R$999 (de R$1.598)\n\n` +
-            `2️⃣ *Copa do Mundo — Desconto por gols do Brasil* ⚽\n` +
-            `   1 gol = 5% · 2 gols = 10% · 3+ gols = 15% OFF\n\n` +
-            `⚠️ _As promoções não são acumulativas._\n\n` +
-            `Qual você quer conhecer?`
-          );
-        }
-        if (temRelampago) { const msg = await abrirPromo(session, sid); if (msg) return respond(msg); }
-        if (temProduto) return respond(await anunciarLancamento(session, sid));
+        const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
+        if (msg) return respond(msg);
+        if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
         return respond('No momento não temos promoção ativa. 😊\n\n_Digite *menu* para ver as categorias._');
       }
-      if (num === 9) { await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[], listaProtocolo: null, aguardandoEscolhaProduto: false }); return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_'); }
+      if (num === 9) { await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] }); return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_'); }
       if (num === 10) {
         await saveSession(sid, { ...session, state:'RASTREAR' });
         return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido*, seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_(Pode digitar do jeito que for: com pontos, sem pontos, com traço... eu entendo.)_\n\n_Digite *menu* para voltar._`);
@@ -1295,58 +1316,6 @@ exports.handler = async (event) => {
       }
       const blocos = pedidos.map(p => statusBloco(p.pedido, p.status)).join('\n\n');
       return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
-    }
-
-    if (state === 'MENU_PROMOCOES') {
-      if (num === 1) {
-        // MyoMax — fluxo normal
-        const msg = await abrirPromo(session, sid);
-        if (msg) return respond(msg);
-        await saveSession(sid, { ...session, state:'MENU' });
-        return respond('Promoção não disponível no momento. 😊\n\n_Digite *menu* para voltar._');
-      }
-      if (num === 2) {
-        // Copa do Mundo
-        await saveSession(sid, { ...session, state:'COPA_CUPOM' });
-        return respond(
-          `⚽ *PROMOÇÃO COPA DO MUNDO* 🇧🇷\n\n` +
-          `A cada gol do Brasil você ganha desconto em qualquer produto:\n\n` +
-          `⚽ 1 gol → *5% OFF*\n` +
-          `⚽⚽ 2 gols → *10% OFF*\n` +
-          `⚽⚽⚽ 3 gols ou mais → *15% OFF*\n\n` +
-          `O cupom é divulgado nos grupos imediatamente após o apito final — ou após o 3º gol do Brasil na partida.\n\n` +
-          `🗓️ *Próximos jogos:*\n` +
-          `⚽ Brasil x Haiti — 19/06 (Sex) às 21h30\n` +
-          `⚽ Escócia x Brasil — 24/06 (Qua) às 19h\n\n` +
-          `Você já tem o cupom da promoção?\n\n1️⃣ Sim, tenho o cupom!\n2️⃣ Não tenho cupom`
-        );
-      }
-      return respond('Digite *1* para MyoMax ou *2* para Copa do Mundo:');
-    }
-
-    if (state === 'COPA_CUPOM') {
-      const r = n.trim().toLowerCase();
-      const sim = num === 1 || r === 'sim' || r === 's';
-      const nao = num === 2 || r === 'nao' || r === 'não' || r === 'n';
-      if (sim) {
-        // Tem cupom — pede o código
-        await saveSession(sid, { ...session, state:'INFORMAR_CUPOM' });
-        return respond('Ótimo! 🎉 Digite o *código do cupom* que eu já aplico no seu pedido:');
-      }
-      if (nao) {
-        // Não tem cupom — manda links dos grupos
-        await saveSession(sid, { ...session, state:'MENU' });
-        return respond(
-          `Sem problema! 😊\n\n` +
-          `⚠️ *Atenção:* o cupom desta promoção *só existe nos dias de jogo do Brasil* e é válido por *apenas 2 horas* após o apito final — ou imediatamente após o 3º gol do Brasil na partida.\n\n` +
-          `Fora desse período não há cupom ativo para esta promoção.\n\n` +
-          `Para não perder, entre nos nossos grupos e fique de olho na divulgação:\n\n` +
-          `📱 *Grupo VIP (WhatsApp):*\nhttps://chat.whatsapp.com/COklmK82NWu9zQkdALjchy\n\n` +
-          `✈️ *Referências (Telegram):*\nhttps://t.me/referencias_vitaflow\n\n` +
-          `_Digite *menu* para voltar ao início._`
-        );
-      }
-      return respond('Digite *1* se tem cupom ou *2* se não tem:');
     }
 
     if (state === 'PROMO_OFERECER') {
@@ -1858,28 +1827,20 @@ exports.handler = async (event) => {
     // PROTOCOLO (única parte com IA)
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'PROTOCOLO') {
-      if (num && num >= 1 && session.listaProtocolo && session.aguardandoEscolhaProduto && num <= session.listaProtocolo.length) {
+      if (num && num >= 1 && session.listaProtocolo && num <= session.listaProtocolo.length) {
         const prod = session.listaProtocolo[num - 1];
-        await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod, listaProtocolo: null, aguardandoEscolhaProduto: false });
+        await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
         return respond(`Você escolheu:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.',',')}\n\n*Quantas unidades deseja?*\n_(Digite o número)_`);
       }
 
       const hist = (session.historico || []).slice(-8);
       hist.push({ role:'user', content: mensagem });
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 24000);
-        let r;
-        try {
-          r = await fetch('https://api.anthropic.com/v1/messages', {
-            method:'POST',
-            headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-            body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:800, system: PROTOCOLO_PROMPT, messages: hist }),
-            signal: controller.signal
-          });
-        } finally {
-          clearTimeout(timeoutId);
-        }
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
+          body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:1500, system: PROTOCOLO_PROMPT, messages: hist })
+        });
         const d = await r.json();
         if (d.error || !d.content) throw new Error('Claude error');
         let reply = d.content[0].text || '';
@@ -1909,8 +1870,7 @@ exports.handler = async (event) => {
               ...session,
               state: 'PROTOCOLO',
               historico: hist.concat([{ role:'assistant', content: reply }]),
-              listaProtocolo: parseProdutos(unicas),
-              aguardandoEscolhaProduto: true
+              listaProtocolo: parseProdutos(unicas)
             });
           } else {
             msgProdutos = `🛒 Para ver todos os produtos disponíveis, *digite menu*.`;
@@ -1918,7 +1878,7 @@ exports.handler = async (event) => {
           }
         } else {
           hist.push({ role:'assistant', content: reply });
-          await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist, listaProtocolo: null, aguardandoEscolhaProduto: false });
+          await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist });
         }
 
         return respond(reply, msgProdutos);
