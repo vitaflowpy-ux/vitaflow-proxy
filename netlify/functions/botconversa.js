@@ -785,8 +785,17 @@ async function incrementarUsoCupom(docId) {
     const docResp = await fetch(getUrl);
     const docData = await docResp.json();
     const usosAnt = parseInt((docData.fields && docData.fields.usosAtual && docData.fields.usosAtual.integerValue) || 0);
-    const patchUrl = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow/${docId}?key=${FIRESTORE_KEY}&updateMask.fieldPaths=usosAtual`;
-    await fetch(patchUrl, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ fields: { usosAtual: { integerValue: usosAnt + 1 } } }) });
+    // histórico de usos com data/hora
+    const histAnt = (docData.fields && docData.fields.historicoUsos && docData.fields.historicoUsos.arrayValue && docData.fields.historicoUsos.arrayValue.values) || [];
+    const novoUso = { mapValue: { fields: {
+      tipo: { stringValue: 'uso' },
+      data: { stringValue: new Date().toISOString() }
+    }}};
+    const patchUrl = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow/${docId}?key=${FIRESTORE_KEY}&updateMask.fieldPaths=usosAtual&updateMask.fieldPaths=historicoUsos`;
+    await fetch(patchUrl, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ fields: {
+      usosAtual: { integerValue: usosAnt + 1 },
+      historicoUsos: { arrayValue: { values: [...histAnt, novoUso] } }
+    }}) });
   } catch {}
 }
 async function fecharResumoNormal(session, sid, cupomResultado, respond) {
