@@ -768,16 +768,14 @@ async function validarCupom(codigo, subtotalProdutos) {
     let descontoReais = 0;
     if (tipo === 'pct') { descontoReais = subtotalProdutos * (valor/100); if (maxDesc > 0) descontoReais = Math.min(descontoReais, maxDesc); }
     else { descontoReais = Math.min(valor, subtotalProdutos); }
-    const descTxt = tipo === 'pct' ? `${valor}% off` : `R$ ${valor.toFixed(2).replace('.',',')} off`;
-    // produtos excluídos do cupom
-    const produtosExcluidos = f.produtosExcluidos && f.produtosExcluidos.arrayValue
-      ? (f.produtosExcluidos.arrayValue.values || []).map(v => v.stringValue || '')
-      : [];
-    const produtosExcluidosNomes = f.produtosExcluidosNomes && f.produtosExcluidosNomes.arrayValue
-      ? (f.produtosExcluidosNomes.arrayValue.values || []).map(v => v.stringValue || '')
-      : [];
+    const descTxt = tipo === 'frete'
+      ? (valor === 0 ? 'Frete Grátis' : `R$ ${valor.toFixed(2).replace('.',',')} off no frete`)
+      : tipo === 'pct' ? `${valor}% off` : `R$ ${valor.toFixed(2).replace('.',',')} off`;
+    // frete grátis: tipo='frete', valor=0 → grátis total; valor>0 → desconto fixo no frete
+    const freteGratis = tipo === 'frete' && valor === 0;
+    const descontoFrete = tipo === 'frete' ? valor : 0;
     return { ok:true, docId: found.id, descontoReais, descTxt, codigo: cod,
-             tipo, pct: valor, maxDesc, valorFixo: valor, produtosExcluidos, produtosExcluidosNomes };
+             tipo, pct: valor, maxDesc, valorFixo: valor, freteGratis, descontoFrete };
   } catch { return { ok:false, motivo:'Erro ao verificar cupom. Tente novamente.' }; }
 }
 async function incrementarUsoCupom(docId) {
@@ -807,20 +805,14 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const descPromoProduto = totalPromo * (PROMO_PRODUTO.pct / 100);
 
   // nos demais itens: 3% Athena vs cupom (vale o maior) — cupom incide só sobre os itens normais
-  // itens excluídos do cupom não recebem desconto de cupom
-  const exclIds = (cupomResultado && cupomResultado.produtosExcluidos) || [];
-  const itensNormaisCupom = exclIds.length
-    ? itensNormais.filter(i => !exclIds.includes(String(i.shopifyId || '')))
-    : itensNormais;
-  const totalNormaisCupom = itensNormaisCupom.reduce((s,i)=>s+i.preco*i.qtd, 0);
   const descAthenaNormais = totalNormais * (DESCONTO_ATHENA_PCT / 100);
   let descCupomNormais = 0;
-  if (cupomResultado && cupomResultado.ok && totalNormaisCupom > 0) {
+  if (cupomResultado && cupomResultado.ok && totalNormais > 0) {
     if (cupomResultado.tipo === 'pct') {
-      descCupomNormais = totalNormaisCupom * (cupomResultado.pct/100);
+      descCupomNormais = totalNormais * (cupomResultado.pct/100);
       if (cupomResultado.maxDesc > 0) descCupomNormais = Math.min(descCupomNormais, cupomResultado.maxDesc);
     } else {
-      descCupomNormais = Math.min(cupomResultado.valorFixo || cupomResultado.descontoReais || 0, totalNormaisCupom);
+      descCupomNormais = Math.min(cupomResultado.valorFixo || cupomResultado.descontoReais || 0, totalNormais);
     }
   }
   let descNormais = descAthenaNormais;
@@ -833,8 +825,29 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     cupomCodigo = cupomResultado.codigo;
   }
 
+  // Frete grátis via cupom
+  let freteValorFinal = frete.valor || 0;
+  let linhaFreteGratis = '';
+  if (cupomResultado && cupomResultado.ok && cupomResultado.tipo === 'frete') {
+    if (cupomResultado.freteGratis) {
+      freteValorFinal = 0;
+      linhaFreteGratis = `🚚 *Frete GRÁTIS* — Cupom ${cupomResultado.codigo} aplicado! 🎉
+`;
+      cupomDocId = cupomResultado.docId;
+      cupomCodigo = cupomResultado.codigo;
+      descNormais = descAthenaNormais; // mantém 3% Athena nos produtos
+      labelNormais = `Desconto Athena (-${DESCONTO_ATHENA_PCT}%)`;
+    } else if (cupomResultado.descontoFrete > 0) {
+      freteValorFinal = Math.max(0, freteValorFinal - cupomResultado.descontoFrete);
+      linhaFreteGratis = `🚚 *Desconto no frete* — Cupom ${cupomResultado.codigo}: -R$ ${cupomResultado.descontoFrete.toFixed(2).replace('.',',')}
+`;
+      cupomDocId = cupomResultado.docId;
+      cupomCodigo = cupomResultado.codigo;
+    }
+  }
+
   const descontoReais = descPromoProduto + descNormais;
-  const totalComDesconto = totalProd - descontoReais + (frete.valor || 0);
+  const totalComDesconto = totalProd - descontoReais + freteValorFinal;
 
   let linhasDesc = '';
   if (descPromoProduto > 0) {
@@ -851,12 +864,16 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const resumo =
     `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
     `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
-    `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
+    (freteValorFinal > 0
+      ? `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${freteValorFinal.toFixed(2).replace('.',',')}\n`
+      : `🚚 Frete *${frete.label}* — ${session.estadoCliente}: ~~R$ ${(frete.valor||0).toFixed(2).replace('.',',')}~~ *GRÁTIS* 🎉\n`) +
+    linhaFreteGratis +
     linhasDesc + linhaCupomInfo +
     `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu` +
     linhaConviteCupom;
+  const freteParaSalvar = { ...frete, valor: freteValorFinal };
   await saveSession(sid, {
-    ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd,
+    ...session, state:'CONFIRMAR', freteSelecionado: freteParaSalvar, totalProd,
     descontoReais, descontoLabel: (descPromoProduto>0?`Lançamento Retatrutida + `:'') + labelNormais,
     total: totalComDesconto,
     descontoTipo: cupomDocId ? 'cupom' : 'athena', cupomDocId, cupomCodigo
@@ -1087,7 +1104,7 @@ Retorne SOMENTE o JSON no formato:
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-      body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:600, messages:[{ role:'user', content: prompt }] })
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:600, messages:[{ role:'user', content: prompt }] })
     });
     const d = await r.json();
     if (d.error || !d.content) return null;
@@ -1839,7 +1856,7 @@ exports.handler = async (event) => {
         const r = await fetch('https://api.anthropic.com/v1/messages', {
           method:'POST',
           headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-          body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:1500, system: PROTOCOLO_PROMPT, messages: hist })
+          body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1500, system: PROTOCOLO_PROMPT, messages: hist })
         });
         const d = await r.json();
         if (d.error || !d.content) throw new Error('Claude error');
