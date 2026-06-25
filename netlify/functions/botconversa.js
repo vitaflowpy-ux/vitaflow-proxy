@@ -37,7 +37,7 @@ const FIRESTORE_PROJECT = 'pricehub-f0236';
 const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
 
 const PROMO_RELAMPAGO = {
-  ativa: true,
+  ativa: false,
   titulo: 'PROMOÇÃO RELÂMPAGO — MyoMax Inibition™',
   link: 'https://vitaflowoficial.com/products/%F0%9F%94%A5-promocao-2duas-canetas-myomax-inibition-cjc-1295-hgh-frag-folistatin-%F0%9F%94%A5?_pos=2&_psq=Myomax&_ss=e&_v=1.0',
   produtos: [
