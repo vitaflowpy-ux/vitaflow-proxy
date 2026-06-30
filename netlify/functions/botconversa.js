@@ -197,6 +197,23 @@ const MENU_PRINCIPAL = MENU_PRINCIPAL_BASE + `
 
 _Digite o número da opção_`;
 
+// ── Boas-vindas para lead frio (clique no botão "Sim, quero conhecer" do template Meta) ──
+const MSG_BOAS_VINDAS_LEAD = `✨ *Seja bem-vindo à VitaFlow!* 🌿
+
+Nós somos especialistas em *peptídeos, hormônios, emagrecedores e performance avançada*, com entrega rápida para todo o Brasil. 🇧🇷
+
+🛒 *Conheça todos os nossos produtos no site:*
+vitaflowoficial.com
+
+🔬 Temos também um *gerador de protocolos de peptídeos por IA, gratuito*, no site para te ajudar.
+
+📲 *Entre em nossos grupos* e acompanhe novidades, lançamentos, cupons e ofertas relâmpago em primeira mão:
+💬 WhatsApp: https://chat.whatsapp.com/COklmK82NWu9zQkdALjchy
+✈️ Telegram: https://t.me/referencias_vitaflow
+
+👉 *Me conta: o que você está buscando hoje?* Posso te ajudar a encontrar o produto certo! 😊`;
+
+
 const MENU_PEPTIDEOS = `*💊 PEPTÍDEOS*
 
 1️⃣ BPC-157
@@ -1149,6 +1166,16 @@ exports.handler = async (event) => {
 
     const session = await getSession(sid);
     const state = session.state || 'MENU';
+
+    // ── LEAD FRIO: clique no botão "Sim, quero conhecer" do template aprovado pela Meta ──
+    // O WhatsApp envia o texto do botão como mensagem. Detecta, apresenta a VitaFlow e abre o menu.
+    // Não dispara em estados de pagamento (pra não atrapalhar quem já está comprando).
+    const ehLeadConhecer = (n.includes('quero conhecer') || n === 'sim quero conhecer')
+      && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    if (ehLeadConhecer) {
+      await saveSession(sid, { state:'MENU' });
+      return respond(MSG_BOAS_VINDAS_LEAD);
+    }
 
     const ehPromo = n.includes('promo') || n.includes('namorados');
     if (ehPromo && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state)) {
