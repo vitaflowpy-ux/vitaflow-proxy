@@ -2,6 +2,15 @@
 
 const INFINITEPAY_TAG = 'vitaflowoficial';
 const FIREBASE_URL    = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
+// Segredo do Realtime Database (env var FIREBASE_SECRET no Netlify — NÃO hardcodar).
+// Passa por cima das regras, permitindo o backend ler/gravar mesmo com os nós fechados.
+const FIREBASE_SECRET = process.env.FIREBASE_SECRET || '';
+// Helper: monta a URL REST do Firebase já com ?auth= (ou &auth= se já houver query).
+function fbUrl(path){
+  const base = FIREBASE_URL + path;
+  if(!FIREBASE_SECRET) return base;
+  return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'auth=' + encodeURIComponent(FIREBASE_SECRET);
+}
 const GAS_URL         = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.html';
 
@@ -715,7 +724,7 @@ function gerarLinkRecibo(orderNsu, nome, cpf, email, pagto, carrinho, frete, tot
 async function getSession(sid) {
   try {
     const k = sid.replace(/[^a-zA-Z0-9]/g,'_');
-    const r = await fetch(`${FIREBASE_URL}/vitaflow_sessions/${k}.json`);
+    const r = await fetch(fbUrl(`/vitaflow_sessions/${k}.json`));
     const d = await r.json();
     return d || { state:'MENU' };
   } catch { return { state:'MENU' }; }
@@ -723,7 +732,7 @@ async function getSession(sid) {
 async function saveSession(sid, sess) {
   try {
     const k = sid.replace(/[^a-zA-Z0-9]/g,'_');
-    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${k}.json`, {
+    await fetch(fbUrl(`/vitaflow_sessions/${k}.json`), {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(sess)
     });
   } catch {}
@@ -731,7 +740,7 @@ async function saveSession(sid, sess) {
 async function deleteSession(sid) {
   try {
     const k = sid.replace(/[^a-zA-Z0-9]/g,'_');
-    await fetch(`${FIREBASE_URL}/vitaflow_sessions/${k}.json`, { method:'DELETE' });
+    await fetch(fbUrl(`/vitaflow_sessions/${k}.json`), { method:'DELETE' });
   } catch {}
 }
 
@@ -740,14 +749,14 @@ const NEGOCIACAO_PCT_TOTAL = 5; // teto total (3% Athena + 2% extra). Nunca sobr
 async function lerPending(sid) {
   try {
     const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
-    const r = await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${pKey}.json`);
+    const r = await fetch(fbUrl(`/vitaflow_pending_orders/${pKey}.json`));
     const d = await r.json();
     return d ? { pKey, ...d } : null;
   } catch { return null; }
 }
 async function salvarPendingMerge(pKey, patch) {
   try {
-    await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${pKey}.json`, {
+    await fetch(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
       method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch)
     });
   } catch {}
@@ -908,7 +917,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
 }
 async function buscarCache(colecao) {
   try {
-    const r = await fetch(`${FIREBASE_URL}/vitaflow_cache/colecoes/${colecao}.json`);
+    const r = await fetch(fbUrl(`/vitaflow_cache/colecoes/${colecao}.json`));
     const d = await r.json();
     return d?.dados || '';
   } catch { return ''; }
@@ -1657,7 +1666,7 @@ exports.handler = async (event) => {
         const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais);
         try {
           const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
-          await fetch(`${FIREBASE_URL}/vitaflow_pending_orders/${pKey}.json`, {
+          await fetch(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
             method:'PUT', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
               phone: sid, order_nsu: orderNsu,
