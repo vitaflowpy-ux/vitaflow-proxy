@@ -9,6 +9,11 @@ const SHOPIFY_STORE = 'vitaflow-7352';
 const ADMIN_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const STOREFRONT_TOKEN = 'b4b46a09460b7277f5d4625b9019daef'; // mantido para fotos via Storefront
 const FIREBASE_URL = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
+// Segredo do Realtime Database (vem da env var FIREBASE_SECRET no Netlify — NÃO hardcodar).
+// Passa por cima das regras de segurança, permitindo esta função gravar mesmo com o nó fechado.
+const FIREBASE_SECRET = process.env.FIREBASE_SECRET || '';
+// sufixo de auth para as URLs REST do Firebase (vazio se não houver segredo configurado)
+const FB_AUTH = FIREBASE_SECRET ? ('?auth=' + encodeURIComponent(FIREBASE_SECRET)) : '';
 
 const COLECOES = [
   '10-mais-vendidos',
@@ -129,7 +134,7 @@ function formatarProdutosComFoto(produtos) {
 }
 
 async function salvarFirebase(handle, dados, produtos) {
-  const url = `${FIREBASE_URL}/vitaflow_cache/colecoes/${handle}.json`;
+  const url = `${FIREBASE_URL}/vitaflow_cache/colecoes/${handle}.json${FB_AUTH}`;
   const res = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
