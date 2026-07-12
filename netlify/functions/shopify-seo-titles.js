@@ -117,6 +117,20 @@ function categoriaDe(titulo) {
 // ── Limpeza do nome: tira o que NINGUEM busca no Google ───────────────────
 // Nomes como "Enantato 250mg/ml - 10 ampolas - Geniqs Pharma - Nao acompanha BAC" (62+ chars)
 // nao cabem no titulo SEO. Removemos o ruido e ficamos com: SUBSTANCIA + DOSE + MARCA.
+// Colapsa repeticao adjacente que ja vem ERRADA do proprio nome no Shopify:
+//   "GH 75ui 75ui - Canada Labs"        -> "GH 75ui - Canada Labs"
+//   "Oxandrolona 5mg 5mg/tablets"       -> "Oxandrolona 5mg/tablets"
+//   "Oxandrolona 50mg 50mg - Canada"    -> "Oxandrolona 50mg - Canada"
+function colapsarRepeticao(s) {
+  // dose repetida: 5mg 5mg  |  75ui 75ui  |  5mg 5mg/tablets
+  s = s.replace(/\b(\d+(?:[.,]\d+)?\s*(?:mg|ui|ml|mcg|g|iu))\s+\1\b/gi, '$1');
+  s = s.replace(/\b(\d+(?:[.,]\d+)?\s*(?:mg|ui|ml|mcg|g|iu))\s+(\d+(?:[.,]\d+)?\s*(?:mg|ui|ml|mcg|g|iu))(\/\w+)/gi,
+                function(m, a, b, sufixo){ return (a.replace(/\s+/g,'').toLowerCase() === b.replace(/\s+/g,'').toLowerCase()) ? (b + sufixo) : m; });
+  // palavra repetida generica: "Deca Deca" -> "Deca"
+  s = s.replace(/\b(\p{L}{3,})\s+\1\b/giu, '$1');
+  return s.replace(/\s{2,}/g, ' ').trim();
+}
+
 function limparNome(nome) {
   let n = String(nome || '').trim();
   n = n.replace(/\s*-\s*n[aã]o acompanha bac/gi, '');       // "- Não acompanha BAC"
@@ -131,7 +145,15 @@ function limparNome(nome) {
   n = n.replace(/\s*-\s*-\s*/g, ' - ');                     // "- -" duplicado
   n = n.replace(/([^\s])-\s/g, '$1 - ');                    // "250mg/ml- Geniqs" -> "250mg/ml - Geniqs"
   n = n.replace(/\s{2,}/g, ' ').replace(/\s*[-–—+,]\s*$/, '').trim();
-  return n;
+  n = colapsarRepeticao(n);   // "GH 75ui 75ui" -> "GH 75ui" (erro que vem do proprio Shopify)
+
+  // Parenteses ORFAOS que ja vem errados do Shopify: "NPP 100mg/10ml) - ZPHC" tem um ')' solto.
+  // Se a contagem nao bate, remove os parenteses soltos (mantendo o texto).
+  var abre = (n.match(/\(/g) || []).length;
+  var fecha = (n.match(/\)/g) || []).length;
+  if (abre !== fecha) n = n.replace(/[()]/g, '').replace(/\s{2,}/g, ' ').trim();
+
+  return n.replace(/\s*[-–—+,]\s*$/, '').trim();
 }
 
 // Corta o nome no ultimo separador seguro (nunca no meio de uma palavra)
@@ -140,7 +162,16 @@ function cortarSeguro(nome, max) {
   let corte = nome.slice(0, max);
   const sep = Math.max(corte.lastIndexOf(' - '), corte.lastIndexOf(' ('), corte.lastIndexOf(' '));
   if (sep > max * 0.55) corte = corte.slice(0, sep);
-  return corte.replace(/[\s\-–—(,+]+$/, '').trim();
+  corte = corte.replace(/[\s\-–—(,+]+$/, '').trim();
+
+  // NUNCA deixar parentese aberto: "... (Wolverine" / "... (90" ficam feios no Google.
+  // Se abriu '(' e nao fechou, joga fora o parenteses inteiro (o que vem depois e detalhe).
+  const abre = (corte.match(/\(/g) || []).length;
+  const fecha = (corte.match(/\)/g) || []).length;
+  if (abre > fecha) {
+    corte = corte.slice(0, corte.lastIndexOf('(')).replace(/[\s\-–—(,+]+$/, '').trim();
+  }
+  return corte;
 }
 
 // Monta o TÍTULO SEO. A KEYWORD VEM PRIMEIRO ("Comprar <Categoria>") — assim ela NUNCA
