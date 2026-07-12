@@ -36,7 +36,11 @@ const CATEGORIAS = [
   ['emagrecedor', 'Emagrecedor', [
     'retatrutida', 'tirzepatida', 'semaglutida', 'liraglutida', 'cagrilintida',
     'mazdutida', 'survodutida', 'aod', 'aod-9604', 'tesofensina', 'slu-pp',
-    'cbl-514', '5-amino', '5 amino', 'amino-1mq', 'mots-c', 'mots c'
+    'cbl-514', '5-amino', '5 amino', 'amino-1mq', 'mots-c', 'mots c',
+    // faltavam (achados na previa):
+    'clembuterol', 'clenbuterol', 'ioimbina', 'yohimbina', 't3', 'liotironina',
+    't4', 'levotiroxina', 'cyt3', 'lipo', 'lipoc', 'lipob', 'redux', 'sibutramina',
+    'orlistat', 'aicar', 'slupp', 'slu pp'
   ]],
   ['hormônio', 'Hormônio', [
     'testosterona', 'enantato', 'cipionato', 'propionato', 'durateston', 'sustanon',
@@ -44,7 +48,11 @@ const CATEGORIAS = [
     'dianabol', 'metandrostenolona', 'masteron', 'drostanolona', 'primobolan',
     'metenolona', 'halotestin', 'anadrol', 'oximetolona', 'winstrol', 'hemogenin',
     'estradiol', 'progesterona', 'gonadotrofina', 'hcg', 'clomifeno', 'tamoxifeno',
-    'anastrozol', 'letrozol', 'proviron', 'mesterolona', 'cabergolina'
+    'anastrozol', 'letrozol', 'proviron', 'mesterolona', 'cabergolina',
+    // faltavam (achados na previa dos 774 produtos):
+    'npp', 'fenilpropionato', 'turinabol', 'trestolona', 'trest', 'dhb', 'superdrol',
+    'methasterone', 'metasterona', 'hemogenim', 'dhea', 'sustanon', 'mix', 'cutstack',
+    'undecilato', 'undecanoato', 'acetato de trembolona', 'primoteston', 'testovis'
   ]],
   ['GH', 'GH', [
     'hgh', 'somatropina', 'gh ', 'ztrop', 'zptrop', 'hygetropin', 'jintropin',
@@ -57,11 +65,22 @@ const CATEGORIAS = [
     'melanotan', 'kisspeptina', 'kisspeptin', 'epitalon', 'epitalona', 'selank',
     'semax', 'dsip', 'ss-31', 'thymosin', 'timosina', 'peptide', 'peptídeo',
     'glutationa', 'nad', 'nad+', 'larazotida', 'll-37', 'kpv', 'vip', 'pnc-27',
-    'adipotide', 'follistatina', 'igf', 'igf-1', 'hexarelin', 'gonadorelina'
+    'adipotide', 'follistatina', 'igf', 'igf-1', 'hexarelin', 'gonadorelina',
+    // faltavam (achados na previa):
+    'epithalon', 'epitalon', 'tb500', 'tb-500', 'peg-mgf', 'peg mgf', 'mgf',
+    'ss31', 'ss-31', 'snake', 'klow', 'glow', 'melatonan', 'melanotan',
+    'fematropin', 'acido tioctico', 'acido ascorbico'
   ]],
   ['SARM', 'SARM', [
     'ostarine', 'ostarina', 'ligandrol', 'lgd', 'rad-140', 'rad 140', 'testolone',
-    'andarine', 's4', 'yk-11', 'sr9009', 'cardarine', 'gw-501516', 'sarm'
+    'andarine', 's4', 'yk-11', 'sr9009', 'cardarine', 'gw-501516', 'sarm',
+    'mk677', 'mk-677', 'nutrobol', 'ibutamoren'
+  ]],
+
+  // Suplementos / vitaminas (categoria propria — nao sao peptideo nem hormonio)
+  ['suplemento', 'Suplemento', [
+    'melatonina', 'melatonin', 'multivitaminico', 'multivitaminc', 'vitamina',
+    'colageno', 'creatina', 'omega', 'coenzima', 'glutamina'
   ]]
 ];
 
@@ -95,33 +114,68 @@ function categoriaDe(titulo) {
   return null; // não classificou → não inventa
 }
 
-// Monta o TÍTULO SEO na fórmula validada.
-// Ex: "Retatrutida 120mg ZPHC" -> "Retatrutida 120mg ZPHC — Comprar Emagrecedor | VitaFlow"
+// ── Limpeza do nome: tira o que NINGUEM busca no Google ───────────────────
+// Nomes como "Enantato 250mg/ml - 10 ampolas - Geniqs Pharma - Nao acompanha BAC" (62+ chars)
+// nao cabem no titulo SEO. Removemos o ruido e ficamos com: SUBSTANCIA + DOSE + MARCA.
+function limparNome(nome) {
+  let n = String(nome || '').trim();
+  n = n.replace(/\s*-\s*n[aã]o acompanha bac/gi, '');       // "- Não acompanha BAC"
+  n = n.replace(/\s*\(\s*produto fracionado\s*\)/gi, '');   // "(produto fracionado)"
+  n = n.replace(/\s*-?\s*\d+\s*ampolas?\s*(de\s*\d+\s*ml)?/gi, ''); // "- 10 ampolas de 10ml"
+  n = n.replace(/\s*\/\s*\d+\s*tablets?/gi, '');            // "/50 tablets"
+  n = n.replace(/\s*-?\s*\d+\s*comprimidos?/gi, '');        // "- 30 Comprimidos"
+  n = n.replace(/\s*-?\s*\d+\s*frascos?/gi, '');
+  n = n.replace(/\s*\(\s*\d+\s*(mg|mcg)?\s*x\s*\d+\s*vial[s]?\s*\)/gi, ''); // "(5mg x 5 vial)"
+  n = n.replace(/\s*-\s*gen[eé]rico\s*$/gi, '');
+  n = n.replace(/\s*-\s*([^-]+)\s*-\s*\1\s*$/gi, ' - $1');  // marca repetida no fim
+  n = n.replace(/\s*-\s*-\s*/g, ' - ');                     // "- -" duplicado
+  n = n.replace(/([^\s])-\s/g, '$1 - ');                    // "250mg/ml- Geniqs" -> "250mg/ml - Geniqs"
+  n = n.replace(/\s{2,}/g, ' ').replace(/\s*[-–—+,]\s*$/, '').trim();
+  return n;
+}
+
+// Corta o nome no ultimo separador seguro (nunca no meio de uma palavra)
+function cortarSeguro(nome, max) {
+  if (nome.length <= max) return nome;
+  let corte = nome.slice(0, max);
+  const sep = Math.max(corte.lastIndexOf(' - '), corte.lastIndexOf(' ('), corte.lastIndexOf(' '));
+  if (sep > max * 0.55) corte = corte.slice(0, sep);
+  return corte.replace(/[\s\-–—(,+]+$/, '').trim();
+}
+
+// Monta o TÍTULO SEO. A KEYWORD VEM PRIMEIRO ("Comprar <Categoria>") — assim ela NUNCA
+// e cortada, que era o bug da 1a versao (232 titulos perderam o "Comprar").
+// Formato: "Comprar <Categoria> <Nome> | VitaFlow"
+// Ex: "Comprar Emagrecedor Retatrutida 120mg - ZPHC | VitaFlow"
 function montarTituloSeo(tituloProduto) {
-  const nome = String(tituloProduto || '').trim();
-  if (!nome) return null;
+  const bruto = String(tituloProduto || '').trim();
+  if (!bruto) return null;
 
-  const cat = categoriaDe(nome);
-  if (!cat) return null; // sem categoria reconhecida → NÃO gera (não inventa)
+  const cat = categoriaDe(bruto);
+  if (!cat) return null;                 // nao classificou -> NAO inventa, pula
 
-  const benef = BENEFICIO[cat] || '';
-  const sufixoCompleto = ` — Comprar ${cat}${benef ? ' ' + benef : ''} | VitaFlow`;
+  let nome = limparNome(bruto);
+  // evita repeticao: "Comprar GH GH ZPTrop 90 UI" -> "Comprar GH ZPTrop 90 UI"
+  const catRe = new RegExp('^' + cat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+', 'i');
+  if (catRe.test(nome)) nome = nome.replace(catRe, '');
+  const prefixo = `Comprar ${cat} `;     // <- keyword sempre presente, no inicio
+  const sufixo = ' | VitaFlow';
 
-  // Encurta por PRIORIDADE. O benefício ("para Emagrecimento") é o que a pessoa realmente
-  // busca — vale MAIS que o "| VitaFlow". Então o "| VitaFlow" é sacrificado primeiro.
-  const tentativas = [
-    sufixoCompleto,                                              // completo
-    benef ? ` — Comprar ${cat} ${benef}` : null,                 // sem "| VitaFlow", mantém o benefício
-    ` — Comprar ${cat} | VitaFlow`,                              // sem benefício
-    ` — Comprar ${cat}`,
-    ` | ${cat}`
-  ].filter(Boolean);
-  for (const suf of tentativas) {
-    const t = nome + suf;
-    if (t.length <= LIMITE_TITULO) return t;
+  // 1) cabe tudo?
+  if ((prefixo + nome + sufixo).length <= LIMITE_TITULO) return prefixo + nome + sufixo;
+  // 2) sacrifica o "| VitaFlow" (a marca ja aparece no dominio)
+  if ((prefixo + nome).length <= LIMITE_TITULO) return prefixo + nome;
+  // 3) nao cabe: tira a MARCA inteira (o trecho apos o ultimo " - ").
+  //    Melhor perder a marca do que exibir ela cortada ("Cooper" no lugar de "Cooper Pharma").
+  const espaco = LIMITE_TITULO - prefixo.length;
+  const iMarca = nome.lastIndexOf(' - ');
+  if (iMarca > 0) {
+    const semMarca = nome.slice(0, iMarca).trim();
+    if (semMarca.length <= espaco) return (prefixo + semMarca).trim();
   }
-  // nome já é longo demais: entrega o nome puro (melhor que cortar palavra no meio)
-  return nome.slice(0, LIMITE_TITULO);
+  // 4) ainda nao cabe: corta em separador seguro (nunca no meio de palavra)
+  const cortado = cortarSeguro(nome, espaco);
+  return (prefixo + cortado).trim();
 }
 
 // ── Shopify GraphQL ───────────────────────────────────────────────────────
