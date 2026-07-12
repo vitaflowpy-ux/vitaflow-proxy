@@ -309,16 +309,29 @@ exports.handler = async (event) => {
     }
 
     // ---- APLICAR ----
+    // O Netlify mata a function em ~10s. Processamos o maximo que der dentro de uma
+    // JANELA SEGURA e paramos antes de estourar, informando quantos faltam.
+    // Como os que ja tem titulo SEO sao pulados, basta rodar a URL de novo para continuar
+    // de onde parou (ate "restantes": 0).
+    const JANELA_MS = 8000;              // 8s de trabalho (limite do Netlify e ~10s)
+    const inicio = Date.now();
+
     const ok = [], falhas = [];
+    let processados = 0;
+
     for (const item of fila) {
+      if (Date.now() - inicio > JANELA_MS) break;   // para antes do timeout
       try {
         await aplicarSeo(item.id, item.seo_novo);
         ok.push({ titulo: item.titulo, seo_novo: item.seo_novo });
       } catch (e) {
         falhas.push({ titulo: item.titulo, erro: e.message });
       }
-      await new Promise(r => setTimeout(r, 250)); // respeita o rate limit do Shopify
+      processados++;
+      await new Promise(r => setTimeout(r, 120)); // respeita o rate limit do Shopify
     }
+
+    const restantes = fila.length - processados;
 
     return json(200, {
       ok: true,
@@ -327,6 +340,10 @@ exports.handler = async (event) => {
       aplicados: ok.length,
       falhas: falhas.length,
       pulados: pulados.length,
+      restantes: restantes,
+      proximo_passo: restantes > 0
+        ? 'AINDA FALTAM ' + restantes + ' produtos. Recarregue esta MESMA URL para continuar de onde parou.'
+        : 'TERMINOU! Todos os produtos foram atualizados.',
       detalhe_aplicados: ok,
       detalhe_falhas: falhas
     });
