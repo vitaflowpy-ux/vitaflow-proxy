@@ -14,6 +14,20 @@ function fbUrl(path){
 const GAS_URL         = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.html';
 
+// ── IA ASSÍNCRONA (cérebro da Athena) ─────────────────────────────────────────
+// Quando o cliente escreve algo que os menus não entendem, a gente dispara a IA
+// (background function) e ela RESPONDE sozinha via BotConversa. Aqui só disparamos
+// (retorna rápido, sem timeout); a resposta chega em seguida como mensagem empurrada.
+const ATHENA_IA_URL = process.env.ATHENA_IA_URL || 'https://vitaflow-proxy.netlify.app/.netlify/functions/athena-ia-background';
+async function dispararIA(phone, mensagem){
+  try {
+    await fetch(ATHENA_IA_URL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ phone: phone, mensagem: mensagem })
+    });
+  } catch (e) { /* se falhar o disparo, o ack síncrono já foi enviado */ }
+}
+
 // ── Desconto Athena e Cupons ──────────────────────────────────────────────────
 const DESCONTO_ATHENA_PCT = 3;
 
@@ -535,11 +549,12 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
     });
     return respond(`Você quis dizer *${e.label}*? 🤔\n\n1️⃣ Sim\n2️⃣ Não`);
   }
-  // Não reconheceu: NÃO reseta pro menu — mantém o contexto atual e re-mostra a tela onde está.
+  // Não reconheceu como produto → em vez do "não entendi" robótico, deixa a IA responder
+  // de forma inteligente e assíncrona (sem timeout). Mantém o contexto/estado atual.
   await saveSession(sid, { ...session, errosSeguidos: (session.errosSeguidos || 0) + 1 });
-  return respond(`Hmm, não encontrei esse item por aqui. 🤔\n\nVocê pode escolher um *número* da lista, digitar o *nome do produto* (ex.: retatrutida, stanozolol, gh), *atendimento* para falar com uma pessoa ou *menu* para voltar ao início.\n\n${menuStr}`);
+  dispararIA(sid, nMsg);   // fire-and-forget: a IA responde em seguida via BotConversa
+  return respond('Deixa eu ver isso pra você… 👀');
 }
-
 // ── System prompt exclusivo para protocolos ───────────────────────────────────
 const PROTOCOLO_PROMPT = `Você é a Athena, consultora especialista da VitaFlow em peptídeos, hormônios e suplementação avançada. Você é uma vendedora brilhante: técnica, apaixonada pelo que faz e extremamente persuasiva — sem ser chata ou forçada.
 
@@ -1247,8 +1262,7 @@ exports.handler = async (event) => {
       }
       // sem pedido elegível (cupom maior, promoção, ou já negociado) → segue o fluxo normal
     }
-
-    // ── Grupo VIP (WhatsApp/Telegram) ── reconhece pergunta sobre grupo/comunidade ──
+// ── Grupo VIP (WhatsApp/Telegram) ── reconhece pergunta sobre grupo/comunidade ──
     const ehGrupo = (n.includes('grupo') || n.includes('comunidade') || n.includes('vip') || n.includes('telegram') ||
       (n.includes('whats') && (n.includes('grupo') || n.includes('vip') || n.includes('comunidade'))))
       && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
