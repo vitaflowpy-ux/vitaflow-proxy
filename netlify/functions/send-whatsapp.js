@@ -1,6 +1,6 @@
 // netlify/functions/send-whatsapp.js
 const API_KEY = '8c9e69c3-3c9f-4f23-b480-be4a0de29640';
-const BASE = 'https://backend.botconversa.com.br/api/v1';
+const BASE = 'https://backend.botconversa.com.br/api/v1/webhook';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
