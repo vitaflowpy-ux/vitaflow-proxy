@@ -23,7 +23,7 @@ async function dispararIA(phone, mensagem){
   try {
     await fetch(ATHENA_IA_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ phone: phone, mensagem: mensagem })
+      body: JSON.stringify({ phone: phone, mensagem: mensagem, promoContext: contextoPromo() })
     });
   } catch (e) { /* se falhar o disparo, o ack síncrono já foi enviado */ }
 }
@@ -74,6 +74,23 @@ function reais(n) { return Number(n || 0).toLocaleString('pt-BR'); }
 
 // ── PROMO_ANUNCIO: desligado (Namorados encerrado). A promoção atual é a PROMO_PRODUTO (opção 8). ──
 const PROMO_ANUNCIO = { ativa: false };
+
+// Monta o contexto REAL de promoção/desconto pra IA assíncrona (fonte única = este arquivo).
+// A IA só fala de promoção com base no que estiver LIGADO aqui. Nada inventado.
+function contextoPromo(){
+  const linhas = [];
+  linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
+  const rel = promoAtiva();
+  if (rel && rel.produtos && rel.produtos.length) {
+    const its = rel.produtos.map(p => `${p.nome}: de R$ ${reais(p.de)} por R$ ${reais(p.por)}`).join('; ');
+    linhas.push(`PROMOÇÃO RELÂMPAGO ATIVA AGORA: ${rel.titulo} — ${its}. Link: ${rel.link}`);
+  }
+  if (PROMO_PRODUTO.ativa && (PROMO_PRODUTO.produtos || []).length) {
+    linhas.push(`PROMOÇÃO DO MOMENTO ATIVA AGORA: ${PROMO_PRODUTO.titulo} — ${PROMO_PRODUTO.pct}% OFF em ${(PROMO_PRODUTO.produtos || []).join(', ')}${PROMO_PRODUTO.validade ? ' até ' + PROMO_PRODUTO.validade : ''}.`);
+  }
+  if (linhas.length === 1) linhas.push('Não há promoção relâmpago nem lançamento com desconto especial ativos no momento (só o benefício padrão acima). NÃO invente promoções.');
+  return linhas.join('\n');
+}
 
 // Anúncio da promoção do momento (opção 8): mostra o produto, o link do grupo VIP e o link do produto.
 // O desconto NÃO é por fluxo — é aplicado por item no fechamento (ver fecharResumoNormal).
@@ -555,6 +572,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   await dispararIA(sid, nMsg);   // AGUARDA o disparo sair (Background Function responde 202 na hora); sem o await o Lambda congela no return e o POST nunca chega
   return respond('Deixa eu ver isso pra você… 👀');
 }
+
 // ── System prompt exclusivo para protocolos ───────────────────────────────────
 const PROTOCOLO_PROMPT = `Você é a Athena, consultora especialista da VitaFlow em peptídeos, hormônios e suplementação avançada. Você é uma vendedora brilhante: técnica, apaixonada pelo que faz e extremamente persuasiva — sem ser chata ou forçada.
 
@@ -844,17 +862,9 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const frete = session.freteSelecionado || {};
   const totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
 
-  // ── DESCONTO POR ITEM ──
-  // Retatrutida (promo): sempre 10% sobre ela. Demais itens: maior entre 3% Athena e cupom.
-  const itensPromo = carrinho.filter(i => ehProdutoPromo(i));
-  const itensNormais = carrinho.filter(i => !ehProdutoPromo(i));
-  const totalPromo = itensPromo.reduce((s,i)=>s+i.preco*i.qtd,0);
-  const totalNormais = itensNormais.reduce((s,i)=>s+i.preco*i.qtd,0);
-
-  // desconto da promo (10% só na Retatrutida)
-  const descPromoProduto = totalPromo * (PROMO_PRODUTO.pct / 100);
-
-  // nos demais itens: 3% Athena vs cupom (vale o maior) — cupom incide só sobre os itens normais
+  // ── DESCONTO ──
+  // Desconto Athena de 3% em TODO o carrinho vs cupom (vale o maior). Sem promo automática por produto.
+  const totalNormais = totalProd; // o desconto vale para o carrinho inteiro
   const descAthenaNormais = totalNormais * (DESCONTO_ATHENA_PCT / 100);
   let descCupomNormais = 0;
   if (cupomResultado && cupomResultado.ok && totalNormais > 0) {
@@ -896,15 +906,12 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     }
   }
 
-  const descontoReais = descPromoProduto + descNormais;
+  const descontoReais = descNormais;
   const totalComDesconto = totalProd - descontoReais + freteValorFinal;
 
   let linhasDesc = '';
-  if (descPromoProduto > 0) {
-    linhasDesc += `🔥 *Lançamento Retatrutida (-${PROMO_PRODUTO.pct}%)*: -R$ ${descPromoProduto.toFixed(2).replace('.',',')}\n`;
-  }
   if (descNormais > 0) {
-    linhasDesc += `🏷️ ${labelNormais}${itensPromo.length ? ' _(demais itens)_' : ''}: -R$ ${descNormais.toFixed(2).replace('.',',')}\n`;
+    linhasDesc += `🏷️ ${labelNormais}: -R$ ${descNormais.toFixed(2).replace('.',',')}\n`;
   }
   const linhaCupomInfo = (descCupomNormais > 0 && descCupomNormais <= descAthenaNormais)
     ? `\n_(Seu cupom daria R$ ${descCupomNormais.toFixed(2).replace('.',',')} nos demais itens, mas o desconto Athena de 3% é maior e foi aplicado!)_` : '';
@@ -924,7 +931,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const freteParaSalvar = { ...frete, valor: freteValorFinal };
   await saveSession(sid, {
     ...session, state:'CONFIRMAR', freteSelecionado: freteParaSalvar, totalProd,
-    descontoReais, descontoLabel: (descPromoProduto>0?`Lançamento Retatrutida + `:'') + labelNormais,
+    descontoReais, descontoLabel: labelNormais,
     total: totalComDesconto,
     descontoTipo: cupomDocId ? 'cupom' : 'athena', cupomDocId, cupomCodigo
   });
@@ -1262,7 +1269,8 @@ exports.handler = async (event) => {
       }
       // sem pedido elegível (cupom maior, promoção, ou já negociado) → segue o fluxo normal
     }
-// ── Grupo VIP (WhatsApp/Telegram) ── reconhece pergunta sobre grupo/comunidade ──
+
+    // ── Grupo VIP (WhatsApp/Telegram) ── reconhece pergunta sobre grupo/comunidade ──
     const ehGrupo = (n.includes('grupo') || n.includes('comunidade') || n.includes('vip') || n.includes('telegram') ||
       (n.includes('whats') && (n.includes('grupo') || n.includes('vip') || n.includes('comunidade'))))
       && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
@@ -1563,6 +1571,8 @@ exports.handler = async (event) => {
 
     if (state === 'LISTA_PRODUTOS') {
       const lista = session.produtoLista || [];
+      // não começou com número → é dúvida/conversa: manda pra IA em vez de travar
+      if (!/^\d/.test(n.trim())) { await dispararIA(sid, mensagem); return respond('Deixa eu ver isso pra você… 👀'); }
       if (!num || num < 1 || num > lista.length) return respond(`Digite um número entre 1 e ${lista.length}.\n\nOu *menu* para voltar.`);
       const prod = lista[num - 1];
       await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
@@ -1570,6 +1580,8 @@ exports.handler = async (event) => {
     }
 
     if (state === 'QUANTIDADE') {
+      // não começou com número → é dúvida/conversa: manda pra IA em vez de travar em "quantidade válida"
+      if (!/^\d/.test(n.trim())) { await dispararIA(sid, mensagem); return respond('Deixa eu ver isso pra você… 👀'); }
       if (!num || num < 1 || num > 99) return respond('Por favor, informe uma quantidade válida (1 a 99):');
       const prod = session.produtoSelecionado || {};
       const carrinho = session.carrinho || [];
@@ -1596,6 +1608,8 @@ exports.handler = async (event) => {
     if (state === 'REMOVER_ITEM') {
       const carrinho = session.carrinho || [];
       if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio. 🛒\n\n' + buildMenuPrincipal()); }
+      // não começou com número → é dúvida/conversa: manda pra IA em vez de travar
+      if (!/^\d/.test(n.trim())) { await dispararIA(sid, mensagem); return respond('Deixa eu ver isso pra você… 👀'); }
       if (!num || num < 1 || num > carrinho.length) return respond(`Digite um número entre 1 e ${carrinho.length} para remover, ou *menu* para voltar.\n\n${msgRemoverItem(carrinho)}`);
       const removido = carrinho.splice(num - 1, 1)[0];
       if (!carrinho.length) {
@@ -1903,67 +1917,17 @@ exports.handler = async (event) => {
     // PROTOCOLO (única parte com IA)
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'PROTOCOLO') {
-      if (num && num >= 1 && session.listaProtocolo && num <= session.listaProtocolo.length) {
+      // Só NÚMERO PURO (1-2 dígitos) seleciona um produto da lista.
+      // Impede que uma frase com números ("1 sim 2 gordura... 3 irregularmente") vire seleção de produto.
+      if (ehNumeroSimplesMenu && session.listaProtocolo && num >= 1 && num <= session.listaProtocolo.length) {
         const prod = session.listaProtocolo[num - 1];
         await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
         return respond(`Você escolheu:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.',',')}\n\n*Quantas unidades deseja?*\n_(Digite o número)_`);
       }
-
-      const hist = (session.historico || []).slice(-8);
-      hist.push({ role:'user', content: mensagem });
-      try {
-        const r = await fetch('https://api.anthropic.com/v1/messages', {
-          method:'POST',
-          headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-          body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1500, system: PROTOCOLO_PROMPT, messages: hist })
-        });
-        const d = await r.json();
-        if (d.error || !d.content) throw new Error('Claude error');
-        let reply = d.content[0].text || '';
-
-        let msgProdutos = '';
-        const matchProd = reply.match(/---PRODUTOS---([\s\S]*?)---FIM---/);
-        if (matchProd) {
-          const nomeProduto = matchProd[1].trim();
-          reply = reply.replace(/---PRODUTOS---([\s\S]*?)---FIM---/, '').trim();
-
-          const tudo = await buscarTodosCache();
-          const termos = nomeProduto.toLowerCase().split(/[\s\/,+]+/).filter(p => p.length > 2);
-          const linhas = filtrarCache(tudo, termos.slice(0, 2));
-          const unicas = [...new Set(linhas)].slice(0, 10);
-
-          if (unicas.length) {
-            const promo = promoAtiva();
-            const avisoPromo = promo
-              ? `\n🔥 *${promo.titulo}* ativa! Digite *promo* pra ver as ofertas.\n`
-              : '';
-            msgProdutos =
-              `🛒 *Produtos disponíveis — ${nomeProduto.toUpperCase()}:*\n${avisoPromo}\n` +
-              formatarLista(unicas) +
-              `\n\n*Digite o número para comprar ou *menu* para ver todas as categorias.*`;
-
-            await saveSession(sid, {
-              ...session,
-              state: 'PROTOCOLO',
-              historico: hist.concat([{ role:'assistant', content: reply }]),
-              listaProtocolo: parseProdutos(unicas)
-            });
-          } else {
-            msgProdutos = `🛒 Para ver todos os produtos disponíveis, *digite menu*.`;
-            await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist.concat([{ role:'assistant', content: reply }]) });
-          }
-        } else {
-          hist.push({ role:'assistant', content: reply });
-          await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist });
-        }
-
-        return respond(reply, msgProdutos);
-
-      } catch(e) {
-        console.error('PROTOCOLO ERRO:', e.message);
-        await saveSession(sid, { ...session, state:'PROTOCOLO', historico: hist });
-        return respond('Desculpe o delay! 😊 Pode repetir sua pergunta?\n\nOu *menu* para voltar.');
-      }
+      // Qualquer dúvida/protocolo → IA ASSÍNCRONA (inteligente e SEM timeout).
+      // Aposentada a IA síncrona antiga (era ela que dava timeout no galho de Protocolo).
+      await dispararIA(sid, mensagem);
+      return respond('Deixa eu ver isso pra você… 👀');
     }
 
     // Fallback
