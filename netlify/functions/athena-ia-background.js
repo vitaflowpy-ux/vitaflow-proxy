@@ -8,25 +8,23 @@
 // IMPORTANTE: o nome do arquivo TEM que terminar em "-background.js" pra rodar como
 // Netlify Background Function (roda até ~15 min, sem o limite de ~10s do webhook normal).
 //
-// >>> CORRIGE 2 furos achados no log: <
-//   (1) modelo da Claude estava errado (404) -> agora testa uma lista até um funcionar.
-//   (2) URL do BotConversa estava sem "/webhook" (404 HTML) -> base corrigida.
+// >>> CORRIGE os furos achados no log: <
+//   (1) modelo da Claude dava 404 -> agora PERGUNTA à API quais modelos a chave libera (/v1/models) e usa o melhor.
+//   (2) URL do BotConversa estava sem "/webhook" (404 HTML) -> base corrigida. [JÁ RESOLVIDO: envio deu 200]
 
 const BOTCONVERSA_KEY  = '8c9e69c3-3c9f-4f23-b480-be4a0de29640'; // confere com a chave do painel BotConversa
-// CORRIGIDO: a base certa da API do BotConversa tem "/webhook" no fim (fonte: app oficial no Pipedream).
+// A base certa da API do BotConversa tem "/webhook" no fim (fonte: app oficial no Pipedream).
 const BOTCONVERSA_BASE = 'https://backend.botconversa.com.br/api/v1/webhook';
 const FIREBASE_URL     = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const FIREBASE_SECRET  = process.env.FIREBASE_SECRET || '';
 const ANTHROPIC_KEY    = process.env.ANTHROPIC_API_KEY;
 
-// CORRIGIDO: em vez de fixar 1 modelo (que deu 404), testa uma lista em ordem até um responder.
-// Se quiser forçar um modelo, é só criar a env ATHENA_MODEL no Netlify que ele entra na frente.
-const MODELOS = [
-  process.env.ATHENA_MODEL,
+// Fallbacks caso o /v1/models não retorne nada. A env ATHENA_MODEL, se existir, entra na frente.
+const MODELOS_FALLBACK = [
   'claude-3-5-sonnet-20241022',
   'claude-3-5-haiku-20241022',
   'claude-3-haiku-20240307'
-].filter(Boolean);
+];
 
 function fbUrl(path){
   const b = FIREBASE_URL + path;
@@ -118,10 +116,44 @@ COMO CONDUZIR PRA VENDA (natural, sem empurrar):
 
 PRAZOS OFICIAIS (use sempre "prazo estimado"): despacho em até 48h úteis após o pagamento; entrega estimada — Sudeste 2 a 5, Sul 3 a 5, Centro-Oeste 4 a 6, Nordeste 5 a 8, Norte 7 a 10 dias úteis. A Transportadora inclui seguro grátis; Correios (PAC/SEDEX) não têm seguro.`;
 
-// Chama a Claude testando os modelos da lista até um responder 200. Loga cada tentativa.
+// Pergunta pra própria API da Anthropic QUAIS modelos essa chave pode usar (resolve o 404 de vez).
+async function modelosDisponiveis(){
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+      headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' }
+    });
+    const d = await r.json();
+    if (d && Array.isArray(d.data)) {
+      const ids = d.data.map(m => m.id);
+      console.log('[IA] /v1/models status:', r.status, '| DISPONÍVEIS:', ids.join(', ') || '(lista vazia)');
+      return ids;
+    }
+    console.log('[IA] /v1/models status:', r.status, '| resposta:', JSON.stringify(d).slice(0, 300));
+    return [];
+  } catch (e) {
+    console.log('[IA] EXCEÇÃO /v1/models:', e.message);
+    return [];
+  }
+}
+
+// Monta a ordem de preferência: env forçada > Sonnet disponível > Haiku disponível > resto > fallbacks.
+function montarCandidatos(disponiveis){
+  const cand = [];
+  if (process.env.ATHENA_MODEL) cand.push(process.env.ATHENA_MODEL);
+  const sonnets = disponiveis.filter(m => /sonnet/i.test(m));
+  const haikus  = disponiveis.filter(m => /haiku/i.test(m));
+  const resto   = disponiveis.filter(m => !/sonnet/i.test(m) && !/haiku/i.test(m));
+  cand.push(...sonnets, ...haikus, ...resto, ...MODELOS_FALLBACK);
+  return cand.filter((m, i) => m && cand.indexOf(m) === i); // tira duplicados, mantém ordem
+}
+
+// Chama a Claude testando os modelos (na ordem de preferência) até um responder 200.
 async function pensarComClaude(sys, mensagem){
-  for (let i = 0; i < MODELOS.length; i++){
-    const modelo = MODELOS[i];
+  const disponiveis = await modelosDisponiveis();
+  const lista = montarCandidatos(disponiveis);
+  console.log('[IA] ordem de tentativa:', lista.join(', '));
+  for (let i = 0; i < lista.length; i++){
+    const modelo = lista[i];
     try {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
