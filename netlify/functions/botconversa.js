@@ -552,7 +552,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // Não reconheceu como produto → em vez do "não entendi" robótico, deixa a IA responder
   // de forma inteligente e assíncrona (sem timeout). Mantém o contexto/estado atual.
   await saveSession(sid, { ...session, errosSeguidos: (session.errosSeguidos || 0) + 1 });
-  dispararIA(sid, nMsg);   // fire-and-forget: a IA responde em seguida via BotConversa
+  await dispararIA(sid, nMsg);   // AGUARDA o disparo sair (Background Function responde 202 na hora); sem o await o Lambda congela no return e o POST nunca chega
   return respond('Deixa eu ver isso pra você… 👀');
 }
 // ── System prompt exclusivo para protocolos ───────────────────────────────────
