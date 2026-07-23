@@ -8,15 +8,25 @@
 // IMPORTANTE: o nome do arquivo TEM que terminar em "-background.js" pra rodar como
 // Netlify Background Function (roda até ~15 min, sem o limite de ~10s do webhook normal).
 //
-// >>> VERSÃO INSTRUMENTADA: tem console.log em cada passo pra achar onde trava. <
+// >>> CORRIGE 2 furos achados no log: <
+//   (1) modelo da Claude estava errado (404) -> agora testa uma lista até um funcionar.
+//   (2) URL do BotConversa estava sem "/webhook" (404 HTML) -> base corrigida.
 
-const BOTCONVERSA_KEY  = '8c9e69c3-3c9f-4f23-b480-be4a0de29640'; // MESMA chave do send-whatsapp.js (conta atual)
-const BOTCONVERSA_BASE = 'https://backend.botconversa.com.br/api/v1';
+const BOTCONVERSA_KEY  = '8c9e69c3-3c9f-4f23-b480-be4a0de29640'; // confere com a chave do painel BotConversa
+// CORRIGIDO: a base certa da API do BotConversa tem "/webhook" no fim (fonte: app oficial no Pipedream).
+const BOTCONVERSA_BASE = 'https://backend.botconversa.com.br/api/v1/webhook';
 const FIREBASE_URL     = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const FIREBASE_SECRET  = process.env.FIREBASE_SECRET || '';
 const ANTHROPIC_KEY    = process.env.ANTHROPIC_API_KEY;
-// Modelo do cérebro. Sonnet = mais inteligente; troque p/ um Haiku se quiser mais rápido/barato.
-const MODEL            = process.env.ATHENA_MODEL || 'claude-sonnet-4-20250514';
+
+// CORRIGIDO: em vez de fixar 1 modelo (que deu 404), testa uma lista em ordem até um responder.
+// Se quiser forçar um modelo, é só criar a env ATHENA_MODEL no Netlify que ele entra na frente.
+const MODELOS = [
+  process.env.ATHENA_MODEL,
+  'claude-3-5-sonnet-20241022',
+  'claude-3-5-haiku-20241022',
+  'claude-3-haiku-20240307'
+].filter(Boolean);
 
 function fbUrl(path){
   const b = FIREBASE_URL + path;
@@ -60,7 +70,7 @@ async function enviarBotConversa(phone, message){
 
     const r1 = await fetch(`${BOTCONVERSA_BASE}/subscriber/get_by_phone/${phoneNorm}/`, { headers: { 'api-key': BOTCONVERSA_KEY } });
     const t1 = await r1.text();
-    console.log('[IA] get_by_phone status:', r1.status, '| body:', t1.slice(0, 300));
+    console.log('[IA] get_by_phone status:', r1.status, '| body:', t1.slice(0, 200));
     if (r1.ok) { try { subId = (JSON.parse(t1) || {}).id || null; } catch {} }
 
     if (!subId) {
@@ -69,7 +79,7 @@ async function enviarBotConversa(phone, message){
         body: JSON.stringify({ phone: phoneNorm, name: 'Cliente' })
       });
       const t2 = await r2.text();
-      console.log('[IA] criar subscriber status:', r2.status, '| body:', t2.slice(0, 300));
+      console.log('[IA] criar subscriber status:', r2.status, '| body:', t2.slice(0, 200));
       if (r2.ok) { try { subId = (JSON.parse(t2) || {}).id || null; } catch {} }
     }
 
@@ -84,9 +94,9 @@ async function enviarBotConversa(phone, message){
       body: JSON.stringify({ type: 'text', value: message })
     });
     const t3 = await r3.text();
-    console.log('[IA] send_message status:', r3.status, '| body:', t3.slice(0, 300));
+    console.log('[IA] send_message status:', r3.status, '| body:', t3.slice(0, 200));
     if (r3.ok) return { ok:true, etapa:'enviado', status:r3.status, detalhe:'ok' };
-    return { ok:false, etapa:'send_message', status:r3.status, detalhe:t3.slice(0, 300) };
+    return { ok:false, etapa:'send_message', status:r3.status, detalhe:t3.slice(0, 200) };
 
   } catch (e) {
     console.log('[IA] EXCEÇÃO enviarBotConversa:', e.message);
@@ -108,6 +118,29 @@ COMO CONDUZIR PRA VENDA (natural, sem empurrar):
 
 PRAZOS OFICIAIS (use sempre "prazo estimado"): despacho em até 48h úteis após o pagamento; entrega estimada — Sudeste 2 a 5, Sul 3 a 5, Centro-Oeste 4 a 6, Nordeste 5 a 8, Norte 7 a 10 dias úteis. A Transportadora inclui seguro grátis; Correios (PAC/SEDEX) não têm seguro.`;
 
+// Chama a Claude testando os modelos da lista até um responder 200. Loga cada tentativa.
+async function pensarComClaude(sys, mensagem){
+  for (let i = 0; i < MODELOS.length; i++){
+    const modelo = MODELOS[i];
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: modelo, max_tokens: 600, system: sys, messages: [{ role: 'user', content: mensagem }] })
+      });
+      const d = await r.json();
+      const erro = d && d.error ? JSON.stringify(d.error).slice(0,160) : 'nenhum';
+      console.log('[IA] tentativa modelo:', modelo, '-> status', r.status, '| erro:', erro);
+      if (r.status === 200 && d && d.content && d.content[0] && d.content[0].text) {
+        return { texto: d.content[0].text.trim(), modelo: modelo };
+      }
+    } catch (e) {
+      console.log('[IA] EXCEÇÃO modelo', modelo, ':', e.message);
+    }
+  }
+  return { texto: '', modelo: '' };
+}
+
 exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || '{}');
@@ -120,17 +153,9 @@ exports.handler = async (event) => {
     console.log('[IA] catalogo len:', catalogo.length, '| ANTHROPIC_KEY presente:', !!ANTHROPIC_KEY);
     const sys = SYSTEM + `\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n${catalogo}`;
 
-    let reply = '';
-    try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: MODEL, max_tokens: 600, system: sys, messages: [{ role: 'user', content: mensagem }] })
-      });
-      const d = await r.json();
-      console.log('[IA] Claude http status:', r.status, '| tem content:', !!(d && d.content), '| erro:', d && d.error ? JSON.stringify(d.error).slice(0,200) : 'nenhum');
-      reply = (d && d.content && d.content[0] && d.content[0].text) ? d.content[0].text.trim() : '';
-    } catch (e) { console.log('[IA] EXCEÇÃO Claude:', e.message); reply = ''; }
+    const pensado = await pensarComClaude(sys, mensagem);
+    let reply = pensado.texto;
+    console.log('[IA] modelo que funcionou:', pensado.modelo || 'NENHUM');
 
     if (!reply) {
       console.log('[IA] reply vazio -> usando texto reserva (Claude não respondeu).');
