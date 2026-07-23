@@ -7,6 +7,8 @@
 //
 // IMPORTANTE: o nome do arquivo TEM que terminar em "-background.js" pra rodar como
 // Netlify Background Function (roda até ~15 min, sem o limite de ~10s do webhook normal).
+//
+// >>> VERSÃO INSTRUMENTADA: tem console.log em cada passo pra achar onde trava. <
 
 const BOTCONVERSA_KEY  = '8c9e69c3-3c9f-4f23-b480-be4a0de29640'; // MESMA chave do send-whatsapp.js (conta atual)
 const BOTCONVERSA_BASE = 'https://backend.botconversa.com.br/api/v1';
@@ -49,26 +51,47 @@ function normalizarPhone(raw){
 }
 
 // Empurra a mensagem pro cliente pela API do BotConversa (mesmo padrão do send-whatsapp.js).
+// Retorna { ok, etapa, status, detalhe } pra gente saber EXATAMENTE onde travou.
 async function enviarBotConversa(phone, message){
+  const phoneNorm = normalizarPhone(phone);
+  console.log('[IA] enviarBotConversa -> phone bruto:', phone, '| normalizado:', phoneNorm);
   try {
-    const phoneNorm = normalizarPhone(phone);
     let subId = null;
+
     const r1 = await fetch(`${BOTCONVERSA_BASE}/subscriber/get_by_phone/${phoneNorm}/`, { headers: { 'api-key': BOTCONVERSA_KEY } });
-    if (r1.ok) { const s = await r1.json(); subId = (s && s.id) || null; }
+    const t1 = await r1.text();
+    console.log('[IA] get_by_phone status:', r1.status, '| body:', t1.slice(0, 300));
+    if (r1.ok) { try { subId = (JSON.parse(t1) || {}).id || null; } catch {} }
+
     if (!subId) {
       const r2 = await fetch(`${BOTCONVERSA_BASE}/subscriber/`, {
         method: 'POST', headers: { 'api-key': BOTCONVERSA_KEY, 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: phoneNorm, name: 'Cliente' })
       });
-      if (r2.ok) { try { subId = (await r2.json()).id || null; } catch {} }
+      const t2 = await r2.text();
+      console.log('[IA] criar subscriber status:', r2.status, '| body:', t2.slice(0, 300));
+      if (r2.ok) { try { subId = (JSON.parse(t2) || {}).id || null; } catch {} }
     }
-    if (!subId) return false;
+
+    if (!subId) {
+      console.log('[IA] FALHOU: sem subscriberId (não achou e não criou contato).');
+      return { ok:false, etapa:'lookup', status:0, detalhe:'sem subscriberId' };
+    }
+    console.log('[IA] subscriberId:', subId);
+
     const r3 = await fetch(`${BOTCONVERSA_BASE}/subscriber/${subId}/send_message/`, {
       method: 'POST', headers: { 'api-key': BOTCONVERSA_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'text', value: message })
     });
-    return r3.ok;
-  } catch { return false; }
+    const t3 = await r3.text();
+    console.log('[IA] send_message status:', r3.status, '| body:', t3.slice(0, 300));
+    if (r3.ok) return { ok:true, etapa:'enviado', status:r3.status, detalhe:'ok' };
+    return { ok:false, etapa:'send_message', status:r3.status, detalhe:t3.slice(0, 300) };
+
+  } catch (e) {
+    console.log('[IA] EXCEÇÃO enviarBotConversa:', e.message);
+    return { ok:false, etapa:'excecao', status:0, detalhe:e.message };
+  }
 }
 
 const SYSTEM = `Você é a Athena, consultora virtual da VitaFlow — loja de peptídeos, hormônios, emagrecedores, GH e performance, com entrega para todo o Brasil. Fala português do Brasil, tom caloroso, humano e direto — NADA robótico. Você responde qualquer pergunta do cliente da melhor forma possível, como uma vendedora experiente, simpática e persuasiva (sem forçar).
@@ -90,9 +113,11 @@ exports.handler = async (event) => {
     const body = JSON.parse(event.body || '{}');
     const phone = body.phone;
     const mensagem = (body.mensagem || '').toString().trim();
-    if (!phone || !mensagem) return { statusCode: 200, body: 'no-op' };
+    console.log('[IA] START | phone:', phone, '| mensagem:', mensagem);
+    if (!phone || !mensagem) { console.log('[IA] no-op: faltou phone ou mensagem'); return { statusCode: 200, body: 'no-op' }; }
 
     const catalogo = await catalogoResumo();
+    console.log('[IA] catalogo len:', catalogo.length, '| ANTHROPIC_KEY presente:', !!ANTHROPIC_KEY);
     const sys = SYSTEM + `\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n${catalogo}`;
 
     let reply = '';
@@ -103,16 +128,22 @@ exports.handler = async (event) => {
         body: JSON.stringify({ model: MODEL, max_tokens: 600, system: sys, messages: [{ role: 'user', content: mensagem }] })
       });
       const d = await r.json();
+      console.log('[IA] Claude http status:', r.status, '| tem content:', !!(d && d.content), '| erro:', d && d.error ? JSON.stringify(d.error).slice(0,200) : 'nenhum');
       reply = (d && d.content && d.content[0] && d.content[0].text) ? d.content[0].text.trim() : '';
-    } catch (e) { reply = ''; }
+    } catch (e) { console.log('[IA] EXCEÇÃO Claude:', e.message); reply = ''; }
 
     if (!reply) {
+      console.log('[IA] reply vazio -> usando texto reserva (Claude não respondeu).');
       reply = 'Deixa eu te ajudar melhor! 😊 Me diz o *nome do produto* que você procura (ex.: *retatrutida*, *bpc-157*, *stanozolol*) ou digite *menu* pra ver as categorias.';
+    } else {
+      console.log('[IA] reply da Claude OK (', reply.length, 'chars ):', reply.slice(0, 120));
     }
 
-    await enviarBotConversa(phone, reply);
+    const envio = await enviarBotConversa(phone, reply);
+    console.log('[IA] RESULTADO ENVIO:', JSON.stringify(envio));
     return { statusCode: 200, body: 'ok' };
   } catch (e) {
+    console.log('[IA] EXCEÇÃO handler:', e.message);
     return { statusCode: 200, body: 'err:' + e.message };
   }
 };
