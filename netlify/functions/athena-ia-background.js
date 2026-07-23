@@ -8,12 +8,12 @@
 // IMPORTANTE: o nome do arquivo TEM que terminar em "-background.js" pra rodar como
 // Netlify Background Function (roda até ~15 min, sem o limite de ~10s do webhook normal).
 //
-// >>> CORRIGE os furos achados no log: <
-//   (1) modelo da Claude dava 404 -> agora PERGUNTA à API quais modelos a chave libera (/v1/models) e usa o melhor.
-//   (2) URL do BotConversa estava sem "/webhook" (404 HTML) -> base corrigida. [JÁ RESOLVIDO: envio deu 200]
+// >>> CORRIGE 2 furos achados no log: <
+//   (1) modelo da Claude estava errado (404) -> agora testa uma lista até um funcionar.
+//   (2) URL do BotConversa estava sem "/webhook" (404 HTML) -> base corrigida.
 
 const BOTCONVERSA_KEY  = '8c9e69c3-3c9f-4f23-b480-be4a0de29640'; // confere com a chave do painel BotConversa
-// A base certa da API do BotConversa tem "/webhook" no fim (fonte: app oficial no Pipedream).
+// CORRIGIDO: a base certa da API do BotConversa tem "/webhook" no fim (fonte: app oficial no Pipedream).
 const BOTCONVERSA_BASE = 'https://backend.botconversa.com.br/api/v1/webhook';
 const FIREBASE_URL     = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const FIREBASE_SECRET  = process.env.FIREBASE_SECRET || '';
@@ -178,12 +178,16 @@ exports.handler = async (event) => {
     const body = JSON.parse(event.body || '{}');
     const phone = body.phone;
     const mensagem = (body.mensagem || '').toString().trim();
+    const promoContext = (body.promoContext || '').toString().trim(); // regras REAIS de promoção/desconto (vêm do botconversa.js)
     console.log('[IA] START | phone:', phone, '| mensagem:', mensagem);
     if (!phone || !mensagem) { console.log('[IA] no-op: faltou phone ou mensagem'); return { statusCode: 200, body: 'no-op' }; }
 
     const catalogo = await catalogoResumo();
-    console.log('[IA] catalogo len:', catalogo.length, '| ANTHROPIC_KEY presente:', !!ANTHROPIC_KEY);
-    const sys = SYSTEM + `\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n${catalogo}`;
+    console.log('[IA] catalogo len:', catalogo.length, '| promoContext:', promoContext ? 'sim' : 'nao', '| ANTHROPIC_KEY presente:', !!ANTHROPIC_KEY);
+    let sys = SYSTEM + `\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n${catalogo}`;
+    if (promoContext) {
+      sys += `\n\n=== PROMOÇÕES E DESCONTOS (regras REAIS de hoje — use SOMENTE isto, NÃO invente promoção) ===\n${promoContext}`;
+    }
 
     const pensado = await pensarComClaude(sys, mensagem);
     let reply = pensado.texto;
