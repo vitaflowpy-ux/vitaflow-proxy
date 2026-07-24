@@ -352,9 +352,8 @@ const MENU_HORMONIOS = `*💉 HORMÔNIOS*
 12. Hemogenin (Anadrol)
 13. HCG
 14. Anastrozol / Proviron
-15. Clembuterol / T3
-16. CutStack
-17. Outros hormônios
+15. CutStack
+16. Outros hormônios
 
 _Digite o número, o *nome do produto* ou *menu* para voltar_`;
 
@@ -454,7 +453,7 @@ const DICT_PRODUTOS = [
   { label:'Primobolan', tipo:'lista', colecao:'hormonios', filtro:['primobolan','metenolona'], canonico:['primobolan','metenolona'], apelidos:['primo'] },
   { label:'Hemogenin (Anadrol)', tipo:'lista', colecao:'hormonios', filtro:['hemogenin','oximetolona'], canonico:['hemogenin','anadrol','oximetolona'], apelidos:['hemo'] },
   { label:'Dianabol', tipo:'lista', colecao:'hormonios', filtro:['dianabol','metandienona'], canonico:['dianabol','metandienona','bombadrol'], apelidos:['dbol','diana'] },
-  { label:'Clembuterol', tipo:'lista', colecao:'hormonios', filtro:['clembuterol'], canonico:['clembuterol'], apelidos:['clen','clembu'] },
+  { label:'Clembuterol', tipo:'lista', colecao:'outros', filtro:['clembuterol'], canonico:['clembuterol','clenbuterol'], apelidos:['clen','clembu','clenbu'] },
   { label:'HCG', tipo:'lista', colecao:'hormonios', filtro:['hcg'], canonico:['hcg'], apelidos:[] },
   { label:'Anastrozol / Proviron', tipo:'lista', colecao:'hormonios', filtro:['anastrozol','proviron'], canonico:['anastrozol','proviron','arimidex'], apelidos:[] },
   { label:'CutStack', tipo:'lista', colecao:'hormonios', filtro:['cutstack'], canonico:['cutstack','cut stack'], apelidos:[] },
@@ -684,6 +683,12 @@ async function resolverReconhecido(session, sid, e, respond, marca) {
     linhas = dados.split('\n').filter(Boolean);
   } else {
     linhas = filtrarCache(dados, e.filtro);
+    // FALLBACK GLOBAL: não achou na coleção esperada? Procura em TODAS antes de dizer que
+    // não tem (produto pode estar catalogado noutra coleção — ex.: Clembuterol/T3 em "outros").
+    if (!linhas.length) {
+      const tudo = await buscarTodosCache();
+      linhas = filtrarCache(tudo, e.filtro);
+    }
   }
   let unicas = [...new Set(linhas)];
   if (!unicas.length) {
@@ -808,9 +813,21 @@ function emojis(i) {
   const e = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
   return i < 10 ? e[i] : `${i+1}.`;
 }
+// Preço numérico de uma linha "nome|preco" (BR: "2.249,00" -> 2249). Sem preço vai pro FIM.
+function precoDaLinha(l) {
+  const p = String(l).split('|')[1];
+  if (!p) return Infinity;
+  const n = parseFloat(p.trim().replace(/\./g,'').replace(',','.'));
+  return isNaN(n) ? Infinity : n;
+}
+// Ordena as linhas do MENOR pro MAIOR preço. Usado por formatarLista E parseProdutos com o
+// MESMO critério (sort estável) — assim o número mostrado bate sempre com o produto escolhido.
+function ordenarPorPreco(linhas) {
+  return (linhas || []).slice().sort((a, b) => precoDaLinha(a) - precoDaLinha(b));
+}
 function formatarLista(linhas) {
   const SEP = '\n┈┈┈┈┈┈┈┈┈┈\n';
-  return linhas.map((l, i) => {
+  return ordenarPorPreco(linhas).map((l, i) => {
     const [nome, preco] = l.split('|');
     return preco ? `${emojis(i)} *${nome.trim()}* — R$ ${preco.trim()}` : `${emojis(i)} *${nome.trim()}*`;
   }).join(SEP);
@@ -833,7 +850,7 @@ function partirMensagem(txt, maxLen) {
   return partes;
 }
 function parseProdutos(linhas) {
-  return linhas.map(l => {
+  return ordenarPorPreco(linhas).map(l => {
     const [nome, preco] = l.split('|');
     const precoNum = preco ? parseFloat(preco.replace(/\./g,'').replace(',','.')) : 0;
     return { nome: nome.trim(), preco: precoNum };
@@ -1268,6 +1285,19 @@ async function buscarTodosCache() {
   const cols = ['peptideos','hormonios','gh','emagrecedores','outros','10-mais-vendidos'];
   const resultados = await Promise.all(cols.map(c => buscarCache(c)));
   return resultados.join('\n');
+}
+// BUSCA COM FALLBACK GLOBAL: procura os termos na coleção indicada; se não achar NADA
+// (produto catalogado em outra coleção — comum entre os ~800 itens: ex. Clembuterol/T3 ficam
+// em "outros", não em "hormonios"), procura em TODAS as coleções antes de considerar
+// "indisponível". Evita que um produto "suma" só por estar numa coleção diferente da esperada.
+async function buscarFiltradoGlobal(colecao, termos) {
+  const dados = await buscarCache(colecao);
+  let linhas = filtrarCache(dados, termos);
+  if (!linhas.length) {
+    const tudo = await buscarTodosCache();
+    linhas = filtrarCache(tudo, termos);
+  }
+  return linhas;
 }
 async function enviarTelegram(texto) {
   try {
@@ -1835,6 +1865,7 @@ exports.handler = async (event) => {
       else if (num === 4) { filtro=['propionato','suspensao','undecanoato','nebido']; label='OUTRAS TESTOSTERONAS'; }
       else return await tratarTextoLivre(session, sid, n, MENU_TESTO, respond);
       let linhas = filtrarCache(dados, filtro);
+      if (!linhas.length) linhas = filtrarCache(await buscarTodosCache(), filtro);
       if (excluir.length) linhas = linhas.filter(l => { const nl = norm(l); return !excluir.some(x => nl.includes(x)); });
       const unicas = [...new Set(linhas)];
       if (!unicas.length) return respond(`Nenhum *${label}* disponível no momento. 😕\n\n${MENU_TESTO}`);
@@ -1848,7 +1879,8 @@ exports.handler = async (event) => {
       const base = baseMapNum[num];
       if (!base) return await tratarTextoLivre(session, sid, n, `*${(ester||'').toUpperCase()} de quê?*\n\n${MENU_BASE_ESTER}`, respond);
       const dados = await buscarCache('hormonios');
-      const unicas = filtrarEster(dados, ester, base);
+      let unicas = filtrarEster(dados, ester, base);
+      if (!unicas.length) unicas = filtrarEster(await buscarTodosCache(), ester, base);
       const baseLabel = base.charAt(0).toUpperCase() + base.slice(1);
       if (!unicas.length) return respond(`Não encontrei *${ester} de ${baseLabel}* disponível no momento. 😕\n\nQuer tentar outra base?\n\n${MENU_BASE_ESTER}`);
       await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), pendenteEster:null, errosSeguidos:0 });
@@ -1864,8 +1896,7 @@ exports.handler = async (event) => {
         14: ['nad'], 15: ['tesamorelin'],
       };
       if (mapa[num]) {
-        const dados = await buscarCache('peptideos');
-        const linhas = filtrarCache(dados, mapa[num]);
+        const linhas = await buscarFiltradoGlobal('peptideos', mapa[num]);
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_PEPTIDEOS}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*${mapa[num][0].toUpperCase()}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
@@ -1897,19 +1928,17 @@ exports.handler = async (event) => {
         12: { termos:['hemogenin','oximetolona'],  label:'HEMOGENIN (ANADROL)' },
         13: { termos:['hcg'],                      label:'HCG' },
         14: { termos:['anastrozol','proviron'],    label:'ANASTROZOL / PROVIRON' },
-        15: { termos:['clembuterol','t3'],         label:'CLEMBUTEROL / T3' },
-        16: { termos:['cutstack'],                 label:'CUTSTACK' },
+        15: { termos:['cutstack'],                 label:'CUTSTACK' },
       };
       if (mapa[num]) {
         const { termos, label } = mapa[num];
-        const dados = await buscarCache('hormonios');
-        let linhas = filtrarCache(dados, termos);
+        let linhas = await buscarFiltradoGlobal('hormonios', termos);
         if (num === 2) linhas = linhas.filter(l => !norm(l).includes('enantato'));
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_HORMONIOS}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*${label}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
-      if (num === 17) {
+      if (num === 16) {
         const dados = await buscarCache('hormonios');
         const todosTermos = Object.values(mapa).flatMap(m => m.termos);
         const linhas = dados.split('\n').filter(Boolean).filter(l => { const nProd = norm(l.split('|')[0]); return !todosTermos.some(t => nProd.includes(norm(t))); });
