@@ -1077,6 +1077,25 @@ async function deleteSession(sid) {
     await fetch(fbUrl(`/vitaflow_sessions/${k}.json`), { method:'DELETE' });
   } catch {}
 }
+// ── FLAG DURÁVEL PÓS-PAGAMENTO ────────────────────────────────────────────────
+// Gravada pelo GAS quando a InfinitePay confirma o pagamento. Garante que a próxima
+// mensagem do cliente (os dados de envio) caia SEMPRE na COLETA e gere o RECIBO,
+// mesmo que a sessão tenha sido resetada/derivada — e impede que um link de pagamento
+// seja reenviado no lugar dos textos pós-venda.
+async function lerAguardandoDados(sid) {
+  try {
+    const k = sid.replace(/[^a-zA-Z0-9]/g,'_');
+    const r = await fetch(fbUrl(`/vitaflow_aguardando_dados/${k}.json`));
+    const d = await r.json();
+    return d || null;
+  } catch { return null; }
+}
+async function deleteAguardandoDados(sid) {
+  try {
+    const k = sid.replace(/[^a-zA-Z0-9]/g,'_');
+    await fetch(fbUrl(`/vitaflow_aguardando_dados/${k}.json`), { method:'DELETE' });
+  } catch {}
+}
 
 // ── ENTREGA 4: Negociação ─────────────────────────────────────────────────────
 const NEGOCIACAO_PCT_TOTAL = 5; // teto total (3% Athena + 2% extra). Nunca sobre valor já descontado.
@@ -1509,6 +1528,28 @@ exports.handler = async (event) => {
     if (body.type || body.mediaUrl || body.media_url || body.url || body.fileUrl) console.log('MIDIA DETECTADA:', JSON.stringify(body));
 
     const session = await getSession(sid);
+
+    // ── FLAG DURÁVEL PÓS-PAGAMENTO (independe do estado da sessão) ─────────────
+    // Se a InfinitePay confirmou o pagamento, o GAS gravou vitaflow_aguardando_dados/{fone}.
+    // Aqui FORÇAMOS a COLETA_DADOS a partir da flag: assim os dados de envio SEMPRE geram o
+    // recibo/textos pós-venda, mesmo que a sessão tenha derivado — e NUNCA reenvia link.
+    try {
+      const _aguardDados = await lerAguardandoDados(sid);
+      const _flagOk = _aguardDados && (!_aguardDados.ts || (Date.now() - _aguardDados.ts) < 604800000); // 7 dias
+      if (_flagOk && (session.state || 'MENU') !== 'COLETA_DADOS') {
+        session.state = 'COLETA_DADOS';
+        session.coleta = session.coleta || {};
+        session.orderNsu = session.orderNsu || _aguardDados.order_nsu;
+        session.carrinho = (session.carrinho && session.carrinho.length) ? session.carrinho : (_aguardDados.carrinho || []);
+        session.freteSelecionado = session.freteSelecionado || _aguardDados.freteSelecionado || {};
+        session.estadoCliente = session.estadoCliente || _aguardDados.estadoCliente || '';
+        if (typeof session.total !== 'number') session.total = _aguardDados.total || 0;
+        session.descontoReais = session.descontoReais || _aguardDados.descontoReais || 0;
+        session.cupomDocId = session.cupomDocId || _aguardDados.cupomDocId || null;
+        try { await saveSession(sid, session); } catch (e) {}
+      }
+    } catch (e) {}
+
     const state = session.state || 'MENU';
 
     // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
@@ -2070,6 +2111,24 @@ exports.handler = async (event) => {
           await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE' });
           return respond(`💳 *Seu link de pagamento* (pedido *${session.orderNsu}*):\n${session.linkPagamento}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊`);
         }
+        // TRAVA ANTI-LINK-DUPLICADO (independe da sessão): o pedido pendente é gravado por
+        // TELEFONE (pending_{fone}). Se JÁ existe um pendente com nsu+link recentes, REENVIA o
+        // MESMO — NUNCA gera um 2º nsu. Isto mata o retry do BotConversa que criava 2 links (e,
+        // por consequência, o descasamento de nsu que impedia o recibo de sair).
+        try {
+          const _pend = await lerPending(sid);
+          if (_pend && _pend.order_nsu && _pend.link && _pend.ts && (Date.now() - _pend.ts) < 1800000) {
+            await saveSession(sid, {
+              ...session, state:'AGUARDAR_COMPROVANTE',
+              orderNsu: _pend.order_nsu, linkPagamento: _pend.link,
+              total: (typeof _pend.total === 'number') ? _pend.total : session.total,
+              carrinho: (_pend.carrinho && _pend.carrinho.length) ? _pend.carrinho : session.carrinho,
+              freteSelecionado: _pend.freteSelecionado || session.freteSelecionado,
+              estadoCliente: _pend.estadoCliente || session.estadoCliente
+            });
+            return respond(`💳 *Seu link de pagamento* (pedido *${_pend.order_nsu}*):\n${_pend.link}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊`);
+          }
+        } catch (e) {}
         const frete = session.freteSelecionado || {};
         const uf    = session.estadoCliente || '';
         const descontoReais = session.descontoReais || 0;
@@ -2308,6 +2367,7 @@ exports.handler = async (event) => {
       // produtos comprados (a IA gera). Fire-and-forget — não trava a resposta do recibo.
       try { await dispararIAProtocolo(sid, (carrinho || []).map(function(i){ return i.nome; })); } catch (e) {}
 
+      await deleteAguardandoDados(sid);
       await deleteSession(sid);
       return respond(msg1, msg2);
     }
