@@ -547,7 +547,8 @@ function ehCPFsolto(msg) {
   return resto.length <= 4; // tolera "cpf" antes do número
 }
 function ehIntencaoRastreio(nMsg, msgOriginal) {
-  const palavras = ['rastrear','rastreamento','rastreio','cade meu pedido','cadê meu pedido','meu pedido','onde esta meu pedido','onde está meu pedido','status do pedido','status do meu pedido','acompanhar pedido','codigo de rastreio'];
+  const palavras = ['rastrear','rastreamento','rastreio','cade meu pedido','cadê meu pedido','meu pedido','onde esta meu pedido','onde está meu pedido','status do pedido','status do meu pedido','acompanhar pedido','codigo de rastreio',
+    'atrasou','atrasado','atraso','demorou','demorando','ta demorando','esta demorando','nao chegou','ainda nao chegou','nao recebi','cade meu produto','onde esta minha encomenda'];
   if (palavras.some(p => nMsg.includes(norm(p)))) return true;
   if (ehNumeroPedido(msgOriginal)) return true;
   if (ehCPFsolto(msgOriginal)) return true;
@@ -561,9 +562,9 @@ async function fazerRastreio(termo, respond) {
     return respond(`🔍 Não encontrei nenhum pedido com *esse dado*.\n\nConfere o *número do pedido*, *CPF* ou *e-mail* da compra e me manda de novo. 😊\n\n📞 Se preferir, fale com a logística: 👉 wa.me/447537155718\n_Ou digite *menu* para voltar._`);
   }
   if (pedidos.length === 1) {
-    return respond(statusBloco(pedidos[0].pedido, pedidos[0].status) + RASTREIO_RODAPE);
+    return respond(statusBloco(pedidos[0]) + RASTREIO_RODAPE);
   }
-  const blocos = pedidos.map(p => statusBloco(p.pedido, p.status)).join('\n\n');
+  const blocos = pedidos.map(p => statusBloco(p)).join('\n\n\n');
   return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
 }
 
@@ -829,11 +830,106 @@ const STATUS_INFO = {
   'reembolso realizado':               { emoji:'💸',  exp:'O reembolso do pedido foi efetuado.' },
   'pedido cancelado':                  { emoji:'❌',  exp:'O pedido foi cancelado.' },
 };
-function statusBloco(pedido, statusTexto) {
+// ── PREVISÃO DE ENTREGA (dias úteis a partir da data de confirmação) ──────────
+// Se mudar a política, ajuste só estes números. Prazo total = despacho + entrega da região.
+const PRAZO_DESPACHO_DU = 2; // dias úteis pra postar (até 48h úteis)
+const PRAZO_REGIAO_DU = { SE: 5, S: 5, CO: 6, NE: 8, N: 10 }; // entrega máx por região (dias úteis)
+const UF_REGIAO = {
+  SP:'SE', RJ:'SE', MG:'SE', ES:'SE',
+  PR:'S', SC:'S', RS:'S',
+  GO:'CO', MT:'CO', MS:'CO', DF:'CO',
+  BA:'NE', SE:'NE', AL:'NE', PE:'NE', PB:'NE', RN:'NE', CE:'NE', PI:'NE', MA:'NE',
+  AC:'N', AM:'N', RR:'N', RO:'N', AP:'N', PA:'N', TO:'N'
+};
+function _parseDataBR(s) {
+  const m = String(s || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return null;
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  return isNaN(d.getTime()) ? null : d;
+}
+// Páscoa (Meeus/Jones/Butcher) — base dos feriados móveis.
+function _pascoa(ano) {
+  const a = ano % 19, b = Math.floor(ano / 100), c = ano % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31);
+  const dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(ano, mes - 1, dia);
+}
+const _feriadosCache = {};
+function _feriadosAno(ano) {
+  const set = {};
+  const chave = function (dt) { return ('0' + dt.getDate()).slice(-2) + '/' + ('0' + (dt.getMonth() + 1)).slice(-2); };
+  const add = function (dt) { set[chave(dt)] = 1; };
+  // Fixos nacionais (inclui Consciência Negra 20/11, nacional desde 2024)
+  [[1, 1], [21, 4], [1, 5], [7, 9], [12, 10], [2, 11], [15, 11], [20, 11], [25, 12]].forEach(function (x) { add(new Date(ano, x[1] - 1, x[0])); });
+  // Móveis (baseados na Páscoa)
+  const p = _pascoa(ano);
+  const desl = function (n) { const x = new Date(p.getTime()); x.setDate(x.getDate() + n); return x; };
+  add(desl(-48)); // Carnaval (segunda)
+  add(desl(-47)); // Carnaval (terça)
+  add(desl(-2));  // Sexta-feira Santa
+  add(desl(60));  // Corpus Christi
+  return set;
+}
+function _ehFeriado(dt) {
+  const ano = dt.getFullYear();
+  if (!_feriadosCache[ano]) _feriadosCache[ano] = _feriadosAno(ano);
+  const c = ('0' + dt.getDate()).slice(-2) + '/' + ('0' + (dt.getMonth() + 1)).slice(-2);
+  return !!_feriadosCache[ano][c];
+}
+function _addDiasUteis(dt, n) {
+  const d = new Date(dt.getTime());
+  let add = 0;
+  while (add < n) {
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay(); // 0=domingo, 6=sábado
+    if (dow !== 0 && dow !== 6 && !_ehFeriado(d)) add++;
+  }
+  return d;
+}
+function _ddmm(d) { return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2); }
+// Previsão de entrega a partir da data de confirmação + região. dentroPrazo = hoje <= data-limite.
+function calcularPrazo(dataConf, estado) {
+  const base = _parseDataBR(dataConf);
+  const reg = UF_REGIAO[String(estado || '').toUpperCase()];
+  if (!base || !reg) return null;
+  const totalDU = PRAZO_DESPACHO_DU + (PRAZO_REGIAO_DU[reg] || 8);
+  const deadline = _addDiasUteis(base, totalDU);
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  return { dataLimite: _ddmm(deadline), dentroPrazo: hoje.getTime() <= deadline.getTime() };
+}
+function statusBloco(p) {
+  const pedido = (p && p.pedido) || '—';
+  const statusTexto = (p && p.status) || '';
   const info = STATUS_INFO[norm(statusTexto)];
   const emoji = info ? info.emoji : '📦';
   const exp = info ? `\n_${info.exp}_` : '';
-  return `📦 *Pedido ${pedido}*\n${emoji} *${statusTexto || '—'}*${exp}`;
+  let bloco = `📦 *Pedido ${pedido}*\n${emoji} *${statusTexto || '—'}*${exp}`;
+  // PREVISÃO DE ENTREGA + "está no prazo" (não mostra se já foi entregue).
+  const _nst = norm(statusTexto);
+  if (_nst.indexOf('entregue') < 0 && p && p.data && p.estado) {
+    const prz = calcularPrazo(p.data, p.estado);
+    if (prz) {
+      bloco += prz.dentroPrazo
+        ? `\n\n📅 *Previsão de entrega:* até *${prz.dataLimite}*\n\n✅ Seu pedido está *dentro do prazo* estimado — é só aguardar que está tudo certo! 😊`
+        : `\n\n📅 *Prazo estimado:* era até *${prz.dataLimite}*.\n\nSe ainda não chegou, me avisa que eu *aciono a logística* pra verificar pra você. 🙏`;
+    }
+  }
+  // Código oficial da transportadora — o GAS só devolve quando o pacote já está em ROTA REAL
+  // (em transferência, chegou à unidade, saiu para entrega, entregue), igual ao site.
+  if (p && p.codigo) {
+    const transp = p.transportadora ? ` — ${p.transportadora}` : '';
+    bloco += `\n\n🔎 *Código de rastreio${transp}:*\n${p.codigo}`;
+    if (p.link_transp) {
+      bloco += `\n\n📲 *Rastreie direto no site da transportadora:*\n${p.link_transp}`;
+    }
+  }
+  return bloco;
 }
 const RASTREIO_RODAPE =
   `\n\n_Quer consultar outro? É só mandar o número do pedido, CPF ou e-mail._\n` +
@@ -1561,9 +1657,9 @@ exports.handler = async (event) => {
         return respond(`🔍 Não encontrei nenhum pedido com *esse dado*.\n\nConfere se digitou certo o *número do pedido*, *CPF* ou *e-mail* da compra e me manda de novo. 😊\n\n📞 Se preferir, fale com a logística: 👉 wa.me/447537155718\n_Ou digite *menu* para voltar._`);
       }
       if (pedidos.length === 1) {
-        return respond(statusBloco(pedidos[0].pedido, pedidos[0].status) + RASTREIO_RODAPE);
+        return respond(statusBloco(pedidos[0]) + RASTREIO_RODAPE);
       }
-      const blocos = pedidos.map(p => statusBloco(p.pedido, p.status)).join('\n\n');
+      const blocos = pedidos.map(p => statusBloco(p)).join('\n\n\n');
       return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
     }
 
