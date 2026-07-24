@@ -32,13 +32,21 @@ const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.h
 // (background function) e ela RESPONDE sozinha via BotConversa. Aqui só disparamos
 // (retorna rápido, sem timeout); a resposta chega em seguida como mensagem empurrada.
 const ATHENA_IA_URL = process.env.ATHENA_IA_URL || 'https://vitaflow-proxy.netlify.app/.netlify/functions/athena-ia-background';
-async function dispararIA(phone, mensagem){
+async function dispararIA(phone, mensagem, contexto){
   try {
     await fetch(ATHENA_IA_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ phone: phone, mensagem: mensagem, promoContext: contextoPromo() })
+      body: JSON.stringify({ phone: phone, mensagem: mensagem, promoContext: contextoPromo(), contexto: contexto || '' })
     });
   } catch (e) { /* se falhar o disparo, o ack síncrono já foi enviado */ }
+}
+// Contexto do que o cliente está vendo AGORA (lista aberta) — pra IA não responder de assunto antigo.
+function contextoLista(session){
+  const lista = (session && session.produtoLista) || [];
+  if (!lista.length) return '';
+  const nomes = lista.slice(0, 10).map(p => p && p.nome).filter(Boolean).join('; ');
+  if (!nomes) return '';
+  return 'O cliente está vendo AGORA esta lista de produtos (responda no contexto DELA, ignore assuntos/produtos de mensagens antigas): ' + nomes;
 }
 
 // Dispara a IA pra montar e ENVIAR o PROTOCOLO COMPLETO pós-venda dos produtos comprados.
@@ -517,6 +525,52 @@ function ehPedidoStack(nMsg) {
   return contemConectorStack(nMsg) && reconhecerVarios(nMsg).length >= 2;
 }
 
+// ── "O MAIS BARATO / MAIS EM CONTA" (ou o mais caro/premium) da lista atual ────
+// Detecta pedido de superlativo por PREÇO. Retorna 'barato', 'caro' ou null.
+function ehPedidoSuperlativo(nMsg) {
+  const t = ' ' + (nMsg || '') + ' ';
+  // barato / mais em conta / menor preço / melhor preço / melhor custo-benefício / econômico / acessível
+  if (/barat|em conta|menor preco|menor valor|preco baixo|melhor preco|melhor valor|custo benef|custo-benef|custobenef|melhor custo|economic|acessivel/.test(t)) return 'barato';
+  // premium / mais caro / top de linha / melhor qualidade / melhor marca
+  if (/mais caro|top de linha|premium|melhor qualidade|melhor marca|mais top/.test(t)) return 'caro';
+  return null;
+}
+// Escolhe o item de menor (ou maior) preço da lista, ignorando itens sem preço.
+function escolherPorPreco(lista, modo) {
+  const validos = (lista || []).filter(p => p && Number(p.preco) > 0);
+  if (!validos.length) return null;
+  return validos.reduce((best, p) =>
+    (modo === 'caro' ? (p.preco > best.preco) : (p.preco < best.preco)) ? p : best
+  );
+}
+
+// ── MARCA na frase ("tem masteron da ZPHC") → filtra a lista da substância pela marca ──
+// Cada entrada: [rótulo p/ filtrar no nome do produto, sinônimos que o cliente pode digitar].
+const MARCAS = [
+  ['zphc', ['zphc']], ['veltrane', ['veltrane']], ['landerlan', ['landerlan']],
+  ['muscle', ['muscle labs','muscle lab','muscle']], ['alpha pharma', ['alpha pharma','alpha']],
+  ['health peptides', ['health peptides']], ['alluvi', ['alluvi']], ['lipoless', ['lipoless']],
+  ['cooper', ['cooper pharma','cooper']], ['neuroceptix', ['neuroceptix','neurocepitix','neurocept']],
+  ['king pharma', ['king pharma','king']], ['synedica', ['synedica','sinedica']],
+  ['neopeptides', ['neopeptides','neo peptides']], ['eurogold', ['eurogold']],
+  ['novax', ['novax']], ['bratva', ['bratva']], ['oxygen', ['oxygenkw','oxygen kw','oxygen']],
+  ['purity', ['purity peptides','purity']], ['renew', ['renew peptides','renew']],
+  ['anglo', ['anglo peptides','anglo']], ['bionexis', ['bionexis']], ['royal', ['royal pharmaceuticals','royal']],
+  ['dragon elite', ['dragon elite','dragon']], ['pharmacom', ['pharmacom']],
+  ['thera', ['thera genetics','thera']], ['balkan', ['balkan']], ['eminence', ['eminence labs','eminence']],
+  ['gen-tirz', ['gen-tirz','gen tirz']], ['bombadrol', ['bombadrol']]
+];
+// Retorna o RÓTULO da marca (pra filtrar no nome do produto) se o cliente citou alguma.
+function detectarMarca(nMsg) {
+  const t = ' ' + (nMsg || '') + ' ';
+  for (const [rotulo, sinonimos] of MARCAS) {
+    for (const s of sinonimos) {
+      if (t.indexOf(' ' + s + ' ') >= 0 || t.indexOf(' ' + s + 's ') >= 0 || (s.length >= 5 && t.indexOf(s) >= 0)) return rotulo;
+    }
+  }
+  return null;
+}
+
 // ── DÚVIDA/PERGUNTA: "como uso o klow?", "qual o protocolo da retatrutida?", "monta o protocolo" ──
 // Mesmo citando um produto, é PERGUNTA (vai pra IA responder), NÃO pedido pra abrir a lista.
 // Foco em uso/protocolo/dose/recomendação — não pega intenção de preço/compra ("quanto custa", "quero X").
@@ -591,7 +645,7 @@ function filtrarEster(dados, ester, base) {
   return [...new Set(res)];
 }
 
-async function resolverReconhecido(session, sid, e, respond) {
+async function resolverReconhecido(session, sid, e, respond, marca) {
   e = e || {};
   if (e.tipo === 'submenu_testo') {
     await saveSession(sid, { ...session, state:'SUBMENU_TESTO', errosSeguidos:0, pendenteRec:null });
@@ -620,13 +674,20 @@ async function resolverReconhecido(session, sid, e, respond) {
   } else {
     linhas = filtrarCache(dados, e.filtro);
   }
-  const unicas = [...new Set(linhas)];
+  let unicas = [...new Set(linhas)];
   if (!unicas.length) {
     await saveSession(sid, { ...session, state:'MENU', errosSeguidos:0, pendenteRec:null });
     return respond(`*${e.label}* não está disponível no momento. 😕\n\nDigite *menu* para ver as outras opções.`);
   }
+  // Se o cliente citou uma MARCA junto ("masteron da zphc"), filtra a lista por ela.
+  let tituloMarca = '';
+  if (marca) {
+    const nm = norm(marca);
+    const porMarca = unicas.filter(l => norm(l).includes(nm));
+    if (porMarca.length) { unicas = porMarca; tituloMarca = ' — ' + marca.toUpperCase(); }
+  }
   await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), errosSeguidos:0, pendenteRec:null });
-  return respond(`*${(e.label||'').toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
+  return respond(`*${(e.label||'').toUpperCase()}${tituloMarca}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
 }
 
 // Inicia um COMBO/STACK determinístico: confirma que entendeu TODOS os produtos, anuncia a
@@ -647,7 +708,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // produto. Só abre a lista quando é intenção de ver/comprar, não quando é pergunta.
   if (ehDuvida(nMsg)) {
     await saveSession(sid, { ...session, errosSeguidos: 0 });
-    await dispararIA(sid, nMsg);
+    await dispararIA(sid, nMsg, contextoLista(session));
     return respond('Deixa eu ver isso pra você… 👀');
   }
   // Combo/stack (2+ produtos juntos, ex.: "testo e deca"): conduz UM de cada vez, deixando
@@ -663,24 +724,25 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
       const e = rec.entry;
       await saveSession(sid, {
         ...session, errosSeguidos:0, state:'CONFIRMAR_VER_PRODUTO',
-        pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], ester:e.ester||'' }
+        pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], ester:e.ester||'', marca: detectarMarca(nMsg) || '' }
       });
       return respond(`Quer ver *${e.label}*? Seu carrinho fica salvo. 🛒\n\n1️⃣ Sim, ver ${e.label}\n2️⃣ Não, continuar de onde parei`);
     }
     if (rec.modo === 'canonico') {
-      return await resolverReconhecido(session, sid, rec.entry, respond);
+      // se citou substância + MARCA ("masteron da zphc"), já abre filtrado pela marca
+      return await resolverReconhecido(session, sid, rec.entry, respond, detectarMarca(nMsg));
     }
     const e = rec.entry;
     await saveSession(sid, {
       ...session, errosSeguidos:0, state:'CONFIRMAR_PRODUTO',
-      pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], ester:e.ester||'' }
+      pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], ester:e.ester||'', marca: detectarMarca(nMsg) || '' }
     });
     return respond(`Você quis dizer *${e.label}*? 🤔\n\n1️⃣ Sim\n2️⃣ Não`);
   }
   // Não reconheceu como produto → em vez do "não entendi" robótico, deixa a IA responder
   // de forma inteligente e assíncrona (sem timeout). Mantém o contexto/estado atual.
   await saveSession(sid, { ...session, errosSeguidos: (session.errosSeguidos || 0) + 1 });
-  await dispararIA(sid, nMsg);   // AGUARDA o disparo sair (Background Function responde 202 na hora); sem o await o Lambda congela no return e o POST nunca chega
+  await dispararIA(sid, nMsg, contextoLista(session));   // AGUARDA o disparo sair (Background Function responde 202 na hora); sem o await o Lambda congela no return e o POST nunca chega
   return respond('Deixa eu ver isso pra você… 👀');
 }
 
@@ -1695,14 +1757,14 @@ exports.handler = async (event) => {
     }
 
     if (state === 'CONFIRMAR_PRODUTO') {
-      if (num === 1) { const e = session.pendenteRec || {}; return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond); }
+      if (num === 1) { const e = session.pendenteRec || {}; return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond, e.marca || ''); }
       if (num === 2) { await saveSession(sid, { ...session, state:'MENU', pendenteRec:null, errosSeguidos:0 }); return respond('Sem problema! 😊 Me diz o que você procura ou escolha uma opção:\n\n' + buildMenuPrincipal()); }
       return respond('Digite *1* para Sim ou *2* para Não:');
     }
 
     if (state === 'CONFIRMAR_VER_PRODUTO') {
       // Cliente tinha carrinho e pediu outro produto. 1 = ver o produto (carrinho preservado). 2 = volta ao carrinho.
-      if (num === 1) { const e = session.pendenteRec || {}; return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond); }
+      if (num === 1) { const e = session.pendenteRec || {}; return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond, e.marca || ''); }
       if (num === 2) {
         const carrinho = session.carrinho || [];
         await saveSession(sid, { ...session, state:'CARRINHO', pendenteRec:null, errosSeguidos:0 });
@@ -1837,8 +1899,21 @@ exports.handler = async (event) => {
 
     if (state === 'LISTA_PRODUTOS') {
       const lista = session.produtoLista || [];
-      // não é número → nome de produto (abre lista), stack (IA conduz) ou dúvida (IA)
-      if (!/^\d/.test(n.trim())) return await tratarTextoLivre(session, sid, n, '', respond);
+      if (!/^\d/.test(n.trim())) {
+        // "o mais barato / mais em conta" (ou o mais caro) → escolhe pelo PREÇO da lista ATUAL,
+        // mantendo o contexto (não manda pra IA nem reabre a lista).
+        const sup = ehPedidoSuperlativo(n);
+        if (sup && lista.length) {
+          const prod = escolherPorPreco(lista, sup);
+          if (prod) {
+            await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
+            const rotulo = sup === 'caro' ? 'o *top* (mais premium)' : 'o *mais em conta*';
+            return respond(`Boa! 💰 Dessa lista, ${rotulo} é:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.',',')}\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
+          }
+        }
+        // nome de produto (abre lista), combo (conduz) ou dúvida (IA)
+        return await tratarTextoLivre(session, sid, n, '', respond);
+      }
       if (!num || num < 1 || num > lista.length) return respond(`Digite um número entre 1 e ${lista.length}.\n\nOu *menu* para voltar.`);
       const prod = lista[num - 1];
       await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
@@ -2239,7 +2314,7 @@ exports.handler = async (event) => {
       }
       // Qualquer dúvida/protocolo → IA ASSÍNCRONA (inteligente e SEM timeout).
       // Aposentada a IA síncrona antiga (era ela que dava timeout no galho de Protocolo).
-      await dispararIA(sid, mensagem);
+      await dispararIA(sid, mensagem, contextoLista(session));
       return respond('Deixa eu ver isso pra você… 👀');
     }
 
