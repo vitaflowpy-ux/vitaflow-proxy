@@ -2319,9 +2319,13 @@ exports.handler = async (event) => {
           });
         } catch {}
         await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null });
-        return respond(link
+        // ENTREGA PELA API DIRETA (não pela resposta do webhook). O log PROVA que a função roda
+        // uma vez só, mas o BotConversa REENTREGA a resposta do webhook — por isso o "Pedido
+        // gerado" duplicava. O recibo, que já vai pela API direta, NUNCA duplica. Mesmo remédio
+        // aqui: manda o link pela API direta e devolve a resposta do webhook VAZIA.
+        return await responderDireto(sid, link
           ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
-          : `Acesse vitaflowoficial.com para finalizar seu pedido.`);
+          : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond);
       }
       // Opção B: cliente pode digitar um código de cupom aqui (não em promoção/negociação)
       // Só tenta como CUPOM se PARECER um código (uma palavra curta alfanumérica) — assim
