@@ -11,6 +11,19 @@ function fbUrl(path){
   if(!FIREBASE_SECRET) return base;
   return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'auth=' + encodeURIComponent(FIREBASE_SECRET);
 }
+
+// fetch COM TIMEOUT (AbortController). Sem isto, um endpoint lento (GAS acordando, InfinitePay,
+// Telegram) TRAVA a function inteira até o Netlify matar → o BotConversa não recebe resposta,
+// reenvia o webhook (link duplicado) e o estado embaralha. Todo fetch externo passa por aqui.
+async function fetchT(url, opts, ms){
+  const ctrl = new AbortController();
+  const timer = setTimeout(function(){ ctrl.abort(); }, ms || 6000);
+  try {
+    return await fetch(url, Object.assign({}, opts || {}, { signal: ctrl.signal }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const GAS_URL         = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.html';
 
@@ -1065,9 +1078,9 @@ async function buscarTodosCache() {
 }
 async function enviarTelegram(texto) {
   try {
-    await fetch('https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage', {
+    await fetchT('https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage', {
       method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chat_id:'8660563352', text: texto })
-    });
+    }, 4000);
   } catch {}
 }
 async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReais) {
@@ -1090,16 +1103,16 @@ async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReai
     if (valorFrete && valorFrete > 0) items.push({ quantity:1, price: Math.round(valorFrete*100), description: 'Frete' });
     const payload = { handle: INFINITEPAY_TAG, redirect_url: 'https://vitaflowoficial.com/pages/obrigado', webhook_url: GAS_URL, items };
     if (orderNsu) payload.order_nsu = orderNsu;
-    const r = await fetch('https://api.checkout.infinitepay.io/links', {
+    const r = await fetchT('https://api.checkout.infinitepay.io/links', {
       method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
-    });
+    }, 8000);
     const d = await r.json();
     return d?.url || null;
   } catch { return null; }
 }
 async function gerarNumeroPedido() {
   try {
-    const r = await fetch(GAS_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'gerar_numero', tipo:'A' }) });
+    const r = await fetchT(GAS_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'gerar_numero', tipo:'A' }) }, 7000);
     const d = await r.json();
     return d.order_nsu || null;
   } catch { return null; }
@@ -1328,13 +1341,16 @@ exports.handler = async (event) => {
     // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
     // REENVIA o mesmo webhook. Sem isto, a mensagem é processada 2x e gera pedido/link
     // DUPLICADO. Se a MESMA mensagem chegar de novo em até 15s, ignora o retry.
-    const _dedupId = (mensagem || '').slice(0, 100);
+    // A chave inclui o ESTADO: assim "1" na lista de produtos e "1" na quantidade são
+    // entradas DIFERENTES (não engole a quantidade), mas um retry real (mesma mensagem NO
+    // MESMO estado) é barrado — que é o caso do link duplicado.
+    const _dedupKey = state + '|' + (mensagem || '').slice(0, 100);
     const _dedupAgora = Date.now();
-    if (_dedupId && session._dedupMsg === _dedupId && session._dedupTs && (_dedupAgora - session._dedupTs) < 15000) {
-      console.log('DEDUP: retry ignorado | msg:', _dedupId, '| state:', state);
+    if (mensagem && session._dedupKey === _dedupKey && session._dedupTs && (_dedupAgora - session._dedupTs) < 15000) {
+      console.log('DEDUP: retry ignorado | key:', _dedupKey);
       return respond('');
     }
-    session._dedupMsg = _dedupId;
+    session._dedupKey = _dedupKey;
     session._dedupTs = _dedupAgora;
     try { await saveSession(sid, session); } catch (e) {}
 
@@ -1861,6 +1877,12 @@ exports.handler = async (event) => {
       if (num === 1) {
         const carrinho = session.carrinho || [];
         if (!carrinho.length) { await saveSession(sid, { state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
+        // IDEMPOTÊNCIA anti-link-duplicado: se JÁ geramos pedido pra esta sessão (retry ou
+        // entrega atrasada/duplicada do BotConversa), reenvia o MESMO link — NÃO gera outro.
+        if (session.orderNsu && session.linkPagamento) {
+          await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE' });
+          return respond(`💳 *Seu link de pagamento* (pedido *${session.orderNsu}*):\n${session.linkPagamento}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊`);
+        }
         const frete = session.freteSelecionado || {};
         const uf    = session.estadoCliente || '';
         const descontoReais = session.descontoReais || 0;
@@ -1870,11 +1892,12 @@ exports.handler = async (event) => {
           const lbl = session.descontoLabel || (session.descontoTipo === 'promo' ? (session.promoTitulo||'Promoção') : 'Desconto');
           infoDesconto = `\n🏷️ ${lbl}: -R$ ${descontoReais.toFixed(2).replace('.',',')}\n💰 *Total: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
         }
+        // CAMINHO CRÍTICO (com timeout em tudo): número + link + salva pendente + salva sessão.
         const orderNsu = await gerarNumeroPedido();
         const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais);
         try {
           const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
-          await fetch(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
+          await fetchT(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
             method:'PUT', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
               phone: sid, order_nsu: orderNsu,
@@ -1886,20 +1909,24 @@ exports.handler = async (event) => {
               descontoTipo: session.descontoTipo || '', cupomDocId: session.cupomDocId || null,
               cupomCodigo: session.cupomCodigo || null, link: link || ''
             })
-          });
+          }, 5000);
         } catch {}
+        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, linkPagamento: link || '', cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null });
+        // NOTIFICAÇÕES INTERNAS (Telegram + e-mail): best-effort, em PARALELO e limitadas —
+        // NÃO travam o link do cliente. Se uma engasgar, o cliente já recebeu o link.
         const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
-        await enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`);
         try {
-          await fetch(GAS_URL, {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ action: 'alerta_pedido_aberto', order_nsu: orderNsu,
-              produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
-              quantidade: carrinho.reduce((a,i)=>a+i.qtd,0), frete: frete.label, estado: uf,
-              valor: totalFinal.toFixed(2).replace('.',','), phone: sid })
-          });
+          await Promise.allSettled([
+            enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`),
+            fetchT(GAS_URL, {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ action: 'alerta_pedido_aberto', order_nsu: orderNsu,
+                produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
+                quantidade: carrinho.reduce((a,i)=>a+i.qtd,0), frete: frete.label, estado: uf,
+                valor: totalFinal.toFixed(2).replace('.',','), phone: sid })
+            }, 3500)
+          ]);
         } catch {}
-        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null });
         return respond(link
           ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
           : `Acesse vitaflowoficial.com para finalizar seu pedido.`);
@@ -2053,7 +2080,8 @@ exports.handler = async (event) => {
         `• Sul: 3 a 5 dias úteis\n` +
         `• Centro-Oeste: 4 a 6 dias úteis\n` +
         `• Nordeste: 5 a 8 dias úteis\n` +
-        `• Norte: 7 a 10 dias úteis\n` +
+        `• Norte: 7 a 10 dias úteis\n\n` +
+        `🏭 *Atacado:* despacho em até *5 dias úteis* após a confirmação do pagamento. Após a postagem, os prazos de entrega por região são os mesmos do varejo (acima).\n` +
         `_*Estimativas, podem variar conforme distância e condições._\n\n` +
         `🔍 *Rastreie seu pedido em tempo real:*\nvitaflowoficial.com/pages/rastrear-pedido\n` +
         `Use qualquer uma dessas informações para rastrear:\n` +
