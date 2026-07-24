@@ -69,6 +69,22 @@ function parseProdutos(linhas){
     return { nome: nome.trim(), preco: precoNum };
   });
 }
+// Divide texto longo em pedaços de no máx maxLen chars, quebrando ENTRE linhas.
+// O WhatsApp recusa mensagem única muito grande — uma lista aberta pela IA pode estourar.
+function partirMensagem(txt, maxLen){
+  maxLen = maxLen || 3800;
+  if (!txt || txt.length <= maxLen) return [txt || ''];
+  const linhas = String(txt).split('\n');
+  const partes = [];
+  let buf = '';
+  for (const ln of linhas){
+    const cand = buf ? buf + '\n' + ln : ln;
+    if (buf && cand.length > maxLen){ partes.push(buf); buf = ln; }
+    else buf = cand;
+  }
+  if (buf) partes.push(buf);
+  return partes;
+}
 function filtrarCache(dados, termos){
   const lista = Array.isArray(termos) ? termos : [termos];
   const resultados = new Set();
@@ -217,6 +233,16 @@ async function enviarBotConversa(phone, message){
   }
 }
 
+// Envia texto possivelmente grande em VÁRIAS mensagens (o WhatsApp recusa mensagem única enorme).
+async function enviarLongo(phone, texto){
+  const partes = partirMensagem(texto, 3800);
+  let ultimo = { ok:false, etapa:'vazio', status:0, detalhe:'nada a enviar' };
+  for (const p of partes){
+    if (p && p.trim()) ultimo = await enviarBotConversa(phone, p);
+  }
+  return ultimo;
+}
+
 const SYSTEM = `Você é a Athena, consultora virtual da VitaFlow — loja de peptídeos, hormônios, emagrecedores, GH e performance, com entrega para todo o Brasil. Fala português do Brasil, tom caloroso, humano e direto — NADA robótico. Você é uma vendedora experiente, simpática e persuasiva (sem forçar), e você FECHA a venda aqui mesmo no WhatsApp.
 
 REGRAS DE OURO (NUNCA viole):
@@ -240,6 +266,10 @@ COMO LEVAR O CLIENTE AO PRODUTO (sem pedir pra ele digitar o nome):
 - O texto ANTES do marcador deve ser CURTO (1-2 linhas) — a lista já fala por si. O cliente NÃO vê o marcador; ele vê sua fala + a lista numerada e é só escolher o número.
 - Use o marcador SÓ quando houver intenção clara de ver/comprar. Em papo de dúvida/recomendação, primeiro converse; abra a lista quando o cliente sinalizar que quer ver ou comprar.
 - NUNCA escreva a lista de produtos/preços você mesma na prosa — sempre use o marcador pra abrir a lista real (evita erro de preço/produto).
+- COMBO/STACK (mais de um produto, ex.: testo + deca): você PODE e DEVE sugerir combos quando fizer sentido. Só que com TOTAL clareza: confirme EM PALAVRAS todos os produtos do combo e a ORDEM ("vamos montar *Testo* + *Deca*: começamos pela testo e depois a deca"), pro cliente ver que você entendeu TUDO. Pra abrir, use o MARCADOR DE COMBO abaixo — o sistema abre o 1º produto e, quando o cliente adiciona no carrinho, PERGUNTA se ele quer o próximo (não abre sozinho, mas também não esquece nenhum):
+    [[STACK:colecao:termo|colecao:termo|...]]
+  Ex.: "Boa! Vamos montar seu combo de *Testosterona* + *Deca* — começando pela testo, e logo depois a deca 👇 [[STACK:hormonios:testosterona|hormonios:nandrolona]]"
+  NUNCA reconheça só um produto e ignore os outros, e NUNCA deixe dúvida se você entendeu o combo inteiro.
 
 RECOMENDAÇÃO E PROTOCOLO (é aqui que você brilha):
 - Pode recomendar, comparar produtos e montar protocolo GENÉRICO (visão geral de uso, benefícios e duração) pra criar valor e confiança.
@@ -280,32 +310,45 @@ function montarCandidatos(disponiveis){
   return cand.filter((m, i) => m && cand.indexOf(m) === i); // tira duplicados, mantém ordem
 }
 
-// Chama a Claude testando os modelos (na ordem de preferência) até um responder 200.
-// Recebe o HISTÓRICO da conversa e o envia junto (memória curta).
+// Chama UM modelo. Retorna o texto (ou null se falhar).
+async function chamarModelo(modelo, sys, mensagens){
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: modelo, max_tokens: 600, system: sys, messages: mensagens })
+    });
+    const d = await r.json();
+    const erro = d && d.error ? JSON.stringify(d.error).slice(0,160) : 'nenhum';
+    console.log('[IA] modelo', modelo, '-> status', r.status, '| erro:', erro);
+    if (r.status === 200 && d && d.content && d.content[0] && d.content[0].text) return d.content[0].text.trim();
+  } catch (e) {
+    console.log('[IA] EXCEÇÃO modelo', modelo, ':', e.message);
+  }
+  return null;
+}
+
+// Chama a Claude com memória. Se ATHENA_MODEL estiver setado, tenta ELE primeiro (RÁPIDO,
+// sem consultar /v1/models). Só descobre/varre a lista de modelos se o primeiro falhar —
+// é isso que tirava a lentidão (a IA testava modelo por modelo a cada mensagem).
 async function pensarComClaude(sys, mensagem, historico){
-  const disponiveis = await modelosDisponiveis();
-  const lista = montarCandidatos(disponiveis);
-  console.log('[IA] ordem de tentativa:', lista.join(', '));
   const previas = Array.isArray(historico) ? historico : [];
   const mensagens = previas.concat([{ role: 'user', content: mensagem }]);
   console.log('[IA] histórico enviado:', previas.length, 'msgs anteriores + a atual');
-  for (let i = 0; i < lista.length; i++){
-    const modelo = lista[i];
-    try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: modelo, max_tokens: 600, system: sys, messages: mensagens })
-      });
-      const d = await r.json();
-      const erro = d && d.error ? JSON.stringify(d.error).slice(0,160) : 'nenhum';
-      console.log('[IA] tentativa modelo:', modelo, '-> status', r.status, '| erro:', erro);
-      if (r.status === 200 && d && d.content && d.content[0] && d.content[0].text) {
-        return { texto: d.content[0].text.trim(), modelo: modelo };
-      }
-    } catch (e) {
-      console.log('[IA] EXCEÇÃO modelo', modelo, ':', e.message);
-    }
+  const forcado = process.env.ATHENA_MODEL;
+  // 1) caminho rápido: modelo forçado pela env
+  if (forcado) {
+    const t = await chamarModelo(forcado, sys, mensagens);
+    if (t) return { texto: t, modelo: forcado };
+    console.log('[IA] ATHENA_MODEL falhou — caindo pro fallback de descoberta de modelos.');
+  }
+  // 2) fallback: descobre os modelos disponíveis e tenta na ordem de preferência
+  const disponiveis = await modelosDisponiveis();
+  const lista = montarCandidatos(disponiveis).filter(m => m !== forcado);
+  console.log('[IA] ordem de tentativa (fallback):', lista.join(', '));
+  for (const modelo of lista){
+    const t = await chamarModelo(modelo, sys, mensagens);
+    if (t) return { texto: t, modelo };
   }
   return { texto: '', modelo: '' };
 }
@@ -340,10 +383,45 @@ exports.handler = async (event) => {
       console.log('[IA] reply da Claude OK (', reply.length, 'chars ):', reply.slice(0, 120));
     }
 
-    // ── A IA quer ABRIR A LISTA REAL? Procura o marcador [[LISTA:colecao:termo]] ──
-    const mLista = reply.match(/\[\[\s*LISTA\s*:\s*([a-z0-9\-]*)\s*:\s*([^\]]*?)\s*\]\]/i);
-    const replyLimpo = reply.replace(/\[\[\s*LISTA\s*:[^\]]*\]\]/gi, '').trim();
+    // Limpa qualquer marcador do texto (o cliente NUNCA vê o marcador).
+    const replyLimpo = reply.replace(/\[\[\s*(LISTA|STACK)\s*:[^\]]*\]\]/gi, '').trim();
 
+    // ── COMBO/STACK: [[STACK:col:termo|col:termo|...]] — abre o 1º e enfileira o resto ──
+    // O botconversa.js pergunta (não abre sozinho) se quer o próximo, ao adicionar no carrinho.
+    const mStack = reply.match(/\[\[\s*STACK\s*:\s*([^\]]+?)\s*\]\]/i);
+    if (mStack) {
+      const partes = mStack[1].split('|').map(s => {
+        const idx = s.indexOf(':');
+        const col = (idx >= 0 ? s.slice(0, idx) : s).trim().toLowerCase();
+        const termo = (idx >= 0 ? s.slice(idx + 1) : '').trim();
+        return { colecao: col, termo };
+      }).filter(p => p.colecao || p.termo);
+      if (partes.length) {
+        const primeiro = partes[0];
+        const abertura = await montarLista(primeiro.colecao, primeiro.termo);
+        if (abertura && abertura.linhas.length) {
+          const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+          const fila = partes.slice(1).map(p => ({
+            label: cap(p.termo || p.colecao), tipo: 'lista', colecao: p.colecao,
+            filtro: p.termo ? [p.termo] : [], ester: ''
+          }));
+          const sessAtual = await getSession(phone);
+          await saveSession(phone, { ...sessAtual, state:'LISTA_PRODUTOS', produtoLista: abertura.produtoLista, stackFila: fila, errosSeguidos:0 });
+          const corpo = (replyLimpo ? replyLimpo + '\n\n' : '') + formatarLista(abertura.linhas) + '\n\n*Digite o número do produto:*';
+          await salvarHistorico(phone, historico.concat([
+            { role:'user', content: mensagem },
+            { role:'assistant', content: replyLimpo || '(abriu combo)' }
+          ]));
+          const envio = await enviarLongo(phone, corpo);
+          console.log('[IA] RESULTADO ENVIO (stack):', JSON.stringify(envio));
+          return { statusCode: 200, body: 'ok' };
+        }
+      }
+      console.log('[IA] marcador STACK sem resultados — segue fluxo normal.');
+    }
+
+    // ── LISTA simples: [[LISTA:colecao:termo]] ──
+    const mLista = reply.match(/\[\[\s*LISTA\s*:\s*([a-z0-9\-]*)\s*:\s*([^\]]*?)\s*\]\]/i);
     if (mLista) {
       const colecao = mLista[1] || '';
       const termo = mLista[2] || '';
@@ -359,7 +437,7 @@ exports.handler = async (event) => {
           { role:'user', content: mensagem },
           { role:'assistant', content: replyLimpo || `(abriu a lista de ${termo || colecao})` }
         ]));
-        const envio = await enviarBotConversa(phone, corpo);
+        const envio = await enviarLongo(phone, corpo);
         console.log('[IA] RESULTADO ENVIO (lista):', JSON.stringify(envio));
         return { statusCode: 200, body: 'ok' };
       }
@@ -372,7 +450,7 @@ exports.handler = async (event) => {
       { role:'user', content: mensagem },
       { role:'assistant', content: textoFinal }
     ]));
-    const envio = await enviarBotConversa(phone, textoFinal);
+    const envio = await enviarLongo(phone, textoFinal);
     console.log('[IA] RESULTADO ENVIO:', JSON.stringify(envio));
     return { statusCode: 200, body: 'ok' };
   } catch (e) {
