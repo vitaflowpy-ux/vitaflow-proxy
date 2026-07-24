@@ -842,10 +842,15 @@ const UF_REGIAO = {
   AC:'N', AM:'N', RR:'N', RO:'N', AP:'N', PA:'N', TO:'N'
 };
 function _parseDataBR(s) {
-  const m = String(s || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (!m) return null;
-  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
-  return isNaN(d.getTime()) ? null : d;
+  const str = String(s || '').trim();
+  const m = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) {
+    const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // fallback: veio como string de Date ("Wed Jul 15 2026...") ou ISO ("2026-07-15...")
+  const d2 = new Date(str);
+  return isNaN(d2.getTime()) ? null : new Date(d2.getFullYear(), d2.getMonth(), d2.getDate());
 }
 // Páscoa (Meeus/Jones/Butcher) — base dos feriados móveis.
 function _pascoa(ano) {
