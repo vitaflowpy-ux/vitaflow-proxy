@@ -276,6 +276,7 @@ COMO LEVAR O CLIENTE AO PRODUTO (sem pedir pra ele digitar o nome):
   NUNCA reconheça só um produto e ignore os outros, e NUNCA deixe dúvida se você entendeu o combo inteiro.
 
 RECOMENDAÇÃO E PROTOCOLO (é aqui que você brilha):
+- SÓ RECOMENDE O QUE ESTÁ NO CATÁLOGO. Ao indicar ou citar opções, use EXCLUSIVAMENTE produtos que aparecem no catálogo abaixo. NUNCA sugira, cite como opção ou "dê como exemplo" um produto que NÃO está no catálogo (ex.: se não temos Semax, Selank, Cerebrolysin, EPO, Oxitocina, Melanotan, etc., NEM MENCIONE). Se o cliente pedir algo que não temos, diga com honestidade que não trabalhamos com aquele item e ofereça a MELHOR alternativa que EXISTE no catálogo. Toda recomendação precisa ser comprável aqui — nada de mandar o cliente pra um beco sem saída.
 - Pode recomendar, comparar produtos e montar protocolo GENÉRICO (visão geral de uso, benefícios e duração) pra criar valor e confiança.
 - Ao falar de RENDIMENTO/duração, use SEMPRE o cenário mais favorável de venda: calcule pela DOSE MÍNIMA eficaz (rende MAIS), NUNCA pela dose máxima. Ex.: uma caneta de 60mg de tirzepatida/retatrutida, a 2mg por semana, rende ~30 semanas (nunca diga "1 mês").
 - Deixe claro, com educação, que o PROTOCOLO COMPLETO e personalizado (doses exatas, ciclo, cuidados) você envia logo APÓS a confirmação da compra — use isso como incentivo pra fechar.
@@ -401,7 +402,8 @@ exports.handler = async (event) => {
     if ((body.tipo || '') === 'protocolo') return await gerarProtocoloPosVenda(body);
     const mensagem = (body.mensagem || '').toString().trim();
     const promoContext = (body.promoContext || '').toString().trim(); // regras REAIS de promoção/desconto (vêm do botconversa.js)
-    console.log('[IA] START | phone:', phone, '| mensagem:', mensagem);
+    const contexto = (body.contexto || '').toString().trim(); // o que o cliente está VENDO agora (lista aberta)
+    console.log('[IA] START | phone:', phone, '| mensagem:', mensagem, '| contexto:', contexto ? 'sim' : 'nao');
     if (!phone || !mensagem) { console.log('[IA] no-op: faltou phone ou mensagem'); return { statusCode: 200, body: 'no-op' }; }
 
     // Memória: carrega o que já foi conversado com esse cliente.
@@ -412,6 +414,9 @@ exports.handler = async (event) => {
     let sys = SYSTEM + `\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n${catalogo}`;
     if (promoContext) {
       sys += `\n\n=== PROMOÇÕES E DESCONTOS (regras REAIS de hoje — use SOMENTE isto, NÃO invente promoção) ===\n${promoContext}`;
+    }
+    if (contexto) {
+      sys += `\n\n=== CONTEXTO ATUAL DO CLIENTE (PRIORIDADE MÁXIMA) ===\n${contexto}\nResponda com base NESSE contexto atual. Se o histórico falar de outro produto/assunto, IGNORE — o cliente está tratando do que está acima AGORA.`;
     }
 
     const pensado = await pensarComClaude(sys, mensagem, historico);
