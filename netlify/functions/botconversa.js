@@ -192,21 +192,16 @@ const FRETES = {
 };
 
 // ── Menus fixos ───────────────────────────────────────────────────────────────
-const MENU_PRINCIPAL_BASE = `✨ *Olá! Bem-vindo à VitaFlow!* 🌿
+const MENU_PRINCIPAL_BASE = `🛒 *Comprar produtos*
 
-Eu sou a *Athena* 🤖💊 — sua consultora virtual especializada em peptídeos, hormônios e suplementação avançada de alta performance.
-
-Estou aqui para te ajudar a encontrar os melhores produtos, tirar dúvidas técnicas e garantir a melhor experiência de compra. Tudo com segurança, agilidade e os melhores preços! 💪🔥
-
-*O que você procura hoje?*
+*Escolha uma categoria:*
 
 1️⃣ Emagrecedores 💊
 2️⃣ Peptídeos 💉
 3️⃣ Hormônios 💪
 4️⃣ GH ⚡
 5️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
-6️⃣ Promoção do momento 🔥
-7️⃣ Rastrear meu pedido 📦`;
+6️⃣ Promoção do momento 🔥`;
 
 function buildMenuPrincipal() {
   let menu = MENU_PRINCIPAL_BASE;
@@ -214,7 +209,7 @@ function buildMenuPrincipal() {
   if (promo) {
     menu += `
 
-🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 8* para ver as ofertas. ⚡`;
+🚨 *${promo.titulo} ATIVA!* Digite *promo* ou escolha a *opção 6* para ver as ofertas. ⚡`;
   } else {
     menu += `
 
@@ -231,6 +226,35 @@ _Digite o número da opção_`;
 const MENU_PRINCIPAL = MENU_PRINCIPAL_BASE + `
 
 _Digite o número da opção_`;
+
+// ── TELA DE TRIAGEM (saudação) — 3 caminhos ───────────────────────────────────
+function buildTriagem() {
+  let m = `✨ *Olá! Bem-vindo à VitaFlow!* 🌿\n\n` +
+    `Eu sou a *Athena* 🤖💊 — sua consultora virtual de peptídeos, hormônios, emagrecedores e performance.\n\n` +
+    `*Como posso te ajudar agora?*\n\n` +
+    `1️⃣ 🛒 *Comprar produtos*\n` +
+    `2️⃣ 📦 *Prazos, fretes e rastreio* de pedido\n` +
+    `3️⃣ 💬 *Tirar dúvidas* (produtos, protocolos, indicações)`;
+  const promo = promoAtiva();
+  if (promo) m += `\n\n🚨 *${promo.titulo} ATIVA!* (dentro da opção *1* → Promoção do momento) ⚡`;
+  m += `\n\n_Digite *1*, *2* ou *3*. E se já sabe o que quer, é só mandar o *nome do produto* que eu já te mostro! 😉_`;
+  return m;
+}
+
+const MSG_PRAZOS_RASTREIO_MENU = `📦 *Prazos, Fretes e Rastreio*\n\n` +
+  `1️⃣ Ver *prazos de entrega* (varejo e atacado)\n` +
+  `2️⃣ *Rastrear* meu pedido\n` +
+  `3️⃣ Consultar *valor do frete*\n\n` +
+  `_Digite o número, ou *menu* para voltar._`;
+
+const MSG_DUVIDAS_INTRO = `💬 *Tô aqui pra te ajudar!*\n\n` +
+  `Pode perguntar o que quiser: produtos, protocolos, doses, indicações, comparações... 😊\n\n` +
+  `E quando bater a vontade de comprar, é só falar que eu já te mostro as opções com preço. 😉`;
+
+const MSG_PRAZOS_COMPLETO = MSG_PRAZO_VAREJO + `\n\n` +
+  `*🏭 ATACADO (pedido mínimo R$ 3.000):*\n` +
+  `⏱️ Despacho em até *5 dias úteis* após a compensação do pagamento. Depois da postagem, os prazos de entrega por região são os mesmos do varejo (acima).\n\n` +
+  `_Digite *2* pra *rastrear* um pedido, *3* pra consultar *frete*, ou *menu* para voltar._`;
 
 // ── Boas-vindas para lead frio (clique no botão "Sim, quero conhecer" do template Meta) ──
 const MSG_BOAS_VINDAS_LEAD = `✨ *Seja bem-vindo à VitaFlow!* 🌿
@@ -450,6 +474,25 @@ function reconhecerProduto(nMsg) {
   return null;
 }
 
+// ── STACK/CICLO: cliente pediu MAIS DE UM produto junto ("testo e deca", "bpc + tb500") ──
+// O sistema só abre 1 produto por vez; então nesse caso a IA conduz (um de cada vez).
+function contemConectorStack(nMsg) {
+  return / e | mais | com |\+|&|,/.test(' ' + nMsg + ' ');
+}
+function reconhecerVarios(nMsg) {
+  if (!nMsg) return [];
+  const achados = [];
+  const vistos = {};
+  for (const e of DICT_PRODUTOS) {
+    const bate = (e.canonico || []).some(t => termoBate(t, nMsg)) || (e.apelidos || []).some(t => termoBate(t, nMsg));
+    if (bate && !vistos[e.label]) { vistos[e.label] = 1; achados.push(e); }
+  }
+  return achados;
+}
+function ehPedidoStack(nMsg) {
+  return contemConectorStack(nMsg) && reconhecerVarios(nMsg).length >= 2;
+}
+
 // ── Detecção de intenção de RASTREIO (CPF, nº de pedido, e-mail, palavra) ──────
 // Número de pedido VitaFlow: VF-DDMM-XNNN (ex.: VF-0806-A003). Aceita variações de espaço/traço.
 function ehNumeroPedido(msg) {
@@ -545,7 +588,25 @@ async function resolverReconhecido(session, sid, e, respond) {
   return respond(`*${(e.label||'').toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
 }
 
+// Inicia um COMBO/STACK determinístico: confirma que entendeu TODOS os produtos, anuncia a
+// ordem, abre o PRIMEIRO e guarda o resto em stackFila. O estado QUANTIDADE encadeia o próximo
+// assim que o cliente adiciona no carrinho — assim NENHUM produto fica pendente.
+async function iniciarStack(session, sid, entries, respond) {
+  const primeiro = entries[0];
+  const fila = entries.slice(1).map(e => ({ label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], ester:e.ester||'' }));
+  const nomesTodos = entries.map(e => '*'+e.label+'*').join(' + ');
+  const depois = fila.length ? ` Depois a gente adiciona ${fila.map(f=>'*'+f.label+'*').join(', ')}.` : '';
+  const preambulo = `Boa! 💪 Entendi seu combo: ${nomesTodos}.\n\nVamos montar um de cada vez, começando pela *${primeiro.label}*.${depois} 👇`;
+  const respondStack = (r) => respond(preambulo + '\n\n' + r);
+  return await resolverReconhecido({ ...session, stackFila: fila, errosSeguidos:0, pendenteRec:null }, sid, primeiro, respondStack);
+}
+
 async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
+  // Combo/stack (2+ produtos juntos, ex.: "testo e deca"): conduz UM de cada vez, deixando
+  // claro que entendeu TODOS e encadeando o próximo — nenhum produto fica pendente.
+  if (ehPedidoStack(nMsg)) {
+    return await iniciarStack(session, sid, reconhecerVarios(nMsg), respond);
+  }
   const rec = reconhecerProduto(nMsg);
   if (rec) {
     const temCarrinho = (session.carrinho || []).length > 0;
@@ -632,6 +693,23 @@ function formatarLista(linhas) {
     const [nome, preco] = l.split('|');
     return preco ? `${emojis(i)} *${nome.trim()}* — R$ ${preco.trim()}` : `${emojis(i)} *${nome.trim()}*`;
   }).join(SEP);
+}
+// Divide um texto longo em pedaços de no máx maxLen chars, quebrando ENTRE linhas
+// (nunca corta um produto no meio). O WhatsApp/BotConversa recusa mensagem única
+// muito grande e mostra "Erro ao enviar mensagem" — por isso a divisão.
+function partirMensagem(txt, maxLen) {
+  maxLen = maxLen || 3800;
+  if (!txt || txt.length <= maxLen) return [txt || ''];
+  const linhas = String(txt).split('\n');
+  const partes = [];
+  let buf = '';
+  for (const ln of linhas) {
+    const cand = buf ? buf + '\n' + ln : ln;
+    if (buf && cand.length > maxLen) { partes.push(buf); buf = ln; }
+    else buf = cand;
+  }
+  if (buf) partes.push(buf);
+  return partes;
 }
 function parseProdutos(linhas) {
   return linhas.map(l => {
@@ -1182,7 +1260,19 @@ exports.handler = async (event) => {
   const headers = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json' };
   if (event.httpMethod === 'OPTIONS') return { statusCode:200, headers, body:'' };
   if (event.httpMethod !== 'POST')    return { statusCode:405, headers, body: JSON.stringify({error:'Method not allowed'}) };
-  const respond = (r, r2='', r3='') => ({ statusCode:200, headers, body: JSON.stringify({ resposta:r, resposta2:r2, resposta3:r3, transferir:false }) });
+  const respond = (r, r2='', r3='') => {
+    // Se a mensagem única for grande demais (ex.: lista de 73 produtos), o WhatsApp recusa
+    // e mostra "Erro ao enviar mensagem". Divide automaticamente em até 3 mensagens.
+    if (r && r.length > 3800 && !r2 && !r3) {
+      const p = partirMensagem(r, 3800);
+      r  = p[0] || '';
+      r2 = p[1] || '';
+      r3 = p.length > 3
+        ? p[2] + '\n\n_Tem mais produtos aqui! Se não achar, me manda o *nome* do que procura que eu filtro pra você. 😊_'
+        : (p[2] || '');
+    }
+    return { statusCode:200, headers, body: JSON.stringify({ resposta:r, resposta2:r2, resposta3:r3, transferir:false }) };
+  };
   const transferir = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:r, resposta2:'', resposta3:'', transferir:true }) });
 
   try {
@@ -1206,7 +1296,7 @@ exports.handler = async (event) => {
     const ehLeadConhecer = (n.includes('quero conhecer') || n === 'sim quero conhecer')
       && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
     if (ehLeadConhecer) {
-      await saveSession(sid, { state:'MENU' });
+      await saveSession(sid, { state:'TRIAGEM' });
       return respond(MSG_BOAS_VINDAS_LEAD);
     }
 
@@ -1226,8 +1316,8 @@ exports.handler = async (event) => {
       return respond('Seu pedido já está *pago e garantido*! 🧡 Só preciso dos dados de envio pra concluir.\n\nMe manda em linhas separadas: nome, CPF, telefone, rua e número, bairro, cidade, estado e CEP. 😊');
     }
     if (ehSaudacaoOuMenu) {
-      await saveSession(sid, { state:'MENU' });
-      return respond(buildMenuPrincipal());
+      await saveSession(sid, { state:'TRIAGEM' });
+      return respond(buildTriagem());
     }
 
     const palavrasHumano = ['atendente','atendimento','humano','vendedor','pessoa real','falar com alguem','falar com pessoa','falar com atendimento','quero atendimento','suporte','reclamacao','reclamar'];
@@ -1341,6 +1431,28 @@ exports.handler = async (event) => {
       return respond(`🚚 *Opções de frete para ${uf}:*\n\n${freteStr}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra apreensão e extravio.\n\nQuer escolher um produto para comprar? É só digitar *menu* e navegar pelas categorias! 😊`);
     }
 
+    if (state === 'TRIAGEM') {
+      if (num === 1) { await saveSession(sid, { ...session, state:'MENU' }); return respond(buildMenuPrincipal()); }
+      if (num === 2) { await saveSession(sid, { ...session, state:'PRAZOS_RASTREIO' }); return respond(MSG_PRAZOS_RASTREIO_MENU); }
+      if (num === 3) { await saveSession(sid, { ...session, state:'DUVIDAS' }); return respond(MSG_DUVIDAS_INTRO); }
+      return await tratarTextoLivre(session, sid, n, buildTriagem(), respond);
+    }
+
+    if (state === 'PRAZOS_RASTREIO') {
+      if (num === 1) { await saveSession(sid, { ...session, state:'PRAZOS_RASTREIO' }); return respond(MSG_PRAZOS_COMPLETO); }
+      if (num === 2) {
+        await saveSession(sid, { ...session, state:'RASTREAR' });
+        return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido*, seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_(Pode digitar do jeito que for: com pontos, sem pontos, com traço... eu entendo.)_\n\n_Digite *menu* para voltar._`);
+      }
+      if (num === 3) { await saveSession(sid, { ...session, state:'FRETE_AVULSO' }); return respond('🚚 *Consultar frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...'); }
+      return await tratarTextoLivre(session, sid, n, MSG_PRAZOS_RASTREIO_MENU, respond);
+    }
+
+    if (state === 'DUVIDAS') {
+      // Tudo aqui é dúvida → reconhece produto (abre a lista) ou manda pra IA, que conduz pra compra.
+      return await tratarTextoLivre(session, sid, n, MSG_DUVIDAS_INTRO, respond);
+    }
+
     if (state === 'MENU') {
       if (num === 1) {
         const dados = await buscarCache('emagrecedores');
@@ -1370,10 +1482,6 @@ exports.handler = async (event) => {
         if (msg) return respond(msg);
         if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
         return respond('No momento não temos promoção ativa. 😊\n\n_Digite *menu* para ver as categorias._');
-      }
-      if (num === 7) {
-        await saveSession(sid, { ...session, state:'RASTREAR' });
-        return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido*, seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_(Pode digitar do jeito que for: com pontos, sem pontos, com traço... eu entendo.)_\n\n_Digite *menu* para voltar._`);
       }
       return await tratarTextoLivre(session, sid, n, buildMenuPrincipal(), respond);
     }
@@ -1564,14 +1672,8 @@ exports.handler = async (event) => {
 
     if (state === 'LISTA_PRODUTOS') {
       const lista = session.produtoLista || [];
-      // não é número → tenta reconhecer NOME de produto (abre a lista real na hora);
-      // só cai na IA se não reconhecer nada. Assim o cliente troca de produto por texto.
-      if (!/^\d/.test(n.trim())) {
-        const rec = reconhecerProduto(n);
-        if (rec) return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, rec.entry, respond);
-        await dispararIA(sid, mensagem);
-        return respond('Deixa eu ver isso pra você… 👀');
-      }
+      // não é número → nome de produto (abre lista), stack (IA conduz) ou dúvida (IA)
+      if (!/^\d/.test(n.trim())) return await tratarTextoLivre(session, sid, n, '', respond);
       if (!num || num < 1 || num > lista.length) return respond(`Digite um número entre 1 e ${lista.length}.\n\nOu *menu* para voltar.`);
       const prod = lista[num - 1];
       await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
@@ -1579,20 +1681,46 @@ exports.handler = async (event) => {
     }
 
     if (state === 'QUANTIDADE') {
-      // não é número → pode ser troca de produto por texto (reconhece e abre a lista) ou dúvida (IA)
-      if (!/^\d/.test(n.trim())) {
-        const rec = reconhecerProduto(n);
-        if (rec) return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, rec.entry, respond);
-        await dispararIA(sid, mensagem);
-        return respond('Deixa eu ver isso pra você… 👀');
-      }
+      // não é número → troca de produto por texto, combo ou dúvida (IA)
+      if (!/^\d/.test(n.trim())) return await tratarTextoLivre(session, sid, n, '', respond);
       if (!num || num < 1 || num > 99) return respond('Por favor, informe uma quantidade válida (1 a 99):');
       const prod = session.produtoSelecionado || {};
       const carrinho = session.carrinho || [];
       carrinho.push({ nome: prod.nome, preco: prod.preco, qtd: num, colecao: prod.colecao || session.colecaoAtual || '' });
-      const subtotal = totalCarrinho(carrinho);
-      await saveSession(sid, { ...session, state:'CARRINHO', carrinho });
+      // COMBO: ainda tem produto na fila? OFERECE o próximo (não abre sozinho) — 1 toque e segue.
+      const fila = session.stackFila || [];
+      if (fila.length) {
+        const prox = fila[0];
+        await saveSession(sid, { ...session, state:'STACK_PROXIMO', carrinho });
+        return respond(
+          `✅ *${prod.nome}* x${num} no carrinho! 🛒\n\n` +
+          `Seu combo ainda tem: *${fila.map(f => f.label).join(', ')}*.\n\n` +
+          `Quer que eu já te mostre as opções de *${prox.label}* pra fechar o combo?\n\n` +
+          `1️⃣ Sim, ver ${prox.label}\n2️⃣ Agora não (ir pro carrinho)`
+        );
+      }
+      await saveSession(sid, { ...session, state:'CARRINHO', carrinho, stackFila: [] });
       return respond(`✅ Adicionado ao carrinho:\n📦 *${prod.nome}* x${num}\n\n${msgCarrinhoMenu(carrinho)}`);
+    }
+
+    if (state === 'STACK_PROXIMO') {
+      const fila = session.stackFila || [];
+      const carrinho = session.carrinho || [];
+      const r = n.trim();
+      const sim = num === 1 || r === 'sim' || r === 's';
+      const nao = num === 2 || r === 'nao' || r === 'não' || r === 'n' || r.includes('agora nao') || r.includes('depois');
+      if (sim && fila.length) {
+        const prox = fila[0];
+        return await resolverReconhecido({ ...session, stackFila: fila.slice(1), errosSeguidos:0, pendenteRec:null }, sid, prox, respond);
+      }
+      if (nao || !fila.length) {
+        await saveSession(sid, { ...session, state:'CARRINHO', stackFila: [] });
+        return respond(`Beleza! 😊 Seu combo tá guardado no carrinho.\n\n${msgCarrinhoMenu(carrinho)}`);
+      }
+      // texto livre → reconhece produto / dúvida (IA)
+      if (!/^\d/.test(r)) return await tratarTextoLivre(session, sid, n, '', respond);
+      const prox = fila[0];
+      return respond(`Digite *1* pra ver *${prox ? prox.label : 'o próximo'}* ou *2* pra ir pro carrinho:`);
     }
 
     if (state === 'CARRINHO') {
@@ -1612,13 +1740,8 @@ exports.handler = async (event) => {
     if (state === 'REMOVER_ITEM') {
       const carrinho = session.carrinho || [];
       if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio. 🛒\n\n' + buildMenuPrincipal()); }
-      // não é número → pode ser nome de produto (reconhece e abre a lista) ou dúvida (IA)
-      if (!/^\d/.test(n.trim())) {
-        const rec = reconhecerProduto(n);
-        if (rec) return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, rec.entry, respond);
-        await dispararIA(sid, mensagem);
-        return respond('Deixa eu ver isso pra você… 👀');
-      }
+      // não é número → nome de produto, stack (IA conduz) ou dúvida (IA)
+      if (!/^\d/.test(n.trim())) return await tratarTextoLivre(session, sid, n, '', respond);
       if (!num || num < 1 || num > carrinho.length) return respond(`Digite um número entre 1 e ${carrinho.length} para remover, ou *menu* para voltar.\n\n${msgRemoverItem(carrinho)}`);
       const removido = carrinho.splice(num - 1, 1)[0];
       if (!carrinho.length) {
@@ -1940,8 +2063,8 @@ exports.handler = async (event) => {
     }
 
     // Fallback
-    await saveSession(sid, { state:'MENU' });
-    return respond(MENU_PRINCIPAL);
+    await saveSession(sid, { state:'TRIAGEM' });
+    return respond(buildTriagem());
 
   } catch(err) {
     console.error('ERRO GERAL:', err);
