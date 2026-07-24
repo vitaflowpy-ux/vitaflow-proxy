@@ -533,19 +533,45 @@ function ehPedidoStack(nMsg) {
 }
 
 // ── "O MAIS BARATO / MAIS EM CONTA" (ou o mais caro/premium) da lista atual ────
-// Detecta pedido de superlativo por PREÇO. Retorna 'barato', 'caro' ou null.
+// Detecta pedido de superlativo. Retorna 'valor' (melhor custo-benefício = menor R$/mg),
+// 'barato' (menor preço absoluto), 'caro' (premium) ou null.
 function ehPedidoSuperlativo(nMsg) {
   const t = ' ' + (nMsg || '') + ' ';
-  // barato / mais em conta / menor preço / melhor preço / melhor custo-benefício / econômico / acessível
-  if (/barat|em conta|menor preco|menor valor|preco baixo|melhor preco|melhor valor|custo benef|custo-benef|custobenef|melhor custo|economic|acessivel/.test(t)) return 'barato';
+  // MELHOR CUSTO-BENEFÍCIO / melhor valor / mais mg pelo preço → 'valor' (menor preço POR MG)
+  if (/custo benef|custo-benef|custobenef|melhor custo|melhor valor|melhor relacao|relacao custo|beneficio|vale (mais )?a pena|mais mg|que rende mais|render mais|mais produto/.test(t)) return 'valor';
+  // barato / mais em conta / menor preço / melhor preço / econômico / acessível → 'barato' (preço absoluto)
+  if (/barat|em conta|menor preco|menor valor|preco baixo|melhor preco|economic|acessivel/.test(t)) return 'barato';
   // premium / mais caro / top de linha / melhor qualidade / melhor marca
   if (/mais caro|top de linha|premium|melhor qualidade|melhor marca|mais top/.test(t)) return 'caro';
   return null;
 }
-// Escolhe o item de menor (ou maior) preço da lista, ignorando itens sem preço.
+// Extrai a dosagem (mg) do nome do produto, normalizando mcg->mg. Pega o MAIOR valor achado.
+// Ex.: "Retatrutida 120mg Veltrane" -> 120; "GH 100ui" -> 100; "MOTS-C 500mcg" -> 0.5.
+function _mgDoNome(nome) {
+  const s = String(nome || '').toLowerCase();
+  let mg = 0;
+  const re = /(\d+(?:[.,]\d+)?)\s*(mg|mcg|ui|iu)/g;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    let val = parseFloat(m[1].replace(',', '.'));
+    if (m[2] === 'mcg') val = val / 1000; // mcg -> mg
+    if (!isNaN(val) && val > mg) mg = val;
+  }
+  return mg;
+}
+// Escolhe da lista: 'caro' = maior preço; 'barato' = menor preço; 'valor' = menor preço POR MG
+// (melhor custo-benefício — mais produto pelo dinheiro). 'valor' cai pro mais barato se nenhum
+// item tiver mg detectável. Ignora itens sem preço.
 function escolherPorPreco(lista, modo) {
   const validos = (lista || []).filter(p => p && Number(p.preco) > 0);
   if (!validos.length) return null;
+  if (modo === 'valor') {
+    const comMg = validos.map(p => ({ p: p, mg: _mgDoNome(p.nome) })).filter(x => x.mg > 0);
+    if (comMg.length) {
+      return comMg.reduce((best, x) => (x.p.preco / x.mg) < (best.p.preco / best.mg) ? x : best).p;
+    }
+    return validos.reduce((best, p) => p.preco < best.preco ? p : best);
+  }
   return validos.reduce((best, p) =>
     (modo === 'caro' ? (p.preco > best.preco) : (p.preco < best.preco)) ? p : best
   );
@@ -2050,8 +2076,15 @@ exports.handler = async (event) => {
           const prod = escolherPorPreco(lista, sup);
           if (prod) {
             await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
-            const rotulo = sup === 'caro' ? 'o *top* (mais premium)' : 'o *mais em conta*';
-            return respond(`Boa! 💰 Dessa lista, ${rotulo} é:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.',',')}\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
+            let rotulo, extra = '';
+            if (sup === 'caro') { rotulo = 'o *top* (mais premium)'; }
+            else if (sup === 'valor') {
+              rotulo = 'a *melhor relação custo-benefício*';
+              const _mg = _mgDoNome(prod.nome);
+              if (_mg > 0) extra = `\n_(${_mg}mg — sai por R$ ${(prod.preco/_mg).toFixed(2).replace('.',',')} por mg, o melhor aproveitamento da lista)_`;
+            }
+            else { rotulo = 'o *mais em conta*'; }
+            return respond(`Boa! 💰 Dessa lista, ${rotulo} é:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.',',')}${extra}\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
           }
         }
         // nome de produto (abre lista), combo (conduz) ou dúvida (IA)
