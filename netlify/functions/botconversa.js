@@ -50,11 +50,16 @@ async function limparHistoricoIA(sid){
 }
 // Contexto do que o cliente está vendo AGORA (lista aberta) — pra IA não responder de assunto antigo.
 function contextoLista(session){
+  const partes = [];
   const lista = (session && session.produtoLista) || [];
-  if (!lista.length) return '';
   const nomes = lista.slice(0, 10).map(p => p && p.nome).filter(Boolean).join('; ');
-  if (!nomes) return '';
-  return 'O cliente está vendo AGORA esta lista de produtos (responda no contexto DELA, ignore assuntos/produtos de mensagens antigas): ' + nomes;
+  if (nomes) partes.push('O cliente está vendo AGORA esta lista de produtos (responda no contexto DELA, ignore assuntos/produtos de mensagens antigas): ' + nomes);
+  const carrinho = (session && session.carrinho) || [];
+  if (carrinho.length) {
+    const nomesCar = carrinho.map(i => i && i.nome).filter(Boolean).join('; ');
+    if (nomesCar) partes.push('O cliente JÁ TEM no CARRINHO: ' + nomesCar + '. NUNCA diga que o carrinho está vazio nem reabra a seleção desses produtos. Você NÃO controla o carrinho — se ele quiser VER o carrinho, finalizar ou pagar, oriente a digitar "carrinho" ou "finalizar" que o sistema cuida.');
+  }
+  return partes.join('\n');
 }
 
 // Dispara a IA pra montar e ENVIAR o PROTOCOLO COMPLETO pós-venda dos produtos comprados.
@@ -1386,6 +1391,14 @@ async function enviarWhatsAppDireto(sid, textos){
     return okPrimeira;
   } catch (e) { return false; }
 }
+// Responde pelo canal DIRETO (não pela resposta do webhook) e devolve resposta VAZIA. Assim,
+// se o BotConversa REENTREGAR a resposta do webhook (o que duplicava o link de pagamento), a
+// reentrega mostra NADA — a mensagem real já saiu uma única vez pela API direta. Fallback: se
+// o envio direto falhar, cai na resposta síncrona normal.
+async function responderDireto(sid, texto, respond){
+  const ok = await enviarWhatsAppDireto(sid, [texto]);
+  return ok ? respond('') : respond(texto);
+}
 async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReais) {
   try {
     const subtotalBruto = (carrinho || []).reduce((s,i) => s + i.preco * i.qtd, 0);
@@ -1685,6 +1698,24 @@ exports.handler = async (event) => {
     session._dedupKey = _dedupKey;
     session._dedupTs = _dedupAgora;
     try { await saveSession(sid, session); } catch (e) {}
+
+    // ── CARRINHO CHEIO: "finalizar" e "ver carrinho" vão SEMPRE pro fluxo determinístico ──
+    // A IA NÃO enxerga o carrinho e inventava "carrinho vazio" + reabria seleção (duplicava item).
+    // Só quando há itens no carrinho e fora dos passos que já tratam isso (estado/frete/confirmar/pgto).
+    const _temCarrinho = Array.isArray(session.carrinho) && session.carrinho.length > 0;
+    const _naoInterferir = ['ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    if (_temCarrinho && !_naoInterferir) {
+      const ehVerCarrinho = /\b(meu carrinho|ver (o )?carrinho|carrinho de compras|quantos? (produtos?|itens?)|o que (tem|ta|esta|eu tenho|eu ja tenho) no (meu )?carrinho|itens do carrinho|o que eu (ja )?(escolhi|adicionei)|resumo do (meu )?carrinho)\b/.test(n);
+      const ehFinalizar = /\b(finalizar|fechar (a |o )?(compra|pedido|carrinho)|concluir (a )?compra|ir pro pagamento|quero pagar|pode fechar|finaliza(r)?|encerrar (a )?compra|checkout)\b/.test(n);
+      if (ehVerCarrinho) {
+        await saveSession(sid, { ...session, state:'CARRINHO' });
+        return respond(msgCarrinhoMenu(session.carrinho));
+      }
+      if (ehFinalizar) {
+        await saveSession(sid, { ...session, state:'ESTADO' });
+        return respond(`Perfeito, vamos fechar seu pedido! 🛒\n\n${resumoCarrinho(session.carrinho)}\n\n*De qual estado você é?* (pra eu calcular o frete)\nExemplo: RJ, SP, MG, DF, BA...`);
+      }
+    }
 
     // ── LEAD FRIO: clique no botão "Sim, quero conhecer" do template aprovado pela Meta ──
     // O WhatsApp envia o texto do botão como mensagem. Detecta, apresenta a VitaFlow e abre o menu.
@@ -2229,40 +2260,6 @@ exports.handler = async (event) => {
       if (num === 1) {
         const carrinho = session.carrinho || [];
         if (!carrinho.length) { await saveSession(sid, { state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
-        // BLINDAGEM PÓS-PAGAMENTO: se o cliente JÁ PAGOU (flag durável presente), é PROIBIDO
-        // gerar qualquer link novo aqui. Manda ele pra coleta de dados. Mata o "2º link" que
-        // aparecia no momento do envio dos dados.
-        try {
-          const _jaPagou = await lerAguardandoDados(sid);
-          if (_jaPagou) {
-            await saveSession(sid, { ...session, state:'COLETA_DADOS', coleta: session.coleta || {}, orderNsu: session.orderNsu || _jaPagou.order_nsu, carrinho: (session.carrinho&&session.carrinho.length)?session.carrinho:(_jaPagou.carrinho||[]), freteSelecionado: session.freteSelecionado||_jaPagou.freteSelecionado||{}, estadoCliente: session.estadoCliente||_jaPagou.estadoCliente||'', total: (typeof session.total==='number')?session.total:(_jaPagou.total||0) });
-            return respond('Seu pagamento já está *confirmado e garantido*! 🧡 Agora só preciso dos dados de envio.\n\nMe manda tudo junto, em linhas separadas: nome, CPF, telefone, e-mail, rua e número, complemento, bairro, cidade, estado e CEP. 😊');
-          }
-        } catch (e) {}
-        // IDEMPOTÊNCIA anti-link-duplicado: se JÁ geramos pedido pra esta sessão (retry ou
-        // entrega atrasada/duplicada do BotConversa), reenvia o MESMO link — NÃO gera outro.
-        if (session.orderNsu && session.linkPagamento) {
-          await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE' });
-          return respond(`💳 *Seu link de pagamento* (pedido *${session.orderNsu}*):\n${session.linkPagamento}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊`);
-        }
-        // TRAVA ANTI-LINK-DUPLICADO (independe da sessão): o pedido pendente é gravado por
-        // TELEFONE (pending_{fone}). Se JÁ existe um pendente com nsu+link recentes, REENVIA o
-        // MESMO — NUNCA gera um 2º nsu. Isto mata o retry do BotConversa que criava 2 links (e,
-        // por consequência, o descasamento de nsu que impedia o recibo de sair).
-        try {
-          const _pend = await lerPending(sid);
-          if (_pend && _pend.order_nsu && _pend.link && _pend.ts && (Date.now() - _pend.ts) < 1800000) {
-            await saveSession(sid, {
-              ...session, state:'AGUARDAR_COMPROVANTE',
-              orderNsu: _pend.order_nsu, linkPagamento: _pend.link,
-              total: (typeof _pend.total === 'number') ? _pend.total : session.total,
-              carrinho: (_pend.carrinho && _pend.carrinho.length) ? _pend.carrinho : session.carrinho,
-              freteSelecionado: _pend.freteSelecionado || session.freteSelecionado,
-              estadoCliente: _pend.estadoCliente || session.estadoCliente
-            });
-            return respond(`💳 *Seu link de pagamento* (pedido *${_pend.order_nsu}*):\n${_pend.link}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊`);
-          }
-        } catch (e) {}
         const frete = session.freteSelecionado || {};
         const uf    = session.estadoCliente || '';
         const descontoReais = session.descontoReais || 0;
@@ -2272,18 +2269,11 @@ exports.handler = async (event) => {
           const lbl = session.descontoLabel || (session.descontoTipo === 'promo' ? (session.promoTitulo||'Promoção') : 'Desconto');
           infoDesconto = `\n🏷️ ${lbl}: -R$ ${descontoReais.toFixed(2).replace('.',',')}\n💰 *Total: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
         }
-        // TRAVA ATÔMICA anti-duplicação: só chega aqui quem vai GERAR um pedido novo (os re-envios
-        // idempotentes já retornaram acima). Se DUAS confirmações concorrentes chegarem juntas
-        // (webhook duplicado do BotConversa), só a 1ª ganha o lock; a 2ª é descartada em silêncio.
-        // Mata o link duplicado E o Telegram duplicado de uma vez.
-        const _ganhouLock = await adquirirLock('confirmar_' + sid, 45000);
-        if (!_ganhouLock) { console.log('LOCK: confirmação duplicada descartada | sid:', sid); return respond(''); }
-        // CAMINHO CRÍTICO (com timeout em tudo): número + link + salva pendente + salva sessão.
         const orderNsu = await gerarNumeroPedido();
         const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais);
         try {
           const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
-          await fetchT(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
+          await fetch(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
             method:'PUT', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
               phone: sid, order_nsu: orderNsu,
@@ -2295,24 +2285,20 @@ exports.handler = async (event) => {
               descontoTipo: session.descontoTipo || '', cupomDocId: session.cupomDocId || null,
               cupomCodigo: session.cupomCodigo || null, link: link || ''
             })
-          }, 5000);
+          });
         } catch {}
-        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, linkPagamento: link || '', cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null });
-        // NOTIFICAÇÕES INTERNAS (Telegram + e-mail): best-effort, em PARALELO e limitadas —
-        // NÃO travam o link do cliente. Se uma engasgar, o cliente já recebeu o link.
         const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
+        await enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`);
         try {
-          await Promise.allSettled([
-            enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`),
-            fetchT(GAS_URL, {
-              method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({ action: 'alerta_pedido_aberto', order_nsu: orderNsu,
-                produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
-                quantidade: carrinho.reduce((a,i)=>a+i.qtd,0), frete: frete.label, estado: uf,
-                valor: totalFinal.toFixed(2).replace('.',','), phone: sid })
-            }, 3500)
-          ]);
+          await fetch(GAS_URL, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ action: 'alerta_pedido_aberto', order_nsu: orderNsu,
+              produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
+              quantidade: carrinho.reduce((a,i)=>a+i.qtd,0), frete: frete.label, estado: uf,
+              valor: totalFinal.toFixed(2).replace('.',','), phone: sid })
+          });
         } catch {}
+        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null });
         return respond(link
           ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
           : `Acesse vitaflowoficial.com para finalizar seu pedido.`);
