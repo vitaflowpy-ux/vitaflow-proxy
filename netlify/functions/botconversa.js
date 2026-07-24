@@ -1274,7 +1274,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const linhaCupomInfo = (descCupomNormais > 0 && descCupomNormais <= descAthenaNormais)
     ? `\n_(Seu cupom daria R$ ${descCupomNormais.toFixed(2).replace('.',',')} nos demais itens, mas o desconto Athena de 3% é maior e foi aplicado!)_` : '';
   const linhaConviteCupom = (!cupomDocId && totalNormais > 0)
-    ? `\n\n_Se você já tem um cupom, é só digitar o código agora._` : '';
+    ? `\n\n🏷️ *TEM UM CUPOM DE DESCONTO?*\nÉ *AGORA*: digite o *código do cupom* antes de confirmar. 👇` : '';
 
   const resumo =
     `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
@@ -1696,7 +1696,7 @@ exports.handler = async (event) => {
 
     // ── NEGOCIAÇÃO (Entrega 4): reclamou do preço → libera teto de 5% (só quem entrou com os 3% Athena) ──
     const palavrasNegoc = ['caro','ta caro','muito caro','salgado','ta salgado','preco alto','mais barato','abaixa','abaixar','baixa o preco','desconto','condicao','melhora o preco','faz por menos','ta puxado','pesado no bolso','sem condicao'];
-    if (palavrasNegoc.some(p => n.includes(p)) && state !== 'COLETA_DADOS') {
+    if (palavrasNegoc.some(p => n.includes(p)) && state !== 'COLETA_DADOS' && !(await lerAguardandoDados(sid))) {
       const pend = await lerPending(sid);
       if (pend && pend.descontoTipo === 'athena' && !pend.negociado) {
         const carrinho = pend.carrinho || [];
@@ -2188,6 +2188,16 @@ exports.handler = async (event) => {
       if (num === 1) {
         const carrinho = session.carrinho || [];
         if (!carrinho.length) { await saveSession(sid, { state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
+        // BLINDAGEM PÓS-PAGAMENTO: se o cliente JÁ PAGOU (flag durável presente), é PROIBIDO
+        // gerar qualquer link novo aqui. Manda ele pra coleta de dados. Mata o "2º link" que
+        // aparecia no momento do envio dos dados.
+        try {
+          const _jaPagou = await lerAguardandoDados(sid);
+          if (_jaPagou) {
+            await saveSession(sid, { ...session, state:'COLETA_DADOS', coleta: session.coleta || {}, orderNsu: session.orderNsu || _jaPagou.order_nsu, carrinho: (session.carrinho&&session.carrinho.length)?session.carrinho:(_jaPagou.carrinho||[]), freteSelecionado: session.freteSelecionado||_jaPagou.freteSelecionado||{}, estadoCliente: session.estadoCliente||_jaPagou.estadoCliente||'', total: (typeof session.total==='number')?session.total:(_jaPagou.total||0) });
+            return respond('Seu pagamento já está *confirmado e garantido*! 🧡 Agora só preciso dos dados de envio.\n\nMe manda tudo junto, em linhas separadas: nome, CPF, telefone, e-mail, rua e número, complemento, bairro, cidade, estado e CEP. 😊');
+          }
+        } catch (e) {}
         // IDEMPOTÊNCIA anti-link-duplicado: se JÁ geramos pedido pra esta sessão (retry ou
         // entrega atrasada/duplicada do BotConversa), reenvia o MESMO link — NÃO gera outro.
         if (session.orderNsu && session.linkPagamento) {
