@@ -200,18 +200,13 @@ Estou aqui para te ajudar a encontrar os melhores produtos, tirar dúvidas técn
 
 *O que você procura hoje?*
 
-1️⃣ Mais Vendidos 🔥
-2️⃣ Emagrecedores 💊
-3️⃣ Peptídeos 💉
-4️⃣ Hormônios 💪
-5️⃣ GH ⚡
-6️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
-7️⃣ Buscar por Fabricante 🏭
-8️⃣ Promoção do momento 🔥
-9️⃣ Protocolo / Dúvidas técnicas 🔬
-🔟 Rastrear meu pedido 📦
-
-📋 Digite *TABELA* para ver a lista completa de preços`;
+1️⃣ Emagrecedores 💊
+2️⃣ Peptídeos 💉
+3️⃣ Hormônios 💪
+4️⃣ GH ⚡
+5️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
+6️⃣ Promoção do momento 🔥
+7️⃣ Rastrear meu pedido 📦`;
 
 function buildMenuPrincipal() {
   let menu = MENU_PRINCIPAL_BASE;
@@ -423,16 +418,23 @@ function termoBate(termo, nMsg) {
   if (!t) return false;
   if (nMsg === t) return true;
   const palavras = nMsg.split(/[^a-z0-9+]+/).filter(Boolean);
+  // 1) palavra inteira exata
   if (palavras.includes(t)) return true;
-  if (t.length >= 4 && nMsg.includes(t)) return true;
-  // ignora espaço/hífen dos dois lados: "Pt 141" ~ "pt-141" ~ "pt141"
+  // 2) palavra inteira ignorando hífen: "pt-141" ~ "pt141", "bpc-157" ~ "bpc157"
   const tCompacto = t.replace(/[-\s]/g, '');
-  const msgCompacto = nMsg.replace(/[-\s]/g, '');
-  if (tCompacto.length >= 4 && msgCompacto.includes(tCompacto)) return true;
-  // grafia aproximada (1 letra) — só para termos longos, evita falso positivo
+  const palavrasCompactas = palavras.map(p => p.replace(/-/g, ''));
+  if (tCompacto.length >= 2 && palavrasCompactas.includes(tCompacto)) return true;
+  // 3) substring compacto — SÓ se o termo tem DÍGITO (códigos: pt-141, bpc-157, tb-500...)
+  //    ou é longo (>=6). Evita apelido curto de letras ('dura') casar dentro de 'gordura'.
+  const temDigito = /[0-9]/.test(tCompacto);
+  if (temDigito || tCompacto.length >= 6) {
+    const msgCompacto = nMsg.replace(/[-\s]/g, '');
+    if (msgCompacto.includes(tCompacto)) return true;
+  }
+  // 4) grafia aproximada (1 letra de diferença) — tolera erro de digitação só em termos longos
   if (t.length >= 6) {
     if (palavras.some(p => _diff1(p, t))) return true;
-    if (tCompacto.length >= 6 && palavras.some(p => _diff1(p.replace(/[-]/g, ''), tCompacto))) return true;
+    if (tCompacto.length >= 6 && palavrasCompactas.some(p => _diff1(p, tCompacto))) return true;
   }
   return false;
 }
@@ -1341,44 +1343,35 @@ exports.handler = async (event) => {
 
     if (state === 'MENU') {
       if (num === 1) {
-        const dados = await buscarCache('10-mais-vendidos');
-        const linhas = dados.split('\n').filter(Boolean);
-        if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*🔥 MAIS VENDIDOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
-      }
-      if (num === 2) {
         const dados = await buscarCache('emagrecedores');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*💊 EMAGRECEDORES*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
-      if (num === 3) { await saveSession(sid, { ...session, state:'PEPTIDEOS' }); return respond(MENU_PEPTIDEOS); }
-      if (num === 4) { await saveSession(sid, { ...session, state:'HORMONIOS' }); return respond(MENU_HORMONIOS); }
-      if (num === 5) {
+      if (num === 2) { await saveSession(sid, { ...session, state:'PEPTIDEOS' }); return respond(MENU_PEPTIDEOS); }
+      if (num === 3) { await saveSession(sid, { ...session, state:'HORMONIOS' }); return respond(MENU_HORMONIOS); }
+      if (num === 4) {
         const dados = await buscarCache('gh');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*⚡ GH*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
-      if (num === 6) {
+      if (num === 5) {
         const dados = await buscarCache('outros');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*📦 OUTROS (Botox, vitaminas e remédios em geral)*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
-      if (num === 7) { await saveSession(sid, { ...session, state:'FABRICANTES' }); return respond(MENU_FABRICANTES); }
-      if (num === 8) {
+      if (num === 6) {
         const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
         if (msg) return respond(msg);
         if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
         return respond('No momento não temos promoção ativa. 😊\n\n_Digite *menu* para ver as categorias._');
       }
-      if (num === 9) { await saveSession(sid, { ...session, state:'PROTOCOLO', historico:[] }); return respond('*🔬 PROTOCOLO / DÚVIDAS TÉCNICAS*\n\nSobre qual produto ou objetivo você tem dúvida?\n\n_Digite *menu* a qualquer momento para voltar_'); }
-      if (num === 10) {
+      if (num === 7) {
         await saveSession(sid, { ...session, state:'RASTREAR' });
         return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido*, seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_(Pode digitar do jeito que for: com pontos, sem pontos, com traço... eu entendo.)_\n\n_Digite *menu* para voltar._`);
       }
@@ -1571,8 +1564,14 @@ exports.handler = async (event) => {
 
     if (state === 'LISTA_PRODUTOS') {
       const lista = session.produtoLista || [];
-      // não começou com número → é dúvida/conversa: manda pra IA em vez de travar
-      if (!/^\d/.test(n.trim())) { await dispararIA(sid, mensagem); return respond('Deixa eu ver isso pra você… 👀'); }
+      // não é número → tenta reconhecer NOME de produto (abre a lista real na hora);
+      // só cai na IA se não reconhecer nada. Assim o cliente troca de produto por texto.
+      if (!/^\d/.test(n.trim())) {
+        const rec = reconhecerProduto(n);
+        if (rec) return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, rec.entry, respond);
+        await dispararIA(sid, mensagem);
+        return respond('Deixa eu ver isso pra você… 👀');
+      }
       if (!num || num < 1 || num > lista.length) return respond(`Digite um número entre 1 e ${lista.length}.\n\nOu *menu* para voltar.`);
       const prod = lista[num - 1];
       await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: prod });
@@ -1580,8 +1579,13 @@ exports.handler = async (event) => {
     }
 
     if (state === 'QUANTIDADE') {
-      // não começou com número → é dúvida/conversa: manda pra IA em vez de travar em "quantidade válida"
-      if (!/^\d/.test(n.trim())) { await dispararIA(sid, mensagem); return respond('Deixa eu ver isso pra você… 👀'); }
+      // não é número → pode ser troca de produto por texto (reconhece e abre a lista) ou dúvida (IA)
+      if (!/^\d/.test(n.trim())) {
+        const rec = reconhecerProduto(n);
+        if (rec) return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, rec.entry, respond);
+        await dispararIA(sid, mensagem);
+        return respond('Deixa eu ver isso pra você… 👀');
+      }
       if (!num || num < 1 || num > 99) return respond('Por favor, informe uma quantidade válida (1 a 99):');
       const prod = session.produtoSelecionado || {};
       const carrinho = session.carrinho || [];
@@ -1608,8 +1612,13 @@ exports.handler = async (event) => {
     if (state === 'REMOVER_ITEM') {
       const carrinho = session.carrinho || [];
       if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio. 🛒\n\n' + buildMenuPrincipal()); }
-      // não começou com número → é dúvida/conversa: manda pra IA em vez de travar
-      if (!/^\d/.test(n.trim())) { await dispararIA(sid, mensagem); return respond('Deixa eu ver isso pra você… 👀'); }
+      // não é número → pode ser nome de produto (reconhece e abre a lista) ou dúvida (IA)
+      if (!/^\d/.test(n.trim())) {
+        const rec = reconhecerProduto(n);
+        if (rec) return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, rec.entry, respond);
+        await dispararIA(sid, mensagem);
+        return respond('Deixa eu ver isso pra você… 👀');
+      }
       if (!num || num < 1 || num > carrinho.length) return respond(`Digite um número entre 1 e ${carrinho.length} para remover, ou *menu* para voltar.\n\n${msgRemoverItem(carrinho)}`);
       const removido = carrinho.splice(num - 1, 1)[0];
       if (!carrinho.length) {
