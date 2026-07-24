@@ -1636,6 +1636,13 @@ exports.handler = async (event) => {
 
     const state = session.state || 'MENU';
 
+    // ── BLINDAGEM DO CHECKOUT ─────────────────────────────────────────────────
+    // Quando o cliente já está montando/fechando o pedido, NENHUMA pergunta lateral
+    // (frete, prazo, rastreio, atacado, tabela, grupo, promo) pode roubar o fluxo e APAGAR o
+    // carrinho. Nesses estados, a mensagem vai direto pro handler do estado (que sabe lidar
+    // com o carrinho). Isso corrige o caso "digitei 'frete' no resumo e perdi o pedido".
+    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+
     // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
     // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
     // REENVIA o mesmo webhook. Sem isto, a mensagem é processada 2x e gera pedido/link
@@ -1657,14 +1664,14 @@ exports.handler = async (event) => {
     // O WhatsApp envia o texto do botão como mensagem. Detecta, apresenta a VitaFlow e abre o menu.
     // Não dispara em estados de pagamento (pra não atrapalhar quem já está comprando).
     const ehLeadConhecer = (n.includes('quero conhecer') || n === 'sim quero conhecer')
-      && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+      && !emCheckout;
     if (ehLeadConhecer) {
       await saveSession(sid, { state:'TRIAGEM' });
       return respond(MSG_BOAS_VINDAS_LEAD);
     }
 
     const ehPromo = n.includes('promo') || n.includes('namorados');
-    if (ehPromo && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state)) {
+    if (ehPromo && !emCheckout) {
       const msg = await abrirPromo(session, sid);     // se a Relâmpago for reativada, ela tem prioridade
       if (msg) return respond(msg);
       if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
@@ -1728,7 +1735,7 @@ exports.handler = async (event) => {
     // ── Grupo VIP (WhatsApp/Telegram) ── reconhece pergunta sobre grupo/comunidade ──
     const ehGrupo = (n.includes('grupo') || n.includes('comunidade') || n.includes('vip') || n.includes('telegram') ||
       (n.includes('whats') && (n.includes('grupo') || n.includes('vip') || n.includes('comunidade'))))
-      && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+      && !emCheckout;
     if (ehGrupo) {
       return respond(msgGrupoVip());
     }
@@ -1737,6 +1744,7 @@ exports.handler = async (event) => {
     // Trava: nunca em estados de pagamento. E não rouba número simples de menu (1-2 dígitos puros).
     const ehNumeroSimplesMenu = /^\d{1,2}$/.test(n.trim());
     if (!['AGUARDAR_COMPROVANTE','COLETA_DADOS','RASTREAR','PROTOCOLO'].includes(state)
+        && !emCheckout
         && !ehNumeroSimplesMenu
         && ehIntencaoRastreio(n, mensagem)) {
       // Se só pediu "rastrear" sem informar o dado, leva ao estado RASTREAR pedindo o dado.
@@ -1749,26 +1757,26 @@ exports.handler = async (event) => {
     }
 
     const ehAtacado = ["atacado","revenda","revender","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
-    if (ehAtacado && !["AGUARDAR_COMPROVANTE","COLETA_DADOS"].includes(state)) {
+    if (ehAtacado && !emCheckout) {
       await saveSession(sid, { ...session, state:'ATACADO' });
       return respond(MSG_ATACADO);
     }
 
     const ehTabela = ["tabela","lista de preco","lista de preços","catalogo","catálogo","tabela de preco","tabela de preços","lista completa","ver precos","ver preços"].some(p => n.includes(p));
-    if (ehTabela && !ehAtacado && !["AGUARDAR_COMPROVANTE","COLETA_DADOS"].includes(state)) {
-      await saveSession(sid, { state:'MENU' });
+    if (ehTabela && !ehAtacado && !emCheckout) {
+      await saveSession(sid, { ...session, state:'MENU' });
       return respond('📋 *Tabela de Preços VitaFlow*\n\nVeja nossa lista completa de produtos, preços e disponibilidade em tempo real, sempre atualizada:\n\n👉 vitaflowoficial.com/pages/tabela\n\nVocê também pode comprar direto pelo site ou continuar comigo aqui. 😊\n\n_Digite *menu* para navegar pelas categorias._');
     }
 
     const ehPerguntaPrazo = ["prazo","quanto tempo","quantos dias","demora","chega em","tempo de entrega","prazo de entrega","prazo de postagem"].some(p => n.includes(p));
-    if (ehPerguntaPrazo && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS","CARRINHO","ATACADO","PRAZO_TIPO"].includes(state)) {
+    if (ehPerguntaPrazo && !emCheckout && !["ATACADO","PRAZO_TIPO"].includes(state)) {
       if (ehAtacado) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond(MSG_ATACADO); }
       await saveSession(sid, { ...session, state:'PRAZO_TIPO' });
       return respond(MSG_PERGUNTA_TIPO_PRAZO);
     }
 
     const ehPerguntaFrete = ["frete","transportadora","pac","sedex","valor do envio","custo do envio","quanto e o frete","quanto fica o frete"].some(p => n.includes(p));
-    if (ehPerguntaFrete && !["ESTADO","FRETE","AGUARDAR_COMPROVANTE","COLETA_DADOS","CARRINHO","ATACADO","PRAZO_TIPO","FRETE_AVULSO"].includes(state)) {
+    if (ehPerguntaFrete && !emCheckout && !["ATACADO","PRAZO_TIPO","FRETE_AVULSO"].includes(state)) {
       await saveSession(sid, { ...session, state:"FRETE_AVULSO" });
       return respond("🚚 *Consultar frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...");
     }
@@ -2277,7 +2285,12 @@ exports.handler = async (event) => {
           : `Acesse vitaflowoficial.com para finalizar seu pedido.`);
       }
       // Opção B: cliente pode digitar um código de cupom aqui (não em promoção/negociação)
-      if (mensagem && mensagem.trim().length >= 3 && session.descontoTipo !== 'promo' && session.descontoTipo !== 'namorados') {
+      // Só tenta como CUPOM se PARECER um código (uma palavra curta alfanumérica) — assim
+      // "frete", "prazo", "quero pagar" etc. NÃO viram "cupom inválido" e o pedido é preservado.
+      const _txt = (mensagem || '').trim();
+      const pareceCupom = /^[a-z0-9._-]{3,20}$/i.test(_txt)
+        && !/^(frete|prazo|pac|sedex|menu|inicio|voltar|sim|nao|nvao|ok|okay|comprar|pagar|rastrear|rastreio|duvida|duvidas)$/i.test(_txt);
+      if (pareceCupom && session.descontoTipo !== 'promo' && session.descontoTipo !== 'namorados') {
         const totalProd = session.totalProd || totalCarrinho(session.carrinho || []);
         const resultado = await validarCupom(mensagem, totalProd);
         if (resultado.ok) {
@@ -2286,9 +2299,10 @@ exports.handler = async (event) => {
           }
           return respond(`Seu cupom *${resultado.codigo}* daria R$ ${resultado.descontoReais.toFixed(2).replace('.',',')}, mas o desconto de 3% que já apliquei é maior 😉\n\nDigite *1* para confirmar ou *2* para voltar ao menu.`);
         }
-        return respond(`❌ ${resultado.motivo}\n\nDigite *1* para confirmar com o desconto atual, ou *2* para voltar ao menu.`);
+        return respond(`Não reconheci *${_txt}* como cupom. 😊 Mas seu *pedido está pronto*!\n\nDigite *1* para *confirmar a compra* ou *2* para voltar ao menu.`);
       }
-      return respond('Digite *1* para confirmar ou *2* para voltar ao menu:');
+      // Qualquer outra coisa (pergunta, palavra solta) NÃO perde o carrinho: reafirma o pedido.
+      return respond(`Seu *pedido está pronto pra fechar*! 🛒\n\nDigite *1* para *confirmar a compra* ou *2* para voltar ao menu.\n\n_Se tiver um cupom de desconto, é só digitar o código agora._`);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
