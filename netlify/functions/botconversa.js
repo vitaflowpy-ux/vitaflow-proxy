@@ -40,6 +40,14 @@ async function dispararIA(phone, mensagem, contexto){
     });
   } catch (e) { /* se falhar o disparo, o ack síncrono já foi enviado */ }
 }
+// Zera a memória da IA (nó vitaflow_ia_hist) — usado quando o cliente TROCA de produto
+// digitando o nome. Assim a IA não responde puxando o assunto do produto anterior.
+async function limparHistoricoIA(sid){
+  try {
+    const k = String(sid || '').replace(/[^a-zA-Z0-9]/g, '_');
+    await fetchT(fbUrl(`/vitaflow_ia_hist/${k}.json`), { method:'DELETE' }, 4000);
+  } catch (e) {}
+}
 // Contexto do que o cliente está vendo AGORA (lista aberta) — pra IA não responder de assunto antigo.
 function contextoLista(session){
   const lista = (session && session.produtoLista) || [];
@@ -647,6 +655,9 @@ function filtrarEster(dados, ester, base) {
 
 async function resolverReconhecido(session, sid, e, respond, marca) {
   e = e || {};
+  // Cliente trocou de produto (digitou o nome) → zera a memória da IA pra não vazar o
+  // assunto anterior. Continuidade dentro do novo produto é reconstruída nas próximas trocas.
+  await limparHistoricoIA(sid);
   if (e.tipo === 'submenu_testo') {
     await saveSession(sid, { ...session, state:'SUBMENU_TESTO', errosSeguidos:0, pendenteRec:null });
     return respond(MENU_TESTO);
