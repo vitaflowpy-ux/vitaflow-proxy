@@ -1723,7 +1723,7 @@ exports.handler = async (event) => {
     const ehLeadConhecer = (n.includes('quero conhecer') || n === 'sim quero conhecer')
       && !emCheckout;
     if (ehLeadConhecer) {
-      await saveSession(sid, { state:'TRIAGEM' });
+      await saveSession(sid, { ...session, state:'TRIAGEM' });
       return respond(MSG_BOAS_VINDAS_LEAD);
     }
 
@@ -1732,7 +1732,7 @@ exports.handler = async (event) => {
       const msg = await abrirPromo(session, sid);     // se a Relâmpago for reativada, ela tem prioridade
       if (msg) return respond(msg);
       if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
-      await saveSession(sid, { state:'MENU' });
+      await saveSession(sid, { ...session, state:'MENU' });
       return respond('No momento não temos promoção ativa. 😊\n\n' + buildMenuPrincipal());
     }
 
@@ -1743,8 +1743,26 @@ exports.handler = async (event) => {
       return respond('Seu pedido já está *pago e garantido*! 🧡 Só preciso dos dados de envio pra concluir.\n\nMe manda em linhas separadas: nome, CPF, telefone, rua e número, bairro, cidade, estado e CEP. 😊');
     }
     if (ehSaudacaoOuMenu) {
-      await saveSession(sid, { state:'TRIAGEM' });
+      // CARRINHO NUNCA SE PERDE: se o cliente volta (saudação/menu) e ainda tem itens no
+      // carrinho, LEMBRA e pergunta se quer continuar ou começar do zero — nunca apaga sozinho.
+      const _car = session.carrinho || [];
+      if (_car.length && !['AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state)) {
+        await saveSession(sid, { ...session, state:'RETOMAR_CARRINHO' });
+        return respond(
+          `Oi de novo! 😊 Você já tinha começado uma compra e ainda tem *${_car.length} ${_car.length>1?'itens':'item'}* no carrinho:\n\n` +
+          `${resumoCarrinho(_car)}\n\n` +
+          `Quer *continuar essa compra* ou *começar do zero*?\n\n` +
+          `1️⃣ Continuar de onde parei\n2️⃣ Começar uma nova compra (esvaziar o carrinho)`
+        );
+      }
+      await saveSession(sid, { ...session, state:'TRIAGEM' });
       return respond(buildTriagem());
+    }
+    // Retomada do carrinho salvo (cliente escolheu continuar ou zerar)
+    if (state === 'RETOMAR_CARRINHO') {
+      if (num === 1) { await saveSession(sid, { ...session, state:'CARRINHO' }); return respond(`Boa, continuando sua compra! 🛒\n\n${msgCarrinhoMenu(session.carrinho || [])}`); }
+      if (num === 2) { await saveSession(sid, { state:'TRIAGEM' }); return respond(`Prontinho, comecei um carrinho novo! 🧹\n\n${buildTriagem()}`); }
+      return respond('Digite *1* para continuar sua compra de antes ou *2* para começar do zero:');
     }
 
     const palavrasHumano = ['atendente','atendimento','humano','vendedor','pessoa real','falar com alguem','falar com pessoa','falar com atendimento','quero atendimento','suporte','reclamacao','reclamar'];
@@ -1752,8 +1770,10 @@ exports.handler = async (event) => {
     const estadoCritico = ['CARRINHO','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
     if (palavrasHumano.some(p => n.includes(p))) {
       await enviarTelegram(`🔔 CLIENTE QUER HUMANO\n📱 ${sid}\n📍 Estado: ${state}\n💬 ${mensagem}`);
-      if (!estadoCritico) await deleteSession(sid);
-      return transferir(estadoCritico
+      const _temCar = session.carrinho && session.carrinho.length;
+      // Nunca apaga o carrinho: só limpa a sessão se NÃO for estado crítico E não houver carrinho.
+      if (!estadoCritico && !_temCar) await deleteSession(sid);
+      return transferir((estadoCritico || _temCar)
         ? 'Vou chamar um atendente pra te ajudar! 😊 Fica tranquilo que *seu pedido continua salvo* aqui comigo. Aguarde um momento.'
         : 'Vou te transferir para um atendente agora! 😊 Aguarde um momento.');
     }
@@ -1839,13 +1859,13 @@ exports.handler = async (event) => {
     }
 
     if (state === 'ATACADO') {
-      if (num === 1) { await enviarTelegram(`🏭 CLIENTE QUER ATACADO\n📱 ${sid}\n💬 Redirecionado para consultores de atacado`); await saveSession(sid, { state:'MENU' }); return respond(MSG_ATACADO_CONTATOS); }
-      if (num === 2) { await saveSession(sid, { state:'MENU' }); return respond('Sem problema! 😊\n\n' + MENU_PRINCIPAL); }
+      if (num === 1) { await enviarTelegram(`🏭 CLIENTE QUER ATACADO\n📱 ${sid}\n💬 Redirecionado para consultores de atacado`); await saveSession(sid, { ...session, state:'MENU' }); return respond(MSG_ATACADO_CONTATOS); }
+      if (num === 2) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + MENU_PRINCIPAL); }
       return respond('Digite *1* para falar com um consultor de atacado ou *2* para voltar ao menu:');
     }
 
     if (state === 'PRAZO_TIPO') {
-      if (num === 1) { await saveSession(sid, { state:'MENU' }); return respond(MSG_PRAZO_VAREJO + '\n\n_Digite *menu* para ver nossos produtos._'); }
+      if (num === 1) { await saveSession(sid, { ...session, state:'MENU' }); return respond(MSG_PRAZO_VAREJO + '\n\n_Digite *menu* para ver nossos produtos._'); }
       if (num === 2) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond(MSG_ATACADO); }
       return respond('Digite *1* para compra normal (varejo) ou *2* para atacado:');
     }
@@ -1855,7 +1875,7 @@ exports.handler = async (event) => {
       const opts = getFreteOpcoes(uf);
       if (!opts) return respond(`Estado *${uf || mensagem}* não reconhecido.\nDigite a sigla do seu estado (ex: RJ, SP, MG):`);
       const freteStr = opts.map((o) => `• *${o.label}* — R$ ${o.valor.toFixed(2).replace('.',',')}`).join('\n');
-      await saveSession(sid, { state:'MENU' });
+      await saveSession(sid, { ...session, state:'MENU' });
       return respond(`🚚 *Opções de frete para ${uf}:*\n\n${freteStr}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra apreensão e extravio.\n\nQuer escolher um produto para comprar? É só digitar *menu* e navegar pelas categorias! 😊`);
     }
 
@@ -2221,7 +2241,7 @@ exports.handler = async (event) => {
       if (!num || num < 1 || num > opts.length) return respond(`Digite 1, 2 ou 3 para escolher o frete:`);
       const frete = opts[num - 1];
       const carrinho = session.carrinho || [];
-      if (!carrinho.length) { await saveSession(sid, { state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
+      if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
       const totalProd = totalCarrinho(carrinho);
       if (session.fluxoPromo) {
         const descPct = session.descontoPromoPct || 0;
@@ -2256,10 +2276,10 @@ exports.handler = async (event) => {
     }
 
     if (state === 'CONFIRMAR') {
-      if (num === 2) { await deleteSession(sid); return respond('Tudo bem! Quando quiser, estou aqui. 😊\n\n' + MENU_PRINCIPAL); }
+      if (num === 2) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊 *Seu carrinho continua guardado* — quando quiser fechar, é só digitar *finalizar*.\n\n' + buildMenuPrincipal()); }
       if (num === 1) {
         const carrinho = session.carrinho || [];
-        if (!carrinho.length) { await saveSession(sid, { state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
+        if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
         const frete = session.freteSelecionado || {};
         const uf    = session.estadoCliente || '';
         const descontoReais = session.descontoReais || 0;
@@ -2528,8 +2548,8 @@ exports.handler = async (event) => {
       return respond('Deixa eu ver isso pra você… 👀');
     }
 
-    // Fallback
-    await saveSession(sid, { state:'TRIAGEM' });
+    // Fallback (preserva o carrinho — só esvazia após compra confirmada)
+    await saveSession(sid, { ...session, state:'TRIAGEM' });
     return respond(buildTriagem());
 
   } catch(err) {
