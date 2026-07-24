@@ -55,15 +55,27 @@ function emojis(i){
   const e = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
   return i < 10 ? e[i] : `${i+1}.`;
 }
+// Preço numérico de "nome|preco" (BR: "2.249,00" -> 2249). Sem preço vai pro FIM.
+function precoDaLinha(l){
+  const p = String(l).split('|')[1];
+  if (!p) return Infinity;
+  const n = parseFloat(p.trim().replace(/\./g,'').replace(',','.'));
+  return isNaN(n) ? Infinity : n;
+}
+// Ordena do MENOR pro MAIOR preço — mesmo critério em formatarLista E parseProdutos, pra o
+// número mostrado bater com o produto escolhido.
+function ordenarPorPreco(linhas){
+  return (linhas || []).slice().sort((a, b) => precoDaLinha(a) - precoDaLinha(b));
+}
 function formatarLista(linhas){
   const SEP = '\n┈┈┈┈┈┈┈┈┈┈\n';
-  return linhas.map((l, i) => {
+  return ordenarPorPreco(linhas).map((l, i) => {
     const [nome, preco] = l.split('|');
     return preco ? `${emojis(i)} *${nome.trim()}* — R$ ${preco.trim()}` : `${emojis(i)} *${nome.trim()}*`;
   }).join(SEP);
 }
 function parseProdutos(linhas){
-  return linhas.map(l => {
+  return ordenarPorPreco(linhas).map(l => {
     const [nome, preco] = l.split('|');
     const precoNum = preco ? parseFloat(preco.replace(/\./g,'').replace(',','.')) : 0;
     return { nome: nome.trim(), preco: precoNum };
@@ -157,7 +169,7 @@ async function catalogoResumo(){
     return d ? ('## ' + c + '\n' + d) : '';
   }));
   let txt = parts.filter(Boolean).join('\n\n');
-  if (txt.length > 12000) txt = txt.slice(0, 12000) + '\n…(catálogo truncado)';
+  if (txt.length > 20000) txt = txt.slice(0, 20000) + '\n…(catálogo truncado — pode haver MAIS produtos; confirme abrindo a lista real com o marcador)';
   return txt;
 }
 
@@ -275,7 +287,9 @@ COMO LEVAR O CLIENTE AO PRODUTO (sem pedir pra ele digitar o nome):
   NUNCA reconheça só um produto e ignore os outros, e NUNCA deixe dúvida se você entendeu o combo inteiro.
 
 RECOMENDAÇÃO E PROTOCOLO (é aqui que você brilha):
-- SÓ RECOMENDE O QUE ESTÁ NO CATÁLOGO. Ao indicar ou citar opções, use EXCLUSIVAMENTE produtos que aparecem no catálogo abaixo. NUNCA sugira, cite como opção ou "dê como exemplo" um produto que NÃO está no catálogo (ex.: se não temos Semax, Selank, Cerebrolysin, EPO, Oxitocina, Melanotan, etc., NEM MENCIONE). Se o cliente pedir algo que não temos, diga com honestidade que não trabalhamos com aquele item e ofereça a MELHOR alternativa que EXISTE no catálogo. Toda recomendação precisa ser comprável aqui — nada de mandar o cliente pra um beco sem saída.
+- SÓ RECOMENDE O QUE ESTÁ NO CATÁLOGO. Ao indicar ou citar opções, use EXCLUSIVAMENTE produtos que aparecem no catálogo abaixo. NUNCA sugira, cite como opção ou "dê como exemplo" um produto que NÃO está no catálogo (ex.: se não temos Semax, Selank, Cerebrolysin, EPO, Oxitocina, Melanotan, etc., NEM MENCIONE). Toda recomendação precisa ser comprável aqui — nada de mandar o cliente pra um beco sem saída.
+- ⚠️ NUNCA AFIRME QUE "NÃO TEMOS" UM PRODUTO baseado só no que você vê aqui. A loja tem CENTENAS de produtos e o catálogo acima pode estar RESUMIDO/CORTADO — um item pode existir sem aparecer na sua lista (ex.: Clembuterol/T3 e vários outros ficam na coleção "outros"). Se o cliente pedir algo que você NÃO está vendo, NÃO negue: ABRA a lista pra conferir no ESTOQUE REAL com [[LISTA:colecao:termo]] — o sistema procura em TODAS as coleções, mesmo que você erre a coleção. Só diga que não trabalhamos com o item DEPOIS que a busca real voltar vazia; aí sim ofereça a melhor alternativa do catálogo. Ex.: cliente "tem clembuterol?" → você não tem certeza, então abre [[LISTA:outros:clembuterol]] e deixa o sistema confirmar.
+- USE EXATAMENTE O PRODUTO QUE O CLIENTE CITOU. Ao responder, corrigir ou pedir desculpas, fale do MESMO produto/substância que ele falou (se ele disse "clembuterol", responda sobre clembuterol — NUNCA troque por "botox" nem outro item que apareceu antes na conversa). E NUNCA se contradiga na mesma mensagem ("não temos X, mas temos X"). Se errou antes, assuma e corrija com o produto certo.
 - NÃO INVENTE DIFERENÇAS ENTRE PRODUTOS. Quando dois itens diferem só por MARCA e PREÇO, é PROIBIDO inventar vantagem qualitativa ("marca top", "entrega mais rápida", "mais completo", "referência", "qualidade superior", "melhor procedência"). Você NÃO tem essa informação. Diferencie SÓ pelo que é REAL e está no catálogo: dosagem (mg), formato (caneta/frasco, diluído/liofilizado), marca e preço.
 - ÁGUA BACTERIOSTÁTICA (BAC): por padrão os produtos JÁ acompanham a BAC. NUNCA apresente "acompanha BAC" como diferencial ou vantagem — isso induz o cliente a ERRO, porque é o normal. A ÚNICA coisa que você pode dizer sobre BAC é AVISAR quando o produto NÃO acompanha, e SÓ quando o nome do produto no catálogo disser literalmente "Não acompanha BAC" (ex.: alguns da Neuroceptix) — aí você avisa que ele vai precisar comprar a água bacteriostática à parte. Fora esse caso, NÃO toque no assunto BAC.
 - Considere TODAS as opções, inclusive as de DOSAGEM MAIOR. Ex.: se há MOTS-C de 10mg e de 40mg, o de 40mg tem 4x mais produto — não fixe só na menor dosagem; quando fizer sentido, aponte a de melhor custo por mg.
