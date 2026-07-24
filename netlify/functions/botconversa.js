@@ -1113,6 +1113,27 @@ async function deleteAguardandoDados(sid) {
     await fetch(fbUrl(`/vitaflow_aguardando_dados/${k}.json`), { method:'DELETE' });
   } catch {}
 }
+// LOCK ATÔMICO (CAS via ETag do Firebase RTDB). Quando o BotConversa entrega a MESMA mensagem
+// 2x AO MESMO TEMPO (webhook duplicado), as duas execuções disputam este lock: só UMA ganha
+// (true) e segue; a outra perde (false) e é descartada. É isso que mata o LINK e o Telegram
+// duplicados na confirmação. FAIL-OPEN: se a mecânica do lock falhar por qualquer motivo,
+// retorna true — NUNCA bloqueia um pedido real (no pior caso, volta ao comportamento antigo).
+async function adquirirLock(nome, ttlMs){
+  try {
+    const url = fbUrl(`/vitaflow_locks/${String(nome).replace(/[^a-zA-Z0-9_]/g,'_')}.json`);
+    const g = await fetchT(url, { method:'GET', headers:{ 'X-Firebase-ETag':'true' } }, 4000);
+    const etag = g.headers.get('etag');
+    const atual = await g.json();
+    if (atual && atual.ts && (Date.now() - atual.ts) < (ttlMs || 45000)) return false; // já há lock vivo
+    const p = await fetchT(url, {
+      method:'PUT',
+      headers: etag ? { 'Content-Type':'application/json', 'if-match': etag } : { 'Content-Type':'application/json' },
+      body: JSON.stringify({ ts: Date.now() })
+    }, 4000);
+    if (p.status === 412) return false; // outro concorrente ganhou a corrida
+    return true;                        // ganhou o lock (ou fail-open)
+  } catch (e) { return true; }          // fail-open: nunca trava um pedido real
+}
 
 // ── ENTREGA 4: Negociação ─────────────────────────────────────────────────────
 const NEGOCIACAO_PCT_TOTAL = 5; // teto total (3% Athena + 2% extra). Nunca sobre valor já descontado.
@@ -1305,6 +1326,39 @@ async function enviarTelegram(texto) {
       method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chat_id:'8660563352', text: texto })
     }, 4000);
   } catch {}
+}
+// ── ENVIO DIRETO PELA API DO BOTCONVERSA ──────────────────────────────────────
+// Canal INDEPENDENTE da resposta síncrona do webhook. É o MESMO que o GAS usa pra mandar o
+// "envie seus dados" (que sempre chega). Usado pra garantir a entrega do RECIBO pós-venda:
+// antes, o recibo ia na resposta do webhook e, como o COLETA fazia trabalho pesado (GAS +
+// Telegram) ANTES de responder, o webhook estourava timeout e o BotConversa descartava o
+// recibo. Enviando por aqui, o recibo chega SEMPRE — independe do timeout.
+const BOTCONVERSA_API_KEY = '8c9e69c3-3c9f-4f23-b480-be4a0de29640';
+async function botconversaSubId(sid){
+  try {
+    const fone = String(sid).replace(/\D/g,'');
+    const r = await fetchT(`https://backend.botconversa.com.br/api/v1/webhook/subscriber/get_by_phone/${encodeURIComponent(fone)}/`,
+      { method:'GET', headers:{ 'api-key': BOTCONVERSA_API_KEY } }, 6000);
+    const d = await r.json();
+    return d && d.id ? d.id : null;
+  } catch (e) { return null; }
+}
+async function enviarWhatsAppDireto(sid, textos){
+  try {
+    const sub = await botconversaSubId(sid);
+    if (!sub) return false;
+    let okPrimeira = false;
+    for (let i = 0; i < textos.length; i++){
+      const t = textos[i];
+      if (!t) continue;
+      try {
+        await fetchT(`https://backend.botconversa.com.br/api/v1/webhook/subscriber/${sub}/send_message/`,
+          { method:'POST', headers:{ 'Content-Type':'application/json', 'api-key': BOTCONVERSA_API_KEY }, body: JSON.stringify({ type:'text', value: t }) }, 8000);
+        if (i === 0) okPrimeira = true;
+      } catch (e) { if (i === 0) return false; }
+    }
+    return okPrimeira;
+  } catch (e) { return false; }
 }
 async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReais) {
   try {
@@ -2167,6 +2221,12 @@ exports.handler = async (event) => {
           const lbl = session.descontoLabel || (session.descontoTipo === 'promo' ? (session.promoTitulo||'Promoção') : 'Desconto');
           infoDesconto = `\n🏷️ ${lbl}: -R$ ${descontoReais.toFixed(2).replace('.',',')}\n💰 *Total: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
         }
+        // TRAVA ATÔMICA anti-duplicação: só chega aqui quem vai GERAR um pedido novo (os re-envios
+        // idempotentes já retornaram acima). Se DUAS confirmações concorrentes chegarem juntas
+        // (webhook duplicado do BotConversa), só a 1ª ganha o lock; a 2ª é descartada em silêncio.
+        // Mata o link duplicado E o Telegram duplicado de uma vez.
+        const _ganhouLock = await adquirirLock('confirmar_' + sid, 45000);
+        if (!_ganhouLock) { console.log('LOCK: confirmação duplicada descartada | sid:', sid); return respond(''); }
         // CAMINHO CRÍTICO (com timeout em tudo): número + link + salva pendente + salva sessão.
         const orderNsu = await gerarNumeroPedido();
         const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais);
@@ -2315,27 +2375,6 @@ exports.handler = async (event) => {
       const total    = session.total || 0;
       const num_pedido = session.orderNsu || await gerarNumeroPedido();
 
-      if (num_pedido) {
-        const items = carrinho.map(i => ({
-          description: `${i.nome} x${i.qtd}`, quantity: i.qtd, price: Math.round(i.preco * 100)
-        }));
-        items.push({ description: `Frete ${frete.label} — ${session.estadoCliente}`, quantity: 1, price: Math.round(frete.valor * 100) });
-
-        await salvarPedidoGAS({
-          order_nsu: num_pedido,
-          paid_amount: Math.round(total * 100),
-          capture_method: 'whatsapp_athena',
-          customer: { name: coleta.nome, email: (coleta.email||'nao_informado').toLowerCase(), phone_number: coleta.telefone, document: coleta.cpf },
-          address: { street: coleta.endereco, number: '', complement: coleta.complemento||'', neighborhood: coleta.bairro, city: coleta.cidade, state: coleta.estado, cep: coleta.cep },
-          items
-        });
-
-        const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
-        await enviarTelegram(
-          `🤖 *VENDA ATHENA!*\n\n📦 ${num_pedido}\n👤 ${coleta.nome}\n🪪 ${coleta.cpf}\n📱 ${coleta.telefone}\n📧 ${coleta.email||'—'}\n🏠 ${coleta.endereco}${coleta.complemento?', '+coleta.complemento:''}, ${coleta.bairro}, ${coleta.cidade}-${coleta.estado}, ${coleta.cep}\n${itensTxt}\n🚚 ${frete.label} ${session.estadoCliente}\n💰 R$ ${total.toFixed(2)}\n📱 ${sid}`
-        );
-      }
-
       const linkRecibo = gerarLinkRecibo(
         num_pedido || 'VF-A', coleta.nome, coleta.cpf, coleta.email || '',
         'WhatsApp / Athena', carrinho, frete, total
@@ -2387,18 +2426,46 @@ exports.handler = async (event) => {
         `💬 Teve algum problema? Fale com a gente pelo WhatsApp assim que identificar qualquer divergência e envie o vídeo da abertura junto com os detalhes do pedido. Faremos tudo ao nosso alcance para resolver! 💪\n\n` +
         `— *Equipe VitaFlow* 🧡`;
 
-      // Incrementa uso do cupom SOMENTE agora (pedido confirmado)
-      if (session.cupomDocId) {
-        await incrementarUsoCupom(session.cupomDocId);
+      // 1) ENTREGA O RECIBO PRIMEIRO, pelo canal DIRETO da API (não depende do webhook).
+      //    Assim o cliente recebe o recibo + o aviso SEMPRE, mesmo que o trabalho pesado
+      //    abaixo (GAS/Telegram) demore e o webhook estoure timeout.
+      const reciboEnviado = await enviarWhatsAppDireto(sid, [msg1, msg2]);
+
+      // 2) TRABALHO PESADO só DEPOIS do recibo já ter saído (tudo best-effort, não trava nada).
+      if (num_pedido) {
+        try {
+          const items = carrinho.map(i => ({
+            description: `${i.nome} x${i.qtd}`, quantity: i.qtd, price: Math.round(i.preco * 100)
+          }));
+          items.push({ description: `Frete ${frete.label} — ${session.estadoCliente}`, quantity: 1, price: Math.round(frete.valor * 100) });
+          await salvarPedidoGAS({
+            order_nsu: num_pedido,
+            paid_amount: Math.round(total * 100),
+            capture_method: 'whatsapp_athena',
+            customer: { name: coleta.nome, email: (coleta.email||'nao_informado').toLowerCase(), phone_number: coleta.telefone, document: coleta.cpf },
+            address: { street: coleta.endereco, number: '', complement: coleta.complemento||'', neighborhood: coleta.bairro, city: coleta.cidade, state: coleta.estado, cep: coleta.cep },
+            items
+          });
+        } catch (e) {}
+        try {
+          const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
+          await enviarTelegram(
+            `🤖 *VENDA ATHENA!*\n\n📦 ${num_pedido}\n👤 ${coleta.nome}\n🪪 ${coleta.cpf}\n📱 ${coleta.telefone}\n📧 ${coleta.email||'—'}\n🏠 ${coleta.endereco}${coleta.complemento?', '+coleta.complemento:''}, ${coleta.bairro}, ${coleta.cidade}-${coleta.estado}, ${coleta.cep}\n${itensTxt}\n🚚 ${frete.label} ${session.estadoCliente}\n💰 R$ ${total.toFixed(2)}\n📱 ${sid}`
+          );
+        } catch (e) {}
       }
 
-      // PROTOCOLO PÓS-VENDA: dispara a IA pra gerar e ENVIAR o protocolo completo dos
-      // produtos comprados (a IA gera). Fire-and-forget — não trava a resposta do recibo.
+      // Incrementa uso do cupom SOMENTE agora (pedido confirmado)
+      if (session.cupomDocId) { try { await incrementarUsoCupom(session.cupomDocId); } catch (e) {} }
+
+      // PROTOCOLO PÓS-VENDA: dispara a IA pra gerar e ENVIAR o protocolo completo (canal próprio).
       try { await dispararIAProtocolo(sid, (carrinho || []).map(function(i){ return i.nome; })); } catch (e) {}
 
       await deleteAguardandoDados(sid);
       await deleteSession(sid);
-      return respond(msg1, msg2);
+      // Se o recibo já saiu pelo canal direto, responde vazio (evita duplicar). Se o envio
+      // direto FALHOU, cai no fallback da resposta síncrona do webhook.
+      return reciboEnviado ? respond('') : respond(msg1, msg2);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
