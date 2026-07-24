@@ -251,9 +251,13 @@ REGRAS DE OURO (NUNCA viole):
 - Seja BREVE (é WhatsApp): 2 a 6 linhas. Use *negrito* (um asterisco de cada lado). NUNCA use ## nem ###.
 - Mantenha COERÊNCIA com o que você já disse (o histórico está acima). Nunca se contradiga.
 
-VOCÊ FECHA A VENDA AQUI — NUNCA mande o cliente comprar no site:
-- A compra é finalizada AQUI no WhatsApp: o cliente escolhe o produto, monta o carrinho e o sistema gera o link de pagamento. É PROIBIDO dizer que "a compra tem que ser pelo site" — isso é FALSO e faz perder venda.
-- Se o cliente disser que quer comprar com você, ótimo: conduza pro fechamento aqui (abrindo a lista).
+VOCÊ FECHA A VENDA AQUI — É TERMINANTEMENTE PROIBIDO mandar pro site:
+- TODO o pedido é montado e fechado AQUI na conversa comigo: o cliente escolhe o produto, eu monto o carrinho e envio um LINK DE PAGAMENTO seguro aqui mesmo no WhatsApp. Ele clica, paga e pronto — NUNCA precisa entrar no site pra comprar.
+- Esse link de pagamento NÃO é "o site" nem "comprar no site" — é só a forma segura de pagar, e sai daqui da nossa conversa. NÃO chame o link de "site".
+- Frases PROIBIDAS (nunca diga nada parecido): "a compra é no site", "você não finaliza no WhatsApp", "o pagamento é no site", "é só entrar no vitaflowoficial.com e comprar". Se disser qualquer uma dessas, você ERROU.
+- Se te perguntarem o que você faz, "FECHAR a compra e enviar o link de pagamento aqui na conversa" é uma das coisas que você FAZ — liste como algo que você FAZ, nunca como algo que NÃO faz.
+- Se em mensagens antigas (histórico) você chegou a dizer que a compra é no site, aquilo estava ERRADO — não repita; siga estas regras, que são a verdade.
+- Só cite o site vitaflowoficial.com se o cliente pedir explicitamente; o padrão é fechar comigo aqui.
 
 COMO LEVAR O CLIENTE AO PRODUTO (sem pedir pra ele digitar o nome):
 - Quando o cliente demonstrar intenção de VER ou COMPRAR ("quero ver", "qual o preço", "quanto custa", "quero comprar", "vou querer a tirzepatida"), ou depois que VOCÊ recomendou e ele topou, NÃO peça pra ele digitar o nome. Em vez disso, TERMINE sua mensagem com um marcador que o sistema usa pra abrir a lista real (com preços e botão de compra):
@@ -310,13 +314,13 @@ function montarCandidatos(disponiveis){
   return cand.filter((m, i) => m && cand.indexOf(m) === i); // tira duplicados, mantém ordem
 }
 
-// Chama UM modelo. Retorna o texto (ou null se falhar).
-async function chamarModelo(modelo, sys, mensagens){
+// Chama UM modelo. Retorna o texto (ou null se falhar). maxTokens: 600 padrão (protocolo usa mais).
+async function chamarModelo(modelo, sys, mensagens, maxTokens){
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: modelo, max_tokens: 600, system: sys, messages: mensagens })
+      body: JSON.stringify({ model: modelo, max_tokens: maxTokens || 600, system: sys, messages: mensagens })
     });
     const d = await r.json();
     const erro = d && d.error ? JSON.stringify(d.error).slice(0,160) : 'nenhum';
@@ -331,14 +335,14 @@ async function chamarModelo(modelo, sys, mensagens){
 // Chama a Claude com memória. Se ATHENA_MODEL estiver setado, tenta ELE primeiro (RÁPIDO,
 // sem consultar /v1/models). Só descobre/varre a lista de modelos se o primeiro falhar —
 // é isso que tirava a lentidão (a IA testava modelo por modelo a cada mensagem).
-async function pensarComClaude(sys, mensagem, historico){
+async function pensarComClaude(sys, mensagem, historico, maxTokens){
   const previas = Array.isArray(historico) ? historico : [];
   const mensagens = previas.concat([{ role: 'user', content: mensagem }]);
   console.log('[IA] histórico enviado:', previas.length, 'msgs anteriores + a atual');
   const forcado = process.env.ATHENA_MODEL;
   // 1) caminho rápido: modelo forçado pela env
   if (forcado) {
-    const t = await chamarModelo(forcado, sys, mensagens);
+    const t = await chamarModelo(forcado, sys, mensagens, maxTokens);
     if (t) return { texto: t, modelo: forcado };
     console.log('[IA] ATHENA_MODEL falhou — caindo pro fallback de descoberta de modelos.');
   }
@@ -347,16 +351,54 @@ async function pensarComClaude(sys, mensagem, historico){
   const lista = montarCandidatos(disponiveis).filter(m => m !== forcado);
   console.log('[IA] ordem de tentativa (fallback):', lista.join(', '));
   for (const modelo of lista){
-    const t = await chamarModelo(modelo, sys, mensagens);
+    const t = await chamarModelo(modelo, sys, mensagens, maxTokens);
     if (t) return { texto: t, modelo };
   }
   return { texto: '', modelo: '' };
+}
+
+// ── PROTOCOLO PÓS-VENDA ───────────────────────────────────────────────────────
+const PROTOCOLO_SYSTEM = `Você é a Athena, consultora da VitaFlow. O cliente ACABOU de comprar e já pagou — agora você entrega, como bônus de pós-venda, o PROTOCOLO COMPLETO dos produtos que ele levou. Caprica: é isso que faz o cliente confiar e voltar.
+
+REGRAS:
+- Português do Brasil, tom acolhedor e profissional. Aqui pode ser mais longo que o normal — é o protocolo completo.
+- Para CADA produto comprado, traga de forma organizada: *objetivo/benefício*, *dose* recomendada (sempre partindo da DOSE MÍNIMA eficaz), *frequência*, *como aplicar/usar*, *duração do ciclo*, *cuidados* importantes e, quando fizer sentido, *pós-ciclo/TPC*.
+- Se comprou mais de um produto, organize por produto e, se combinarem, explique como usar juntos.
+- Use *negrito* (um asterisco de cada lado) pra destacar títulos. NUNCA use ## nem ###.
+- Baseie-se em prática consolidada e responsável; NÃO invente. O que depender de avaliação individual, oriente procurar acompanhamento profissional. NÃO prometa cura nem milagre.
+- NÃO fale de preço nem de "comprar" (já foi comprado) e NUNCA mande pro site.
+- Feche desejando bons resultados e se colocando à disposição pra dúvidas.`;
+
+async function gerarProtocoloPosVenda(body){
+  try {
+    const phone = body.phone;
+    const produtos = Array.isArray(body.produtos) ? body.produtos.filter(Boolean) : [];
+    console.log('[IA] PROTOCOLO pós-venda | phone:', phone, '| produtos:', produtos.join(' | '));
+    if (!phone || !produtos.length) return { statusCode: 200, body: 'no-op' };
+    const catalogo = await catalogoResumo();
+    const sys = PROTOCOLO_SYSTEM + `\n\n=== CATÁLOGO (referência de nomes/formatos reais — NÃO invente fora disto) ===\n${catalogo}`;
+    const pedido = `O cliente acabou de comprar: ${produtos.join(', ')}.\n\nMonte agora o PROTOCOLO COMPLETO e detalhado de CADA um desses produtos, pronto pra enviar no WhatsApp.`;
+    const pensado = await pensarComClaude(sys, pedido, [], 1500);
+    if (!pensado.texto) {
+      console.log('[IA] PROTOCOLO: modelo não respondeu — nada enviado.');
+      return { statusCode: 200, body: 'no-reply' };
+    }
+    const texto = `📋 *SEU PROTOCOLO VITAFLOW* 🌿\n_Guarde esta mensagem! Preparei um guia completo pra você aproveitar ao máximo o que comprou._\n\n` + pensado.texto;
+    const envio = await enviarLongo(phone, texto);
+    console.log('[IA] PROTOCOLO enviado:', JSON.stringify(envio));
+    return { statusCode: 200, body: 'ok' };
+  } catch (e) {
+    console.log('[IA] EXCEÇÃO gerarProtocoloPosVenda:', e.message);
+    return { statusCode: 200, body: 'err:' + e.message };
+  }
 }
 
 exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || '{}');
     const phone = body.phone;
+    // Modo PROTOCOLO pós-venda: gera e envia o protocolo completo dos produtos comprados.
+    if ((body.tipo || '') === 'protocolo') return await gerarProtocoloPosVenda(body);
     const mensagem = (body.mensagem || '').toString().trim();
     const promoContext = (body.promoContext || '').toString().trim(); // regras REAIS de promoção/desconto (vêm do botconversa.js)
     console.log('[IA] START | phone:', phone, '| mensagem:', mensagem);
