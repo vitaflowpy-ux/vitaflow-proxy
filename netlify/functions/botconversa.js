@@ -28,6 +28,17 @@ async function dispararIA(phone, mensagem){
   } catch (e) { /* se falhar o disparo, o ack síncrono já foi enviado */ }
 }
 
+// Dispara a IA pra montar e ENVIAR o PROTOCOLO COMPLETO pós-venda dos produtos comprados.
+// Chamado quando o pedido é concluído (após a coleta de dados). Fire-and-forget.
+async function dispararIAProtocolo(phone, produtos){
+  try {
+    await fetch(ATHENA_IA_URL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ phone: phone, tipo: 'protocolo', produtos: produtos || [] })
+    });
+  } catch (e) { /* pós-venda: se falhar o disparo, não afeta o pedido já concluído */ }
+}
+
 // ── Desconto Athena e Cupons ──────────────────────────────────────────────────
 const DESCONTO_ATHENA_PCT = 3;
 
@@ -493,6 +504,22 @@ function ehPedidoStack(nMsg) {
   return contemConectorStack(nMsg) && reconhecerVarios(nMsg).length >= 2;
 }
 
+// ── DÚVIDA/PERGUNTA: "como uso o klow?", "qual o protocolo da retatrutida?", "monta o protocolo" ──
+// Mesmo citando um produto, é PERGUNTA (vai pra IA responder), NÃO pedido pra abrir a lista.
+// Foco em uso/protocolo/dose/recomendação — não pega intenção de preço/compra ("quanto custa", "quero X").
+function ehDuvida(nMsg) {
+  const s = nMsg || '';
+  if (/\?\s*$/.test(s)) return true; // termina com "?"
+  const t = ' ' + s + ' ';
+  const gatilhos = [
+    ' como ','como uso','como usar','como toma','como aplica','protocolo','pra que serve','para que serve',
+    ' o que ','dosagem',' dose ','efeito colateral','colateral','faz mal',' ciclo',' tpc ','diferenca','diferença',
+    'qual a melhor','qual o melhor','melhor pra','melhor para','recomenda','me indica','indica','monta','montar',
+    'explica','explicar','pode tomar','pode usar','quantas vezes','quanto tempo','serve pra','serve para','funciona'
+  ];
+  return gatilhos.some(x => t.includes(x));
+}
+
 // ── Detecção de intenção de RASTREIO (CPF, nº de pedido, e-mail, palavra) ──────
 // Número de pedido VitaFlow: VF-DDMM-XNNN (ex.: VF-0806-A003). Aceita variações de espaço/traço.
 function ehNumeroPedido(msg) {
@@ -602,6 +629,13 @@ async function iniciarStack(session, sid, entries, respond) {
 }
 
 async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
+  // Dúvida/pergunta (protocolo, como usar, dose, "?"...) → a IA RESPONDE, mesmo que cite um
+  // produto. Só abre a lista quando é intenção de ver/comprar, não quando é pergunta.
+  if (ehDuvida(nMsg)) {
+    await saveSession(sid, { ...session, errosSeguidos: 0 });
+    await dispararIA(sid, nMsg);
+    return respond('Deixa eu ver isso pra você… 👀');
+  }
   // Combo/stack (2+ produtos juntos, ex.: "testo e deca"): conduz UM de cada vez, deixando
   // claro que entendeu TODOS e encadeando o próximo — nenhum produto fica pendente.
   if (ehPedidoStack(nMsg)) {
@@ -1289,6 +1323,20 @@ exports.handler = async (event) => {
 
     const session = await getSession(sid);
     const state = session.state || 'MENU';
+
+    // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
+    // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
+    // REENVIA o mesmo webhook. Sem isto, a mensagem é processada 2x e gera pedido/link
+    // DUPLICADO. Se a MESMA mensagem chegar de novo em até 15s, ignora o retry.
+    const _dedupId = (mensagem || '').slice(0, 100);
+    const _dedupAgora = Date.now();
+    if (_dedupId && session._dedupMsg === _dedupId && session._dedupTs && (_dedupAgora - session._dedupTs) < 15000) {
+      console.log('DEDUP: retry ignorado | msg:', _dedupId, '| state:', state);
+      return respond('');
+    }
+    session._dedupMsg = _dedupId;
+    session._dedupTs = _dedupAgora;
+    try { await saveSession(sid, session); } catch (e) {}
 
     // ── LEAD FRIO: clique no botão "Sim, quero conhecer" do template aprovado pela Meta ──
     // O WhatsApp envia o texto do botão como mensagem. Detecta, apresenta a VitaFlow e abre o menu.
@@ -2040,6 +2088,10 @@ exports.handler = async (event) => {
       if (session.cupomDocId) {
         await incrementarUsoCupom(session.cupomDocId);
       }
+
+      // PROTOCOLO PÓS-VENDA: dispara a IA pra gerar e ENVIAR o protocolo completo dos
+      // produtos comprados (a IA gera). Fire-and-forget — não trava a resposta do recibo.
+      try { await dispararIAProtocolo(sid, (carrinho || []).map(function(i){ return i.nome; })); } catch (e) {}
 
       await deleteSession(sid);
       return respond(msg1, msg2);
