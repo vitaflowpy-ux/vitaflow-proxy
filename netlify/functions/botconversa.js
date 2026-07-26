@@ -109,11 +109,13 @@ function ehPedidoProtocoloCompleto(nMsg){
   const alvo = /(protocolo|plano|ciclo|stack completo|esquema)/.test(t);
   const exame = /(analis|avali|ver|le[ir]|leia).{0,15}exame|meu exame|meus exames/.test(t);
   const frasesFortes = /(meu protocolo|protocolo completo|protocolo personalizado|monta.{0,15}protocolo|meu plano|plano completo)/.test(t);
+  // A palavra "protocolo" (sozinha ou em qualquer forma) j\u00e1 \u00e9 sinal forte de pedido de protocolo.
+  const temProtocolo = /protocolo/.test(t);
   // "como usar / ensinar a usar / dose / posologia" tamb\u00e9m conta como protocolo (\u00e9 ensinar a usar).
   // Mas N\u00c3O gatilha em cupom/site/pagamento, nem em "pra que serve / o que \u00e9 / combina" (isso \u00e9 explica\u00e7\u00e3o, liberado).
   const comoUsar = /(como (uso|usar|usa|toma|tomar|aplica|aplicar|utiliza|utilizar|faz pra usar)|me ensina|ensina[r]? (a |como )?(usar|aplicar|tomar)|posologia|qual.{0,5}dose|dosagem certa|quanto.{0,8}(tomar|aplicar|usar por))/.test(t)
     && !/cupom|site|desconto|codigo|c\u00f3digo|pagar|pagamento|\bapp\b|link|rastre/.test(t);
-  return (querMontar && alvo) || exame || frasesFortes || comoUsar;
+  return temProtocolo || (querMontar && alvo) || exame || frasesFortes || comoUsar;
 }
 // Extrai a lista de produtos (nomes limpos, sem duplicar) dos pedidos PAGOS retornados pelo consultar_status.
 function extrairProdutosDosPedidos(pedidos){
@@ -2435,6 +2437,15 @@ exports.handler = async (event) => {
       const s = norm(mensagem);
       if (/^(menu|inicio|início|voltar|cancelar)$/.test(s)) { await saveSession(sid, { ...session, state:'MENU', protoProdutos:null }); return respond(buildMenuPrincipal()); }
       const produtos = session.protoProdutos || [];
+      // Quer o protocolo de TODOS os produtos — reconhece MUITAS formas de dizer isso.
+      const querTodos = /\b(todos|todas|tudo)\b/.test(s)
+        || /\b(os dois|as duas|os tres|os três|os 2|os 3|ambos|as ambas|os quatro|todos eles|todas elas|cada um|uma de cada|um de cada|de cada|de todos|pra todos|para todos|todos que comprei|tudo que comprei|geral|todos os que|completo de tudo)\b/.test(s);
+      if (querTodos) {
+        if (!produtos.length) { await saveSession(sid, { ...session, state:'MENU', protoProdutos:null }); return respond(buildMenuPrincipal()); }
+        await saveSession(sid, { ...session, state:'MENU', protoProdutos:null });
+        await dispararIAProtocolo(sid, produtos);
+        return respond(`Show! 🙌 Já tô montando o *protocolo completo de todos os seus produtos* (${produtos.join(', ')}) — chega já já aqui embaixo. 💪`);
+      }
       const idx = parseInt((mensagem||'').trim());
       let escolhido = null, foraLista = false;
       if (idx === 0) foraLista = true;
