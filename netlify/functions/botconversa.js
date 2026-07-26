@@ -94,7 +94,8 @@ const PROMO_PRODUTO = {
 function _normNomeProd(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim(); }
 // \u2500\u2500 Promo G\u00eanesis "Compre 2, Leve 3" (o 3\u00ba gr\u00e1tis, mesma linha) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // Todo produto G\u00eanesis tem "G\u00eanesis" no nome no cat\u00e1logo, ent\u00e3o detecto por isso.
-function ehLinhaGenesis(nome){ return _normNomeProd(nome).includes('genesis'); }
+// Marca = "Gênesis Peptídeos". Uso \bgenesis\b (palavra inteira) pra NÃO pegar "Biogenesis" (outra marca).
+function ehLinhaGenesis(nome){ return /\bgenesis\b/.test(_normNomeProd(nome)); }
 function contarGenesis(carrinho){ return (carrinho||[]).reduce((a,i)=> a + (ehLinhaGenesis(i.nome) ? (i.qtd||1) : 0), 0); }
 function msgPerguntaBrinde(carrinho){
   return `\ud83c\udf81 *Promo\u00e7\u00e3o G\u00eanesis: Compre 2, Leve 3!*\n\nVoc\u00ea tem *${contarGenesis(carrinho)}* itens da linha *G\u00eanesis* no carrinho \u2014 ent\u00e3o voc\u00ea tem *brinde*! \ud83e\udd73\n\n*Qual produto da G\u00eanesis Pept\u00eddeos voc\u00ea quer ganhar de brinde* (o 3\u00ba gr\u00e1tis)?\n\n_Me escreve o nome (ex.: Klow, Glow, GHK-Cu, CJC sem DAC, Ipamorelin, HGH Frag, BPC-157 + TB-500)._`;
@@ -171,7 +172,7 @@ function contextoPromo(){
     linhas.push(`PROMOÇÃO DO MOMENTO ATIVA AGORA: ${PROMO_PRODUTO.titulo} — ${PROMO_PRODUTO.pct}% OFF em ${(PROMO_PRODUTO.produtos || []).join(', ')}${PROMO_PRODUTO.validade ? ' até ' + PROMO_PRODUTO.validade : ''}.`);
   }
   if (PROMO_GENESIS.ativa) {
-    linhas.push('PROMOÇÃO DE LANÇAMENTO ATIVA AGORA: linha *Gênesis Peptídeos* — "COMPRE 2, LEVE 3": na compra de 2 peptídeos da linha Gênesis, o 3º é GRÁTIS (qualquer produto da linha, pode misturar). Frete grátis acima de R$1.000 com o cupom FRETEZERO. O cliente escolhe o brinde no fechamento (o sistema pergunta). Pra mostrar a linha, abra a lista buscando "genesis".');
+    linhas.push('PROMOÇÃO DE LANÇAMENTO ATIVA AGORA: linha *Gênesis Peptídeos* — "COMPRE 2, LEVE 3": na compra de 2 peptídeos da linha Gênesis, o 3º é GRÁTIS (qualquer produto da linha, pode misturar). Frete grátis acima de R$1.000 com o cupom FRETEZERO. O cliente escolhe o brinde no fechamento (o sistema pergunta). Os produtos são da marca *Gênesis Peptídeos* — NÃO confunda com "Biogenesis", que é outra marca. Pra mostrar a linha, abra a lista buscando "genesis peptideos".');
   }
   if (linhas.length === 1) linhas.push('Não há promoção relâmpago nem lançamento com desconto especial ativos no momento (só o benefício padrão acima). NÃO invente promoções.');
   return linhas.join('\n');
@@ -200,7 +201,12 @@ const PROMO_GENESIS = { ativa: true };
 async function anunciarGenesis(session, sid, respond) {
   const intro = `🎁 *LANÇAMENTO GÊNESIS PEPTÍDEOS — COMPRE 2, LEVE 3!* 🔥\n\nNa compra de *2 peptídeos* da linha *Gênesis*, o *3º é GRÁTIS* — pode misturar, escolhe qualquer produto da marca. 💪\n🚚 Acima de *R$ 1.000*, o frete zera com o cupom *FRETEZERO*.\n\n`;
   let linhas = [];
-  try { const dados = await buscarTodosCache(); linhas = filtrarCache(dados, ['genesis']); } catch (e) {}
+  // Só a marca Gênesis Peptídeos — \bgenesis\b exclui "Biogenesis" (marca diferente).
+  try {
+    const dados = await buscarTodosCache();
+    linhas = String(dados || '').split('\n').filter(Boolean)
+      .filter(l => /\bgenesis\b/.test(_normNomeProd((l.split('|')[0]) || '')));
+  } catch (e) {}
   if (!linhas || !linhas.length) {
     await saveSession(sid, { ...session, state:'MENU' });
     return respond(intro + `Pra ver a linha, me manda o nome de um produto (ex.: *Klow*, *Glow*, *GHK-Cu*) que eu já te mostro. 😉`);
