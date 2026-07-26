@@ -104,6 +104,18 @@ function contarGenesis(carrinho){ return (carrinho||[]).reduce((a,i)=> a + (item
 function msgPerguntaBrinde(carrinho){
   return `\ud83c\udf81 *Promo\u00e7\u00e3o G\u00eanesis: Compre 2, Leve 3!*\n\nVoc\u00ea tem *${contarGenesis(carrinho)}* itens da linha *G\u00eanesis* no carrinho \u2014 ent\u00e3o voc\u00ea tem *brinde*! \ud83e\udd73\n\n*Qual produto da G\u00eanesis Pept\u00eddeos voc\u00ea quer ganhar de brinde* (o 3\u00ba gr\u00e1tis)?\n\n_Me escreve o nome (ex.: Klow, Glow, GHK-Cu, CJC sem DAC, Ipamorelin, HGH Frag, BPC-157 + TB-500)._`;
 }
+// Entra no checkout: se for promo G\u00eanesis (2+ itens da linha) e o cliente AINDA n\u00e3o escolheu
+// o brinde, PERGUNTA O BRINDE ANTES DO FRETE (sen\u00e3o a promo se perde no fechamento).
+// Se j\u00e1 escolheu (ou j\u00e1 foi oferecido), segue direto pro estado/frete.
+async function irParaCheckout(session, sid, respond) {
+  const carrinho = session.carrinho || [];
+  if (!session.brinde && !session.brindeOferecido && contarGenesis(carrinho) >= 2) {
+    await saveSession(sid, { ...session, state:'ESCOLHER_BRINDE', brindeOferecido: true });
+    return respond(msgPerguntaBrinde(carrinho));
+  }
+  await saveSession(sid, { ...session, state:'ESTADO' });
+  return respond(`Perfeito, vamos fechar seu pedido! \ud83d\uded2\n\n${resumoCarrinho(carrinho)}\n\n*De qual estado voc\u00ea \u00e9?* (pra eu calcular o frete)\nExemplo: RJ, SP, MG, DF, BA...`);
+}
 
 // \u2500\u2500 PROTOCOLO s\u00f3 p\u00f3s-compra + travado por CPF (s\u00f3 monta com o que o cliente J\u00c1 comprou) \u2500\u2500
 // Detecta quando o cliente quer que a Athena MONTE um protocolo/plano pra ele, ou analisar exame.
@@ -1405,6 +1417,9 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     ? `\n_(Seu cupom daria R$ ${descCupomNormais.toFixed(2).replace('.',',')} nos demais itens, mas o desconto Athena de 3% é maior e foi aplicado!)_` : '';
   const linhaConviteCupom = (!cupomDocId && totalNormais > 0)
     ? `\n\n🏷️ *TEM UM CUPOM DE DESCONTO?*\nÉ *AGORA*: digite o *código do cupom* antes de confirmar. 👇` : '';
+  // Promo Gênesis: mostra o brinde (3º grátis) já escolhido no resumo
+  const linhaBrinde = session.brinde
+    ? `🎁 *Brinde (3º grátis — Gênesis):* ${session.brinde}\n` : '';
 
   const resumo =
     `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
@@ -1412,7 +1427,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     (freteValorFinal > 0
       ? `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${freteValorFinal.toFixed(2).replace('.',',')}\n`
       : `🚚 Frete *${frete.label}* — ${session.estadoCliente}: ~~R$ ${(frete.valor||0).toFixed(2).replace('.',',')}~~ *GRÁTIS* 🎉\n`) +
-    linhaFreteGratis +
+    linhaFreteGratis + linhaBrinde +
     linhasDesc + linhaCupomInfo +
     `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu` +
     linhaConviteCupom;
@@ -1869,8 +1884,7 @@ exports.handler = async (event) => {
         return respond(msgCarrinhoMenu(session.carrinho));
       }
       if (ehFinalizar) {
-        await saveSession(sid, { ...session, state:'ESTADO' });
-        return respond(`Perfeito, vamos fechar seu pedido! 🛒\n\n${resumoCarrinho(session.carrinho)}\n\n*De qual estado você é?* (pra eu calcular o frete)\nExemplo: RJ, SP, MG, DF, BA...`);
+        return await irParaCheckout(session, sid, respond);
       }
     }
 
@@ -2357,7 +2371,7 @@ exports.handler = async (event) => {
         await saveSession(sid, { ...session, state:'MENU' });
         return respond('🛒 Seu carrinho está guardado! Escolha mais produtos:\n\n' + buildMenuPrincipal());
       }
-      if (num === 2) { await saveSession(sid, { ...session, state:'ESTADO' }); return respond(`*De qual estado você é?*\nExemplo: RJ, SP, MG, DF, BA...`); }
+      if (num === 2) { return await irParaCheckout(session, sid, respond); }
       if (num === 3 || REM_INTENT.some(p => n.includes(p))) {
         if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio. 🛒\n\n' + buildMenuPrincipal()); }
         await saveSession(sid, { ...session, state:'REMOVER_ITEM' });
@@ -2535,16 +2549,25 @@ exports.handler = async (event) => {
       return respond(`Tranquilo! 😊 Qualquer coisa é só chamar. Quer aproveitar e ver nossos produtos? Me diz seu objetivo ou digite *menu*.`);
     }
 
-    // Promo Gênesis: o cliente acabou de escolher o BRINDE (3º grátis) → guarda e gera o link.
+    // Promo Gênesis: o cliente escolhe o BRINDE (3º grátis) ANTES do frete.
+    // Guarda o brinde e SEGUE pro estado/frete (o link só é gerado no CONFIRMAR).
     if (state === 'ESCOLHER_BRINDE') {
       const escolha = (mensagem || '').trim();
-      if (!escolha || /^(menu|voltar|cancelar|nao|não)$/i.test(norm(escolha))) {
+      const nEsc = norm(escolha);
+      // Sair de vez (volta pro menu, carrinho guardado)
+      if (!escolha || /^(menu|inicio|início|voltar|cancelar)$/i.test(nEsc)) {
         await saveSession(sid, { ...session, state:'MENU' });
         return respond('Sem problema! 😊 *Seu carrinho continua guardado* — quando quiser fechar, é só digitar *finalizar*.\n\n' + buildMenuPrincipal());
       }
-      const novaSess = { ...session, brinde: escolha };
+      // Recusou escolher agora → segue pro frete; pode anotar o brinde na Observação no fechamento
+      if (/\b(nao|não|nao quero|nao sei|sem brinde|depois|agora nao|deixa|pular|pula)\b/.test(nEsc)) {
+        await saveSession(sid, { ...session, state:'ESTADO', brindeOferecido: true });
+        return respond('Beleza! Você pode escolher o *3º grátis* na hora de fechar, escrevendo no campo *Observação*. 😉\n\n*De qual estado você é?* (pra eu calcular o frete)\nExemplo: RJ, SP, MG, DF, BA...');
+      }
+      // Escolheu o brinde → guarda e segue pro frete (link só no fim)
+      const novaSess = { ...session, brinde: escolha, brindeOferecido: true };
       await saveSession(sid, novaSess);
-      return await gerarLinkPedido(novaSess, sid, respond);
+      return respond(`🎁 Anotado! Seu *3º grátis* é *${escolha}*. 🥳\n\nAgora é só fechar:\n\n*De qual estado você é?* (pra eu calcular o frete)\nExemplo: RJ, SP, MG, DF, BA...`);
     }
 
     if (state === 'CONFIRMAR') {
@@ -2552,9 +2575,10 @@ exports.handler = async (event) => {
       if (num === 1) {
         const carrinho = session.carrinho || [];
         if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
-        // Promo Gênesis "Compre 2, Leve 3": 2+ itens da linha → pergunta o brinde ANTES de gerar o link.
-        if (!session.brinde && contarGenesis(carrinho) >= 2) {
-          await saveSession(sid, { ...session, state:'ESCOLHER_BRINDE' });
+        // Rede de segurança: o brinde já é perguntado ANTES do frete (irParaCheckout).
+        // Se, por algum caminho, o cliente chegou aqui sem ter sido oferecido, oferece agora.
+        if (!session.brinde && !session.brindeOferecido && contarGenesis(carrinho) >= 2) {
+          await saveSession(sid, { ...session, state:'ESCOLHER_BRINDE', brindeOferecido: true });
           return respond(msgPerguntaBrinde(carrinho));
         }
         return await gerarLinkPedido(session, sid, respond);
@@ -2569,6 +2593,12 @@ exports.handler = async (event) => {
         const totalProd = session.totalProd || totalCarrinho(session.carrinho || []);
         const resultado = await validarCupom(mensagem, totalProd);
         if (resultado.ok) {
+          // Cupom de FRETE (frete grátis ou desconto no frete, ex.: FRETEZERO): aplica SEMPRE.
+          // Não compara com os 3% da Athena — frete e desconto em produto são coisas diferentes,
+          // e o fecharResumoNormal mantém os 3% nos produtos E zera/abate o frete.
+          if (resultado.tipo === 'frete') {
+            return await fecharResumoNormal({ ...session, cupomDocId:null, cupomCodigo:null }, sid, resultado, respond);
+          }
           if (resultado.descontoReais > (session.descontoReais || 0)) {
             return await fecharResumoNormal({ ...session, cupomDocId:null, cupomCodigo:null }, sid, resultado, respond);
           }
