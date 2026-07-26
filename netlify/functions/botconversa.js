@@ -170,6 +170,9 @@ function contextoPromo(){
   if (PROMO_PRODUTO.ativa && (PROMO_PRODUTO.produtos || []).length) {
     linhas.push(`PROMOÇÃO DO MOMENTO ATIVA AGORA: ${PROMO_PRODUTO.titulo} — ${PROMO_PRODUTO.pct}% OFF em ${(PROMO_PRODUTO.produtos || []).join(', ')}${PROMO_PRODUTO.validade ? ' até ' + PROMO_PRODUTO.validade : ''}.`);
   }
+  if (PROMO_GENESIS.ativa) {
+    linhas.push('PROMOÇÃO DE LANÇAMENTO ATIVA AGORA: linha *Gênesis Peptídeos* — "COMPRE 2, LEVE 3": na compra de 2 peptídeos da linha Gênesis, o 3º é GRÁTIS (qualquer produto da linha, pode misturar). Frete grátis acima de R$1.000 com o cupom FRETEZERO. O cliente escolhe o brinde no fechamento (o sistema pergunta). Pra mostrar a linha, abra a lista buscando "genesis".');
+  }
   if (linhas.length === 1) linhas.push('Não há promoção relâmpago nem lançamento com desconto especial ativos no momento (só o benefício padrão acima). NÃO invente promoções.');
   return linhas.join('\n');
 }
@@ -189,6 +192,21 @@ async function anunciarLancamento(session, sid) {
   msg += `📲 *Entre no nosso grupo VIP* (se ainda não for membro, é só entrar; se já for, é só seguir):\n${PROMO_PRODUTO.linkGrupo}\n\n`;
   msg += `Quer que eu já adicione no seu carrinho?\n\n1️⃣ Sim, quero a Retatrutida AQ\n2️⃣ Não, voltar ao menu`;
   return msg;
+}
+
+// ── PROMO GÊNESIS "Compre 2, Leve 3" = a PROMOÇÃO DO MOMENTO (opção 6 / "promoção") ──
+// Pra desligar no futuro: ativa:false.
+const PROMO_GENESIS = { ativa: true };
+async function anunciarGenesis(session, sid, respond) {
+  const intro = `🎁 *LANÇAMENTO GÊNESIS PEPTÍDEOS — COMPRE 2, LEVE 3!* 🔥\n\nNa compra de *2 peptídeos* da linha *Gênesis*, o *3º é GRÁTIS* — pode misturar, escolhe qualquer produto da marca. 💪\n🚚 Acima de *R$ 1.000*, o frete zera com o cupom *FRETEZERO*.\n\n`;
+  let linhas = [];
+  try { const dados = await buscarTodosCache(); linhas = filtrarCache(dados, ['genesis']); } catch (e) {}
+  if (!linhas || !linhas.length) {
+    await saveSession(sid, { ...session, state:'MENU' });
+    return respond(intro + `Pra ver a linha, me manda o nome de um produto (ex.: *Klow*, *Glow*, *GHK-Cu*) que eu já te mostro. 😉`);
+  }
+  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas), errosSeguidos:0 });
+  return respond(intro + `Aqui está a *linha Gênesis* — é só escolher *2* que o 3º vem grátis 😉:\n\n` + formatarLista(linhas) + `\n\n*Digite o número do produto:*`);
 }
 
 // ── Grupo VIP (WhatsApp + Telegram) ───────────────────────────────────────────
@@ -1852,6 +1870,7 @@ exports.handler = async (event) => {
 
     const ehPromo = n.includes('promo') || n.includes('namorados');
     if (ehPromo && !emCheckout) {
+      if (PROMO_GENESIS.ativa) return await anunciarGenesis(session, sid, respond);
       const msg = await abrirPromo(session, sid);     // se a Relâmpago for reativada, ela tem prioridade
       if (msg) return respond(msg);
       if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
@@ -2049,6 +2068,7 @@ exports.handler = async (event) => {
         return respond(`*📦 OUTROS (Botox, vitaminas e remédios em geral)*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
       }
       if (num === 6) {
+        if (PROMO_GENESIS.ativa) return await anunciarGenesis(session, sid, respond);
         const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
         if (msg) return respond(msg);
         if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
