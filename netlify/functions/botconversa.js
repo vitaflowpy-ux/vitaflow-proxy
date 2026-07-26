@@ -807,6 +807,12 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // Pediu pra MONTAR um protocolo/plano (ou analisar exame) → fluxo travado por CPF:
   // só monta protocolo depois da compra e SÓ com os produtos que o cliente já comprou.
   if (ehPedidoProtocoloCompleto(nMsg)) {
+    // Se já confirmou o cliente NESTA sessão, vai DIRETO pra escolha — não pergunta de novo nem busca de novo.
+    if (session.protoVerificado && Array.isArray(session.protoProdutos) && session.protoProdutos.length) {
+      const lista = session.protoProdutos.map((p,i) => `${emojis(i)} ${p}`).join('\n');
+      await saveSession(sid, { ...session, state:'PROTO_ESCOLHER', errosSeguidos:0 });
+      return respond(`Beleza! 💪 Seus produtos:\n\n${lista}\n\n0️⃣ Outro produto (que ainda não comprei)\n\n*Pra qual você quer o protocolo agora?* Pode ser *um número*, *vários* (ex.: 1 e 3 — protocolo combinado) ou *todos*.`);
+    }
     await saveSession(sid, { ...session, state:'PROTO_CLIENTE', errosSeguidos:0 });
     return respond(`Adoro montar protocolo! 💪\n\nO protocolo *completo e personalizado* (suas doses, ciclo e cuidados) eu monto *depois da compra* — é cortesia exclusiva pra *cliente VitaFlow*.\n\nVocê *já é cliente* nossa? _(responde *sim* ou *não*)_`);
   }
@@ -2421,8 +2427,8 @@ exports.handler = async (event) => {
       const produtos = extrairProdutosDosPedidos(pedidos);
       if (produtos.length) {
         const lista = produtos.map((p,i) => `${emojis(i)} ${p}`).join('\n');
-        await saveSession(sid, { ...session, state:'PROTO_ESCOLHER', protoProdutos: produtos });
-        return respond(`Achei seu cadastro! ✅ Você já comprou com a gente:\n\n${lista}\n\n0️⃣ Outro produto (que ainda não comprei)\n\n*Pra qual você quer o protocolo completo?* _(digite o número ou o nome)_`);
+        await saveSession(sid, { ...session, state:'PROTO_ESCOLHER', protoProdutos: produtos, protoVerificado: true });
+        return respond(`Achei seu cadastro! ✅ Você já comprou com a gente:\n\n${lista}\n\n0️⃣ Outro produto (que ainda não comprei)\n\n*Pra qual você quer o protocolo?* Pode escolher *um número*, *vários* (ex.: *1 e 3* — protocolo combinado) ou *todos*.`);
       }
       // não achou: 1ª falha pede o OUTRO dado; 2ª falha oferece atendente humano.
       if (!session.protoTentouOutro) {
@@ -2435,37 +2441,47 @@ exports.handler = async (event) => {
     }
     if (state === 'PROTO_ESCOLHER') {
       const s = norm(mensagem);
-      if (/^(menu|inicio|início|voltar|cancelar)$/.test(s)) { await saveSession(sid, { ...session, state:'MENU', protoProdutos:null }); return respond(buildMenuPrincipal()); }
+      // NÃO limpo protoProdutos/protoVerificado ao sair — o cliente pode querer outro protocolo depois.
+      if (/^(menu|inicio|início|voltar|cancelar)$/.test(s)) { await saveSession(sid, { ...session, state:'MENU' }); return respond(buildMenuPrincipal()); }
       const produtos = session.protoProdutos || [];
+      if (!produtos.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond(buildMenuPrincipal()); }
       // Quer o protocolo de TODOS os produtos — reconhece MUITAS formas de dizer isso.
       const querTodos = /\b(todos|todas|tudo)\b/.test(s)
         || /\b(os dois|as duas|os tres|os três|os 2|os 3|ambos|as ambas|os quatro|todos eles|todas elas|cada um|uma de cada|um de cada|de cada|de todos|pra todos|para todos|todos que comprei|tudo que comprei|geral|todos os que|completo de tudo)\b/.test(s);
       if (querTodos) {
-        if (!produtos.length) { await saveSession(sid, { ...session, state:'MENU', protoProdutos:null }); return respond(buildMenuPrincipal()); }
-        await saveSession(sid, { ...session, state:'MENU', protoProdutos:null });
+        await saveSession(sid, { ...session, state:'MENU' });
         await dispararIAProtocolo(sid, produtos);
         return respond(`Show! 🙌 Já tô montando o *protocolo completo de todos os seus produtos* (${produtos.join(', ')}) — chega já já aqui embaixo. 💪`);
       }
-      const idx = parseInt((mensagem||'').trim());
-      let escolhido = null, foraLista = false;
-      if (idx === 0) foraLista = true;
-      else if (!isNaN(idx) && idx >= 1 && idx <= produtos.length) escolhido = produtos[idx-1];
-      else if (isNaN(idx)) {
-        const nm = norm(mensagem);
-        escolhido = produtos.find(p => { const np = norm(p); return np.includes(nm) || (nm.length>2 && nm.includes(np.split(' ')[0])); });
-        if (!escolhido && nm.length > 2) foraLista = true;   // nomeou um produto que ainda não comprou
-      }
-      if (foraLista) {
-        await saveSession(sid, { ...session, state:'MENU', protoProdutos:null });
+      // "0" sozinho → produto fora da lista (ainda não comprou)
+      if (s === '0') {
+        await saveSession(sid, { ...session, state:'MENU' });
         return respond(`Esse produto você ainda *não comprou* com a gente 😊. O protocolo dele eu monto certinho *depois da compra*!\n\nQuer ver as opções que temos? Me diz o que procura (ex.: emagrecer, ganhar massa) ou digite *menu*. 💪`);
       }
-      if (!escolhido) {
-        const lista = produtos.map((p,i) => `${emojis(i)} ${p}`).join('\n');
-        return respond(`Não entendi qual produto. 😊 Escolhe pelo *número*:\n\n${lista}\n\n0️⃣ Outro produto (que ainda não comprei)`);
+      // pega TODOS os números da mensagem (ex.: "1 e 3", "1,2", "2 3") dentro do intervalo → protocolo separado (1) ou combinado (vários)
+      const nums = ((mensagem||'').match(/\d+/g) || []).map(Number).filter(n => n >= 1 && n <= produtos.length);
+      let escolhidos = [];
+      if (nums.length) {
+        escolhidos = [...new Set(nums)].map(n => produtos[n-1]);
+      } else {
+        const nm = norm(mensagem);
+        const achou = produtos.find(p => { const np = norm(p); return np.includes(nm) || (nm.length>2 && nm.includes(np.split(' ')[0])); });
+        if (achou) escolhidos = [achou];
+        else if (nm.length > 2) {   // nomeou um produto que ainda não comprou
+          await saveSession(sid, { ...session, state:'MENU' });
+          return respond(`Esse produto você ainda *não comprou* com a gente 😊. O protocolo dele eu monto certinho *depois da compra*!\n\nQuer ver as opções que temos? Me diz o que procura ou digite *menu*. 💪`);
+        }
       }
-      await saveSession(sid, { ...session, state:'MENU', protoProdutos:null });
-      await dispararIAProtocolo(sid, [escolhido]);
-      return respond(`Show! 🙌 Já tô montando o *protocolo completo do ${escolhido}* pra você — chega já já aqui embaixo. 💪`);
+      if (!escolhidos.length) {
+        const lista = produtos.map((p,i) => `${emojis(i)} ${p}`).join('\n');
+        return respond(`Não entendi. 😊 Escolhe pelo *número* — pode ser *um*, *vários* (ex.: *1 e 3*, protocolo combinado) ou *todos*:\n\n${lista}\n\n0️⃣ Outro produto (que ainda não comprei)`);
+      }
+      await saveSession(sid, { ...session, state:'MENU' });   // mantém protoProdutos + protoVerificado no session
+      await dispararIAProtocolo(sid, escolhidos);
+      const nomes = escolhidos.join(', ');
+      return respond(escolhidos.length > 1
+        ? `Show! 🙌 Já tô montando o *protocolo combinado* de ${nomes} — chega já já aqui embaixo. 💪`
+        : `Show! 🙌 Já tô montando o *protocolo completo do ${nomes}* — chega já já aqui embaixo. 💪`);
     }
     if (state === 'PROTO_HUMANO') {
       const s = norm(mensagem);
