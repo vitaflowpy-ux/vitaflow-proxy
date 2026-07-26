@@ -198,21 +198,23 @@ async function anunciarLancamento(session, sid) {
 // ── PROMO GÊNESIS "Compre 2, Leve 3" = a PROMOÇÃO DO MOMENTO (opção 6 / "promoção") ──
 // Pra desligar no futuro: ativa:false.
 const PROMO_GENESIS = { ativa: true };
-async function anunciarGenesis(session, sid, respond) {
-  const intro = `🎁 *LANÇAMENTO GÊNESIS PEPTÍDEOS — COMPRE 2, LEVE 3!* 🔥\n\nNa compra de *2 peptídeos* da linha *Gênesis*, o *3º é GRÁTIS* — pode misturar, escolhe qualquer produto da marca. 💪\n🚚 Acima de *R$ 1.000*, o frete zera com o cupom *FRETEZERO*.\n\n`;
+async function anunciarGenesis(session, sid, respond, curto) {
+  const intro = curto
+    ? `🎁 *Continue na promo Gênesis — Compre 2, Leve 3!* Escolha mais um da linha (o 3º é grátis 😉):\n\n`
+    : `🎁 *LANÇAMENTO GÊNESIS PEPTÍDEOS — COMPRE 2, LEVE 3!* 🔥\n\nNa compra de *2 peptídeos* da linha *Gênesis*, o *3º é GRÁTIS* — pode misturar, escolhe qualquer produto da marca. 💪\n🚚 Acima de *R$ 1.000*, o frete zera com o cupom *FRETEZERO*.\n\nAqui está a *linha Gênesis* — é só escolher *2* que o 3º vem grátis 😉:\n\n`;
   let linhas = [];
   // Só a marca Gênesis Peptídeos — \bgenesis\b exclui "Biogenesis" (marca diferente).
   try {
     const dados = await buscarTodosCache();
-    linhas = String(dados || '').split('\n').filter(Boolean)
-      .filter(l => /\bgenesis\b/.test(_normNomeProd((l.split('|')[0]) || '')));
+    linhas = [...new Set(String(dados || '').split('\n').filter(Boolean)
+      .filter(l => /\bgenesis\b/.test(_normNomeProd((l.split('|')[0]) || ''))))];
   } catch (e) {}
   if (!linhas || !linhas.length) {
     await saveSession(sid, { ...session, state:'MENU' });
-    return respond(intro + `Pra ver a linha, me manda o nome de um produto (ex.: *Klow*, *Glow*, *GHK-Cu*) que eu já te mostro. 😉`);
+    return respond(`🎁 *Promoção Gênesis — Compre 2, Leve 3!*\n\nPra ver a linha, me manda o nome de um produto (ex.: *Klow*, *Glow*, *GHK-Cu*) que eu já te mostro. 😉`);
   }
-  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas), errosSeguidos:0 });
-  return respond(intro + `Aqui está a *linha Gênesis* — é só escolher *2* que o 3º vem grátis 😉:\n\n` + formatarLista(linhas) + `\n\n*Digite o número do produto:*`);
+  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas), promoGenesis: true, errosSeguidos:0 });
+  return respond(intro + formatarLista(linhas) + `\n\n*Digite o número do produto* (ou *menu* pra ver todas as categorias):`);
 }
 
 // ── Grupo VIP (WhatsApp + Telegram) ───────────────────────────────────────────
@@ -2341,7 +2343,12 @@ exports.handler = async (event) => {
 
     if (state === 'CARRINHO') {
       const carrinho = session.carrinho || [];
-      if (num === 1) { await saveSession(sid, { ...session, state:'MENU' }); return respond('🛒 Seu carrinho está guardado! Escolha mais produtos:\n\n' + buildMenuPrincipal()); }
+      if (num === 1) {
+        // Se está no fluxo da promo Gênesis, mantém o cliente na linha Gênesis (não volta pro menu geral).
+        if (session.promoGenesis) return await anunciarGenesis(session, sid, respond, true);
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond('🛒 Seu carrinho está guardado! Escolha mais produtos:\n\n' + buildMenuPrincipal());
+      }
       if (num === 2) { await saveSession(sid, { ...session, state:'ESTADO' }); return respond(`*De qual estado você é?*\nExemplo: RJ, SP, MG, DF, BA...`); }
       if (num === 3 || REM_INTENT.some(p => n.includes(p))) {
         if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio. 🛒\n\n' + buildMenuPrincipal()); }
