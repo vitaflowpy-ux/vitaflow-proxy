@@ -96,7 +96,11 @@ function _normNomeProd(s){ return String(s||'').normalize('NFD').replace(/[\u030
 // Todo produto G\u00eanesis tem "G\u00eanesis" no nome no cat\u00e1logo, ent\u00e3o detecto por isso.
 // Marca = "Gênesis Peptídeos". Uso \bgenesis\b (palavra inteira) pra NÃO pegar "Biogenesis" (outra marca).
 function ehLinhaGenesis(nome){ return /\bgenesis\b/.test(_normNomeProd(nome)); }
-function contarGenesis(carrinho){ return (carrinho||[]).reduce((a,i)=> a + (ehLinhaGenesis(i.nome) ? (i.qtd||1) : 0), 0); }
+// Um item conta como Gênesis se foi ESCOLHIDO na lista da promo (flag item.genesis)
+// OU se o nome tem a marca. A flag garante que o brinde dispare mesmo que o nome
+// gravado no carrinho não traga o texto "Gênesis" (ex.: nome curto/sem marca).
+function itemEhGenesis(i){ return !!(i && (i.genesis || ehLinhaGenesis(i.nome))); }
+function contarGenesis(carrinho){ return (carrinho||[]).reduce((a,i)=> a + (itemEhGenesis(i) ? (i.qtd||1) : 0), 0); }
 function msgPerguntaBrinde(carrinho){
   return `\ud83c\udf81 *Promo\u00e7\u00e3o G\u00eanesis: Compre 2, Leve 3!*\n\nVoc\u00ea tem *${contarGenesis(carrinho)}* itens da linha *G\u00eanesis* no carrinho \u2014 ent\u00e3o voc\u00ea tem *brinde*! \ud83e\udd73\n\n*Qual produto da G\u00eanesis Pept\u00eddeos voc\u00ea quer ganhar de brinde* (o 3\u00ba gr\u00e1tis)?\n\n_Me escreve o nome (ex.: Klow, Glow, GHK-Cu, CJC sem DAC, Ipamorelin, HGH Frag, BPC-157 + TB-500)._`;
 }
@@ -213,7 +217,11 @@ async function anunciarGenesis(session, sid, respond, curto) {
     await saveSession(sid, { ...session, state:'MENU' });
     return respond(`🎁 *Promoção Gênesis — Compre 2, Leve 3!*\n\nPra ver a linha, me manda o nome de um produto (ex.: *Klow*, *Glow*, *GHK-Cu*) que eu já te mostro. 😉`);
   }
-  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas), promoGenesis: true, errosSeguidos:0 });
+  // Marca cada produto da lista como Gênesis (item.genesis) — assim, quando o cliente
+  // escolher, o item entra no carrinho já sinalizado e o brinde dispara com 2+ da linha,
+  // sem depender do texto "Gênesis" estar no nome gravado.
+  const listaGenesis = parseProdutos(linhas).map(function(p){ p.genesis = true; return p; });
+  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: listaGenesis, promoGenesis: true, errosSeguidos:0 });
   return respond(intro + formatarLista(linhas) + `\n\n*Digite o número do produto* (ou *menu* pra ver todas as categorias):`);
 }
 
@@ -2304,7 +2312,7 @@ exports.handler = async (event) => {
       if (!num || num < 1 || num > 99) return respond('Por favor, informe uma quantidade válida (1 a 99):');
       const prod = session.produtoSelecionado || {};
       const carrinho = session.carrinho || [];
-      carrinho.push({ nome: prod.nome, preco: prod.preco, qtd: num, colecao: prod.colecao || session.colecaoAtual || '' });
+      carrinho.push({ nome: prod.nome, preco: prod.preco, qtd: num, colecao: prod.colecao || session.colecaoAtual || '', genesis: !!(prod.genesis || ehLinhaGenesis(prod.nome)) });
       // COMBO: ainda tem produto na fila? OFERECE o próximo (não abre sozinho) — 1 toque e segue.
       const fila = session.stackFila || [];
       if (fila.length) {
