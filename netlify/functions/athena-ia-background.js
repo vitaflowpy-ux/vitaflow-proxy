@@ -395,6 +395,13 @@ async function pensarComClaude(sys, mensagem, historico, maxTokens){
 }
 
 // ── PROTOCOLO PÓS-VENDA ───────────────────────────────────────────────────────
+// WhatsApp não renderiza # ## ### — se o modelo escapar e usar, converte pra *negrito* (ou tira o #).
+function limparHeadersMd(txt){
+  return String(txt || '').replace(/^\s{0,3}#{1,6}\s*(.+?)\s*$/gm, function(_, t){
+    return /\*/.test(t) ? t : ('*' + t + '*');
+  });
+}
+
 const PROTOCOLO_SYSTEM = `Você é a Athena, consultora da VitaFlow. O cliente ACABOU de comprar e já pagou — agora você entrega, como bônus de pós-venda, o PROTOCOLO COMPLETO dos produtos que ele levou. Caprica: é isso que faz o cliente confiar e voltar.
 
 REGRAS:
@@ -420,13 +427,15 @@ async function gerarProtocoloPosVenda(body){
     if (!phone || !produtos.length) return { statusCode: 200, body: 'no-op' };
     const catalogo = await catalogoResumo();
     const sys = PROTOCOLO_SYSTEM + `\n\n=== CATÁLOGO (referência de nomes/formatos reais — NÃO invente fora disto) ===\n${catalogo}`;
-    const pedido = `O cliente acabou de comprar: ${produtos.join(', ')}.\n\nMonte agora o PROTOCOLO COMPLETO e detalhado de CADA um desses produtos, pronto pra enviar no WhatsApp.`;
-    const pensado = await pensarComClaude(sys, pedido, [], 1500);
+    const pedido = `O cliente é cliente VitaFlow e tem: ${produtos.join(', ')}.\n\nMonte agora o PROTOCOLO COMPLETO e detalhado ${produtos.length > 1 ? 'de CADA um desses produtos, e explique como combiná-los quando fizer sentido' : 'desse produto'}, pronto pra enviar no WhatsApp. Entregue o protocolo INTEIRO, do começo ao fim, SEM cortar no meio. Use *negrito* pros títulos — NUNCA use # ## ###.`;
+    // Limite dinâmico: quanto mais produtos, mais espaço (evita protocolo cortado). Teto 8000.
+    const maxTok = Math.min(8000, 2200 + produtos.length * 1500);
+    const pensado = await pensarComClaude(sys, pedido, [], maxTok);
     if (!pensado.texto) {
       console.log('[IA] PROTOCOLO: modelo não respondeu — nada enviado.');
       return { statusCode: 200, body: 'no-reply' };
     }
-    const texto = `📋 *SEU PROTOCOLO VITAFLOW* 🌿\n_Guarde esta mensagem! Preparei um guia completo pra você aproveitar ao máximo o que comprou._\n\n` + pensado.texto;
+    const texto = `📋 *SEU PROTOCOLO VITAFLOW* 🌿\n_Guarde esta mensagem! Preparei um guia completo pra você aproveitar ao máximo o que comprou._\n\n` + limparHeadersMd(pensado.texto);
     const envio = await enviarLongo(phone, texto);
     console.log('[IA] PROTOCOLO enviado:', JSON.stringify(envio));
     return { statusCode: 200, body: 'ok' };
