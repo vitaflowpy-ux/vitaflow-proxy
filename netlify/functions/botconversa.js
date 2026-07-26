@@ -92,6 +92,41 @@ const PROMO_PRODUTO = {
   linkGrupo: '',
 };
 function _normNomeProd(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim(); }
+// \u2500\u2500 Promo G\u00eanesis "Compre 2, Leve 3" (o 3\u00ba gr\u00e1tis, mesma linha) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Todo produto G\u00eanesis tem "G\u00eanesis" no nome no cat\u00e1logo, ent\u00e3o detecto por isso.
+function ehLinhaGenesis(nome){ return _normNomeProd(nome).includes('genesis'); }
+function contarGenesis(carrinho){ return (carrinho||[]).reduce((a,i)=> a + (ehLinhaGenesis(i.nome) ? (i.qtd||1) : 0), 0); }
+function msgPerguntaBrinde(carrinho){
+  return `\ud83c\udf81 *Promo\u00e7\u00e3o G\u00eanesis: Compre 2, Leve 3!*\n\nVoc\u00ea tem *${contarGenesis(carrinho)}* itens da linha *G\u00eanesis* no carrinho \u2014 ent\u00e3o voc\u00ea tem *brinde*! \ud83e\udd73\n\n*Qual produto da G\u00eanesis Pept\u00eddeos voc\u00ea quer ganhar de brinde* (o 3\u00ba gr\u00e1tis)?\n\n_Me escreve o nome (ex.: Klow, Glow, GHK-Cu, CJC sem DAC, Ipamorelin, HGH Frag, BPC-157 + TB-500)._`;
+}
+
+// \u2500\u2500 PROTOCOLO s\u00f3 p\u00f3s-compra + travado por CPF (s\u00f3 monta com o que o cliente J\u00c1 comprou) \u2500\u2500
+// Detecta quando o cliente quer que a Athena MONTE um protocolo/plano pra ele, ou analisar exame.
+// (Pergunta informativa tipo "qual o protocolo da retatrutida?" N\u00c3O cai aqui \u2014 vai pra IA com teaser.)
+function ehPedidoProtocoloCompleto(nMsg){
+  const t = ' ' + (nMsg||'') + ' ';
+  const querMontar = /(monta|montar|monte|faz |fazer|fa\u00e7a|faca|cria |criar|crie|quero|preciso|me monta|me faz|manda|me passa)/.test(t);
+  const alvo = /(protocolo|plano|ciclo|stack completo|esquema)/.test(t);
+  const exame = /(analis|avali|ver|le[ir]|leia).{0,15}exame|meu exame|meus exames/.test(t);
+  const frasesFortes = /(meu protocolo|protocolo completo|protocolo personalizado|monta.{0,15}protocolo|meu plano|plano completo)/.test(t);
+  // "como usar / ensinar a usar / dose / posologia" tamb\u00e9m conta como protocolo (\u00e9 ensinar a usar).
+  // Mas N\u00c3O gatilha em cupom/site/pagamento, nem em "pra que serve / o que \u00e9 / combina" (isso \u00e9 explica\u00e7\u00e3o, liberado).
+  const comoUsar = /(como (uso|usar|usa|toma|tomar|aplica|aplicar|utiliza|utilizar|faz pra usar)|me ensina|ensina[r]? (a |como )?(usar|aplicar|tomar)|posologia|qual.{0,5}dose|dosagem certa|quanto.{0,8}(tomar|aplicar|usar por))/.test(t)
+    && !/cupom|site|desconto|codigo|c\u00f3digo|pagar|pagamento|\bapp\b|link|rastre/.test(t);
+  return (querMontar && alvo) || exame || frasesFortes || comoUsar;
+}
+// Extrai a lista de produtos (nomes limpos, sem duplicar) dos pedidos PAGOS retornados pelo consultar_status.
+function extrairProdutosDosPedidos(pedidos){
+  const set = new Set();
+  (pedidos||[]).forEach(p => {
+    String(p && p.produtos || '').split(/[|;\n]+/).forEach(part => {
+      let nome = part.replace(/\bx\s*\d+\b/gi,'').replace(/R\$\s*[\d.,]+/g,'').replace(/\s{2,}/g,' ').trim();
+      nome = nome.replace(/^[-\u2022\d.\)\s]+/,'').trim();
+      if (nome && nome.length > 2 && !/^frete/i.test(nome)) set.add(nome);
+    });
+  });
+  return [...set].slice(0, 12);
+}
 // um item do carrinho entra na promoção se casar por NOME (produtos) ou por COLEÇÃO (colecoes)
 function ehProdutoPromo(item){
   if (!PROMO_PRODUTO.ativa) return false;
@@ -638,6 +673,18 @@ function ehCPFsolto(msg) {
   const resto = (msg || '').replace(/[\d.\-\s/]/g,'').trim();
   return resto.length <= 4; // tolera "cpf" antes do número
 }
+// Detecta quando o cliente colou o CÓDIGO DA TRANSPORTADORA (Correios/Loggi/Jadlog/J&T)
+// em vez do número do pedido VitaFlow. Aí a gente avisa pra ele usar o dado certo.
+function ehCodigoTransportadora(msg) {
+  const t = (msg || '').toUpperCase().replace(/\s/g,'');
+  if (!t) return false;
+  if (ehNumeroPedido(msg)) return false;                 // VF-... é pedido, não código
+  if (ehCPFsolto(msg)) return false;                     // CPF não é código
+  if (/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(t)) return true;    // Correios: AC817953643BR
+  if (/^[A-Z0-9]{10,}BR$/.test(t) && /[A-Z]/.test(t) && /\d/.test(t)) return true; // Loggi e afins terminando em BR
+  if (/^\d{12,15}$/.test(t)) return true;                // Jadlog/J&T: só números, 12–15 dígitos
+  return false;
+}
 function ehIntencaoRastreio(nMsg, msgOriginal) {
   const palavras = ['rastrear','rastreamento','rastreio','cade meu pedido','cadê meu pedido','meu pedido','onde esta meu pedido','onde está meu pedido','status do pedido','status do meu pedido','acompanhar pedido','codigo de rastreio',
     'atrasou','atrasado','atraso','demorou','demorando','ta demorando','esta demorando','nao chegou','ainda nao chegou','nao recebi','cade meu produto','onde esta minha encomenda'];
@@ -651,6 +698,10 @@ function ehIntencaoRastreio(nMsg, msgOriginal) {
 async function fazerRastreio(termo, respond) {
   const pedidos = await consultarStatusGAS((termo || '').trim());
   if (!pedidos.length) {
+    // Cliente colou o código da TRANSPORTADORA em vez do número do pedido VitaFlow → orienta.
+    if (ehCodigoTransportadora(termo)) {
+      return respond(`📦 Isso aí parece o *código da transportadora* — por ele eu não consigo consultar aqui. 😊\n\nPra eu achar seu pedido, me manda um destes:\n• o *número do pedido VitaFlow* (começa com *VF-*)\n• seu *CPF*\n• ou o *e-mail* da compra\n\n_Com o código da transportadora você rastreia direto no site dela. Ou fale com a logística: 👉 wa.me/447537155718_`);
+    }
     return respond(`🔍 Não encontrei nenhum pedido com *esse dado*.\n\nConfere o *número do pedido*, *CPF* ou *e-mail* da compra e me manda de novo. 😊\n\n📞 Se preferir, fale com a logística: 👉 wa.me/447537155718\n_Ou digite *menu* para voltar._`);
   }
   if (pedidos.length === 1) {
@@ -751,6 +802,12 @@ async function iniciarStack(session, sid, entries, respond) {
 }
 
 async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
+  // Pediu pra MONTAR um protocolo/plano (ou analisar exame) → fluxo travado por CPF:
+  // só monta protocolo depois da compra e SÓ com os produtos que o cliente já comprou.
+  if (ehPedidoProtocoloCompleto(nMsg)) {
+    await saveSession(sid, { ...session, state:'PROTO_CLIENTE', errosSeguidos:0 });
+    return respond(`Adoro montar protocolo! 💪\n\nO protocolo *completo e personalizado* (suas doses, ciclo e cuidados) eu monto *depois da compra* — é cortesia exclusiva pra *cliente VitaFlow*.\n\nVocê *já é cliente* nossa? _(responde *sim* ou *não*)_`);
+  }
   // Dúvida/pergunta (protocolo, como usar, dose, "?"...) → a IA RESPONDE, mesmo que cite um
   // produto. Só abre a lista quando é intenção de ver/comprar, não quando é pergunta.
   if (ehDuvida(nMsg)) {
@@ -1438,6 +1495,64 @@ async function salvarPedidoGAS(pedido) {
     await fetch(GAS_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(pedido) });
   } catch {}
 }
+
+// Gera o pedido + link de pagamento (extraído do CONFIRMAR pra ser reusado após a escolha do brinde).
+// Se houver session.brinde (promo Gênesis), grava o brinde vinculado ao pedido pra virar Observação.
+async function gerarLinkPedido(session, sid, respond) {
+  const carrinho = session.carrinho || [];
+  const frete = session.freteSelecionado || {};
+  const uf    = session.estadoCliente || '';
+  const descontoReais = session.descontoReais || 0;
+  const totalFinal = session.total;
+  let infoDesconto = '';
+  if (descontoReais > 0) {
+    const lbl = session.descontoLabel || (session.descontoTipo === 'promo' ? (session.promoTitulo||'Promoção') : 'Desconto');
+    infoDesconto = `\n🏷️ ${lbl}: -R$ ${descontoReais.toFixed(2).replace('.',',')}\n💰 *Total: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
+  }
+  const orderNsu = await gerarNumeroPedido();
+  // Promo Gênesis: grava o brinde vinculado ao número do pedido → vira Observação no registro.
+  if (session.brinde && orderNsu) {
+    try {
+      const bKey = String(orderNsu).replace(/[^a-zA-Z0-9]/g,'_');
+      await fetch(fbUrl(`/vitaflow_brindes/${bKey}.json`), {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ brinde: session.brinde, order_nsu: orderNsu, ts: Date.now() })
+      });
+    } catch {}
+  }
+  const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais);
+  try {
+    const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
+    await fetch(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        phone: sid, order_nsu: orderNsu,
+        produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
+        quantidade: carrinho.reduce((a,i)=>a+i.qtd,0),
+        frete: frete.label, estado: uf, valor: totalFinal, ts: Date.now(),
+        carrinho: carrinho, freteSelecionado: frete, estadoCliente: uf, total: totalFinal,
+        descontoReais: descontoReais, descontoLabel: session.descontoLabel || '',
+        descontoTipo: session.descontoTipo || '', cupomDocId: session.cupomDocId || null,
+        cupomCodigo: session.cupomCodigo || null, link: link || '', brinde: session.brinde || null
+      })
+    });
+  } catch {}
+  const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
+  await enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}${session.brinde ? `\n🎁 Brinde (3º grátis): ${session.brinde}` : ''}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`);
+  try {
+    await fetch(GAS_URL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action: 'alerta_pedido_aberto', order_nsu: orderNsu,
+        produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
+        quantidade: carrinho.reduce((a,i)=>a+i.qtd,0), frete: frete.label, estado: uf,
+        valor: totalFinal.toFixed(2).replace('.',','), phone: sid })
+    });
+  } catch {}
+  await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
+  return await responderDireto(sid, link
+    ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
+    : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond);
+}
 // Leitor determinístico de reserva — funciona mesmo se a IA falhar.
 // Detecta CPF (11 dígitos), CEP (8 dígitos / 00000-000), telefone (10-11 díg.), email,
 // estado (sigla UF) e mapeia as linhas de texto restantes para nome/endereço/bairro/cidade.
@@ -1680,7 +1795,7 @@ exports.handler = async (event) => {
     // (frete, prazo, rastreio, atacado, tabela, grupo, promo) pode roubar o fluxo e APAGAR o
     // carrinho. Nesses estados, a mensagem vai direto pro handler do estado (que sabe lidar
     // com o carrinho). Isso corrige o caso "digitei 'frete' no resumo e perdi o pedido".
-    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
 
     // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
     // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
@@ -1703,7 +1818,7 @@ exports.handler = async (event) => {
     // A IA NÃO enxerga o carrinho e inventava "carrinho vazio" + reabria seleção (duplicava item).
     // Só quando há itens no carrinho e fora dos passos que já tratam isso (estado/frete/confirmar/pgto).
     const _temCarrinho = Array.isArray(session.carrinho) && session.carrinho.length > 0;
-    const _naoInterferir = ['ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const _naoInterferir = ['ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
     if (_temCarrinho && !_naoInterferir) {
       const ehVerCarrinho = /\b(meu carrinho|ver (o )?carrinho|carrinho de compras|quantos? (produtos?|itens?)|o que (tem|ta|esta|eu tenho|eu ja tenho) no (meu )?carrinho|itens do carrinho|o que eu (ja )?(escolhi|adicionei)|resumo do (meu )?carrinho)\b/.test(n);
       const ehFinalizar = /\b(finalizar|fechar (a |o )?(compra|pedido|carrinho)|concluir (a )?compra|ir pro pagamento|quero pagar|pode fechar|finaliza(r)?|encerrar (a )?compra|checkout)\b/.test(n);
@@ -1767,7 +1882,7 @@ exports.handler = async (event) => {
 
     const palavrasHumano = ['atendente','atendimento','humano','vendedor','pessoa real','falar com alguem','falar com pessoa','falar com atendimento','quero atendimento','suporte','reclamacao','reclamar'];
     // Em estados críticos (carrinho/pedido pago) NÃO apaga a sessão — escala mas preserva o pedido.
-    const estadoCritico = ['CARRINHO','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const estadoCritico = ['CARRINHO','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
     if (palavrasHumano.some(p => n.includes(p))) {
       await enviarTelegram(`🔔 CLIENTE QUER HUMANO\n📱 ${sid}\n📍 Estado: ${state}\n💬 ${mensagem}`);
       const _temCar = session.carrinho && session.carrinho.length;
@@ -2275,57 +2390,106 @@ exports.handler = async (event) => {
       return await fecharResumoNormal(session, sid, resultado, respond);
     }
 
+    // ── PROTOCOLO travado por CPF/e-mail (monta só com o que o cliente já comprou) ──
+    if (state === 'PROTO_CLIENTE') {
+      const s = norm(mensagem);
+      if (/^(menu|inicio|início|voltar|cancelar)$/.test(s)) { await saveSession(sid, { ...session, state:'MENU' }); return respond(buildMenuPrincipal()); }
+      if (/(^|\s)(sim|s|ja sou|já sou|sou cliente|isso|claro|com certeza|ja comprei|já comprei|sou)/.test(s)) {
+        await saveSession(sid, { ...session, state:'PROTO_IDENTIFICAR', protoTentouOutro:false });
+        return respond(`Perfeito! 😍 Me passa o seu *CPF* ou o *e-mail* da compra, que eu confirmo seu cadastro e já vejo o que você comprou pra montar o protocolo certinho.\n\n_(o CPF pode mandar com ou sem ponto/traço, tanto faz 😉)_`);
+      }
+      if (/(^|\s)(nao|não|n|ainda nao|ainda não|nunca)/.test(s)) {
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond(`Sem problema! 😊 O protocolo completo é cortesia pra *cliente* — mas *bora começar agora*! Me diz seu objetivo (emagrecer, ganhar massa, definir...) que eu te mostro os produtos ideais, e assim que você fecha eu monto seu protocolo completo. 💪\n\n` + buildMenuPrincipal());
+      }
+      return respond(`Só pra eu te ajudar certinho: você *já é cliente* da VitaFlow? Responde *sim* ou *não*. 😊`);
+    }
+    if (state === 'PROTO_IDENTIFICAR') {
+      const s = norm(mensagem);
+      if (/^(menu|inicio|início|voltar|cancelar)$/.test(s)) { await saveSession(sid, { ...session, state:'MENU' }); return respond(buildMenuPrincipal()); }
+      const ehEmail = (mensagem||'').indexOf('@') >= 0;
+      const cpf = (mensagem||'').replace(/\D/g,'');   // aceita CPF com/sem ponto/traço/espaço
+      let termo = null;
+      if (ehEmail) termo = (mensagem||'').trim();
+      else if (cpf.length === 11) termo = cpf;
+      if (!termo) {
+        return respond(`Não reconheci como CPF nem e-mail. 😊 Me manda os *11 números do CPF* (com ou sem pontos) ou o *e-mail* da compra.`);
+      }
+      const pedidos = await consultarStatusGAS(termo);
+      const produtos = extrairProdutosDosPedidos(pedidos);
+      if (produtos.length) {
+        const lista = produtos.map((p,i) => `${emojis(i)} ${p}`).join('\n');
+        await saveSession(sid, { ...session, state:'PROTO_ESCOLHER', protoProdutos: produtos });
+        return respond(`Achei seu cadastro! ✅ Você já comprou com a gente:\n\n${lista}\n\n0️⃣ Outro produto (que ainda não comprei)\n\n*Pra qual você quer o protocolo completo?* _(digite o número ou o nome)_`);
+      }
+      // não achou: 1ª falha pede o OUTRO dado; 2ª falha oferece atendente humano.
+      if (!session.protoTentouOutro) {
+        const outro = ehEmail ? 'o *CPF* (11 números)' : 'o *e-mail* da compra';
+        await saveSession(sid, { ...session, state:'PROTO_IDENTIFICAR', protoTentouOutro:true });
+        return respond(`Hmm, não achei nenhuma compra com ${ehEmail ? 'esse e-mail' : 'esse CPF'}. 🤔 Me manda ${outro} que eu tento de novo.`);
+      }
+      await saveSession(sid, { ...session, state:'PROTO_HUMANO' });
+      return respond(`Ainda não localizei seus pedidos. 😕 Quer que eu chame um *atendente humano* pra te ajudar? _(sim / não)_`);
+    }
+    if (state === 'PROTO_ESCOLHER') {
+      const s = norm(mensagem);
+      if (/^(menu|inicio|início|voltar|cancelar)$/.test(s)) { await saveSession(sid, { ...session, state:'MENU', protoProdutos:null }); return respond(buildMenuPrincipal()); }
+      const produtos = session.protoProdutos || [];
+      const idx = parseInt((mensagem||'').trim());
+      let escolhido = null, foraLista = false;
+      if (idx === 0) foraLista = true;
+      else if (!isNaN(idx) && idx >= 1 && idx <= produtos.length) escolhido = produtos[idx-1];
+      else if (isNaN(idx)) {
+        const nm = norm(mensagem);
+        escolhido = produtos.find(p => { const np = norm(p); return np.includes(nm) || (nm.length>2 && nm.includes(np.split(' ')[0])); });
+        if (!escolhido && nm.length > 2) foraLista = true;   // nomeou um produto que ainda não comprou
+      }
+      if (foraLista) {
+        await saveSession(sid, { ...session, state:'MENU', protoProdutos:null });
+        return respond(`Esse produto você ainda *não comprou* com a gente 😊. O protocolo dele eu monto certinho *depois da compra*!\n\nQuer ver as opções que temos? Me diz o que procura (ex.: emagrecer, ganhar massa) ou digite *menu*. 💪`);
+      }
+      if (!escolhido) {
+        const lista = produtos.map((p,i) => `${emojis(i)} ${p}`).join('\n');
+        return respond(`Não entendi qual produto. 😊 Escolhe pelo *número*:\n\n${lista}\n\n0️⃣ Outro produto (que ainda não comprei)`);
+      }
+      await saveSession(sid, { ...session, state:'MENU', protoProdutos:null });
+      await dispararIAProtocolo(sid, [escolhido]);
+      return respond(`Show! 🙌 Já tô montando o *protocolo completo do ${escolhido}* pra você — chega já já aqui embaixo. 💪`);
+    }
+    if (state === 'PROTO_HUMANO') {
+      const s = norm(mensagem);
+      if (/(^|\s)(sim|s|quero|pode|por favor|isso|claro|manda)/.test(s)) {
+        await saveSession(sid, { ...session, state:'MENU' });
+        try { await enviarTelegram(`🙋 *ATENDIMENTO HUMANO (protocolo)*\n📱 ${sid}\nCliente diz que já comprou, mas não achei pedidos por CPF nem e-mail. Pediu atendente.`); } catch (e) {}
+        return transferir(`Beleza! 🙏 Já *chamei um atendente humano* pra localizar seus pedidos e montar seu protocolo. Só um instante que já te respondem por aqui. 😊`);
+      }
+      await saveSession(sid, { ...session, state:'MENU' });
+      return respond(`Tranquilo! 😊 Qualquer coisa é só chamar. Quer aproveitar e ver nossos produtos? Me diz seu objetivo ou digite *menu*.`);
+    }
+
+    // Promo Gênesis: o cliente acabou de escolher o BRINDE (3º grátis) → guarda e gera o link.
+    if (state === 'ESCOLHER_BRINDE') {
+      const escolha = (mensagem || '').trim();
+      if (!escolha || /^(menu|voltar|cancelar|nao|não)$/i.test(norm(escolha))) {
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond('Sem problema! 😊 *Seu carrinho continua guardado* — quando quiser fechar, é só digitar *finalizar*.\n\n' + buildMenuPrincipal());
+      }
+      const novaSess = { ...session, brinde: escolha };
+      await saveSession(sid, novaSess);
+      return await gerarLinkPedido(novaSess, sid, respond);
+    }
+
     if (state === 'CONFIRMAR') {
       if (num === 2) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊 *Seu carrinho continua guardado* — quando quiser fechar, é só digitar *finalizar*.\n\n' + buildMenuPrincipal()); }
       if (num === 1) {
         const carrinho = session.carrinho || [];
         if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
-        const frete = session.freteSelecionado || {};
-        const uf    = session.estadoCliente || '';
-        const descontoReais = session.descontoReais || 0;
-        const totalFinal = session.total;
-        let infoDesconto = '';
-        if (descontoReais > 0) {
-          const lbl = session.descontoLabel || (session.descontoTipo === 'promo' ? (session.promoTitulo||'Promoção') : 'Desconto');
-          infoDesconto = `\n🏷️ ${lbl}: -R$ ${descontoReais.toFixed(2).replace('.',',')}\n💰 *Total: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
+        // Promo Gênesis "Compre 2, Leve 3": 2+ itens da linha → pergunta o brinde ANTES de gerar o link.
+        if (!session.brinde && contarGenesis(carrinho) >= 2) {
+          await saveSession(sid, { ...session, state:'ESCOLHER_BRINDE' });
+          return respond(msgPerguntaBrinde(carrinho));
         }
-        const orderNsu = await gerarNumeroPedido();
-        const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais);
-        try {
-          const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
-          await fetch(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
-            method:'PUT', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({
-              phone: sid, order_nsu: orderNsu,
-              produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
-              quantidade: carrinho.reduce((a,i)=>a+i.qtd,0),
-              frete: frete.label, estado: uf, valor: totalFinal, ts: Date.now(),
-              carrinho: carrinho, freteSelecionado: frete, estadoCliente: uf, total: totalFinal,
-              descontoReais: descontoReais, descontoLabel: session.descontoLabel || '',
-              descontoTipo: session.descontoTipo || '', cupomDocId: session.cupomDocId || null,
-              cupomCodigo: session.cupomCodigo || null, link: link || ''
-            })
-          });
-        } catch {}
-        const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
-        await enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`);
-        try {
-          await fetch(GAS_URL, {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ action: 'alerta_pedido_aberto', order_nsu: orderNsu,
-              produto: carrinho.map(i => `${i.nome} x${i.qtd}`).join(' | '),
-              quantidade: carrinho.reduce((a,i)=>a+i.qtd,0), frete: frete.label, estado: uf,
-              valor: totalFinal.toFixed(2).replace('.',','), phone: sid })
-          });
-        } catch {}
-        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null });
-        // ENTREGA PELA API DIRETA (não pela resposta do webhook). O log PROVA que a função roda
-        // uma vez só, mas o BotConversa REENTREGA a resposta do webhook — por isso o "Pedido
-        // gerado" duplicava. O recibo, que já vai pela API direta, NUNCA duplica. Mesmo remédio
-        // aqui: manda o link pela API direta e devolve a resposta do webhook VAZIA.
-        return await responderDireto(sid, link
-          ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
-          : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond);
+        return await gerarLinkPedido(session, sid, respond);
       }
       // Opção B: cliente pode digitar um código de cupom aqui (não em promoção/negociação)
       // Só tenta como CUPOM se PARECER um código (uma palavra curta alfanumérica) — assim
@@ -2505,11 +2669,23 @@ exports.handler = async (event) => {
             description: `${i.nome} x${i.qtd}`, quantity: i.qtd, price: Math.round(i.preco * 100)
           }));
           items.push({ description: `Frete ${frete.label} — ${session.estadoCliente}`, quantity: 1, price: Math.round(frete.valor * 100) });
+          // Promo Gênesis: recupera o brinde (da sessão OU do nó vitaflow_brindes) → Observação do pedido.
+          let _obsBrinde = '';
+          try {
+            let _br = session.brinde || '';
+            if (!_br && num_pedido) {
+              const _rb = await fetch(fbUrl(`/vitaflow_brindes/${String(num_pedido).replace(/[^a-zA-Z0-9]/g,'_')}.json`));
+              const _db = await _rb.json();
+              if (_db && _db.brinde) _br = _db.brinde;
+            }
+            if (_br) _obsBrinde = 'BRINDE (3º grátis — promo Gênesis Compre 2 Leve 3): ' + _br;
+          } catch (e) {}
           await salvarPedidoGAS({
             order_nsu: num_pedido,
             paid_amount: Math.round(total * 100),
             capture_method: 'whatsapp_athena',
-            customer: { name: coleta.nome, email: (coleta.email||'nao_informado').toLowerCase(), phone_number: coleta.telefone, document: coleta.cpf },
+            observacao: _obsBrinde,
+            customer: { name: coleta.nome, email: (coleta.email||'nao_informado').toLowerCase(), phone_number: coleta.telefone, document: coleta.cpf, observacao: _obsBrinde },
             address: { street: coleta.endereco, number: '', complement: coleta.complemento||'', neighborhood: coleta.bairro, city: coleta.cidade, state: coleta.estado, cep: coleta.cep },
             items
           });
