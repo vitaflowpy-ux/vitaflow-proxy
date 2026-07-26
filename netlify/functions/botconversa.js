@@ -2564,8 +2564,8 @@ exports.handler = async (event) => {
         await saveSession(sid, { ...session, state:'ESTADO', brindeOferecido: true });
         return respond('Beleza! Você pode escolher o *3º grátis* na hora de fechar, escrevendo no campo *Observação*. 😉\n\n*De qual estado você é?* (pra eu calcular o frete)\nExemplo: RJ, SP, MG, DF, BA...');
       }
-      // Escolheu o brinde → guarda e segue pro frete (link só no fim)
-      const novaSess = { ...session, brinde: escolha, brindeOferecido: true };
+      // Escolheu o brinde → guarda, TROCA O ESTADO PRA ESTADO e segue pro frete (link só no fim)
+      const novaSess = { ...session, state:'ESTADO', brinde: escolha, brindeOferecido: true };
       await saveSession(sid, novaSess);
       return respond(`🎁 Anotado! Seu *3º grátis* é *${escolha}*. 🥳\n\nAgora é só fechar:\n\n*De qual estado você é?* (pra eu calcular o frete)\nExemplo: RJ, SP, MG, DF, BA...`);
     }
