@@ -435,7 +435,10 @@ async function gerarProtocoloPosVenda(body){
       console.log('[IA] PROTOCOLO: modelo não respondeu — nada enviado.');
       return { statusCode: 200, body: 'no-reply' };
     }
-    const texto = `📋 *SEU PROTOCOLO VITAFLOW* 🌿\n_Guarde esta mensagem! Preparei um guia completo pra você aproveitar ao máximo o que comprou._\n\n` + limparHeadersMd(pensado.texto);
+    let texto = `📋 *SEU PROTOCOLO VITAFLOW* 🌿\n_Guarde esta mensagem! Preparei um guia completo pra você aproveitar ao máximo o que comprou._\n\n` + limparHeadersMd(pensado.texto);
+    // Tabela(s) de fracionamento (resolvidas pelo botconversa e enviadas no payload) vão JUNTO.
+    const _tabelas = String(body.tabelas || '').trim();
+    if (_tabelas) texto += `\n\n━━━━━━━━━━━━━━━━━━━━\n\n💉 *TABELA(S) DE FRACIONAMENTO*\n\n` + _tabelas;
     const envio = await enviarLongo(phone, texto);
     console.log('[IA] PROTOCOLO enviado:', JSON.stringify(envio));
     return { statusCode: 200, body: 'ok' };
