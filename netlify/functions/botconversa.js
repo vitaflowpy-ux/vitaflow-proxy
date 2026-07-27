@@ -77,16 +77,167 @@ async function dispararIAProtocolo(phone, produtos, tabelas){
 // Lê o nó vitaflow_fracionamento no Firebase (slug -> {titulo, texto}) e casa o
 // NOME do produto do pedido com a(s) tabela(s) certa(s). O texto fica no Firebase
 // (o site também lê de lá); aqui fica só a lógica de reconhecimento.
-let _fracCache = null;
-async function buscarFracionamento(){
-  if (_fracCache) return _fracCache;
-  try {
-    const r = await fetchT(fbUrl('/vitaflow_fracionamento.json'), {}, 6000);
-    const d = await r.json();
-    _fracCache = d || {};
-  } catch (e) { _fracCache = {}; }
-  return _fracCache;
-}
+// Tabelas de fracionamento EMBUTIDAS no proprio arquivo — NAO depende de Firebase.
+// (pra atualizar uma tabela no futuro, edita aqui e sobe o arquivo de novo.)
+const FRAC_TABELAS = {
+  "reta_oxygen_80_aq": {
+    "titulo": "Retatrutida 80mg AQ (diluída - Oxygen)",
+    "texto": "_Frasco único 80mg/4,8mL — já vem pronta, não diluir_\n\n▪️ *Já vem pronta (não diluir) — 4,8 mL:*\n1 mg → *6 UI*  (80 doses)\n2 mg → *12 UI*  (40 doses)\n4 mg → *24 UI*  (20 doses)\n6 mg → *36 UI*  (13 doses)\n8 mg → *48 UI*  (10 doses)\n10 mg → *60 UI*  (8 doses)\n12 mg → *72 UI*  (6 doses)"
+  },
+  "reta_zphc_60_aq": {
+    "titulo": "Retatrutida 60mg AQ (diluída - ZPHC)",
+    "texto": "_Frasco único 60mg/3mL — já vem pronta, não diluir_\n\n▪️ *Já vem pronta (não diluir) — 3 mL:*\n1 mg → *5 UI*  (60 doses)\n2 mg → *10 UI*  (30 doses)\n4 mg → *20 UI*  (15 doses)\n6 mg → *30 UI*  (10 doses)\n8 mg → *40 UI*  (7 doses)\n10 mg → *50 UI*  (6 doses)\n12 mg → *60 UI*  (5 doses)"
+  },
+  "reta_zphc_120_aq": {
+    "titulo": "Retatrutida 120mg AQ (diluída - ZPHC)",
+    "texto": "_2 frascos de 60mg com 3mL cada — já vem pronta, não diluir. Cada frasco usa a tabela abaixo (o kit tem 2)._\n\n▪️ *Já vem pronta (não diluir) — 3 mL:*\n1 mg → *5 UI*  (60 doses)\n2 mg → *10 UI*  (30 doses)\n4 mg → *20 UI*  (15 doses)\n6 mg → *30 UI*  (10 doses)\n8 mg → *40 UI*  (7 doses)\n10 mg → *50 UI*  (6 doses)\n12 mg → *60 UI*  (5 doses)"
+  },
+  "reta_zphc_15_liof": {
+    "titulo": "Retatrutida 15mg Liofilizada (Kit - ZPHC)",
+    "texto": "_1 vial de 15mg — dilua em 1,5mL OU 3,0mL de BAC (o kit traz 3mL de BAC)_\n\n▪️ *Diluir em 1,5 mL de BAC:*\n2 mg → *20 UI*  (7 doses)\n4 mg → *40 UI*  (3 doses)\n6 mg → *60 UI*  (2 doses)\n8 mg → *80 UI*  (1 dose)\n10 mg → *100 UI*  (1 dose)\n15 mg → *150 UI*  (1 dose)\n\n▪️ *Diluir em 3 mL de BAC:*\n2 mg → *40 UI*  (7 doses)\n4 mg → *80 UI*  (3 doses)\n6 mg → *120 UI*  (2 doses)\n8 mg → *160 UI*  (1 dose)\n10 mg → *200 UI*  (1 dose)\n15 mg → *300 UI*  (1 dose)"
+  },
+  "reta_zphc_60_liof": {
+    "titulo": "Retatrutida 60mg Liofilizada (ZPHC)",
+    "texto": "_5 bujões de 12mg (total 60mg). Dilua CADA bujão separadamente. O kit traz 10mL de BAC no total._\n\n▪️ *Cada bujão em 2mL de BAC (por bujão):*\n1 mg → *17 UI*  (12 doses por bujão)\n2 mg → *33 UI*  (6 doses por bujão)\n4 mg → *67 UI*  (3 doses por bujão)\n6 mg → *100 UI*  (2 doses por bujão)\n8 mg → *133 UI*  (1 dose por bujão)\n10 mg → *167 UI*  (1 dose por bujão)\n12 mg → *200 UI*  (1 dose por bujão)"
+  },
+  "reta_zphc_120_liof": {
+    "titulo": "Retatrutida 120mg Liofilizada (ZPHC)",
+    "texto": "_5 bujões de 24mg (total 120mg). Dilua CADA bujão separadamente. O kit traz 10mL de BAC no total._\n\n▪️ *Cada bujão em 2mL de BAC (por bujão):*\n1 mg → *8 UI*  (24 doses por bujão)\n2 mg → *17 UI*  (12 doses por bujão)\n4 mg → *33 UI*  (6 doses por bujão)\n6 mg → *50 UI*  (4 doses por bujão)\n8 mg → *67 UI*  (3 doses por bujão)\n10 mg → *83 UI*  (2 doses por bujão)\n12 mg → *100 UI*  (2 doses por bujão)"
+  },
+  "reta_synedica_120_liof": {
+    "titulo": "Retatrutida 120mg Liofilizada (Synedica)",
+    "texto": "_1 frasco único de 120mg — reconstitua com 7mL de BAC_\n\n▪️ *Diluir em 7 mL de BAC:*\n1 mg → *6 UI*  (120 doses)\n2 mg → *12 UI*  (60 doses)\n4 mg → *23 UI*  (30 doses)\n6 mg → *35 UI*  (20 doses)\n8 mg → *47 UI*  (15 doses)\n10 mg → *58 UI*  (12 doses)\n12 mg → *70 UI*  (10 doses)"
+  },
+  "reta_veltrane_diamond_120": {
+    "titulo": "Retatrutida 120mg (diluída - Veltrane Diamond)",
+    "texto": "_Frasco único 120mg/6mL — injeção, já vem pronta_\n\n▪️ *Já vem pronta (não diluir) — 6 mL:*\n1 mg → *5 UI*  (120 doses)\n2 mg → *10 UI*  (60 doses)\n4 mg → *20 UI*  (30 doses)\n6 mg → *30 UI*  (20 doses)\n8 mg → *40 UI*  (15 doses)\n10 mg → *50 UI*  (12 doses)\n12 mg → *60 UI*  (10 doses)"
+  },
+  "reta_veltrane_gold_90": {
+    "titulo": "Retatrutida 90mg (diluída - Veltrane Gold)",
+    "texto": "_Frasco único 90mg/6mL — injeção, já vem pronta_\n\n▪️ *Já vem pronta (não diluir) — 6 mL:*\n1 mg → *7 UI*  (90 doses)\n2 mg → *13 UI*  (45 doses)\n4 mg → *27 UI*  (22 doses)\n6 mg → *40 UI*  (15 doses)\n8 mg → *53 UI*  (11 doses)\n10 mg → *67 UI*  (9 doses)\n12 mg → *80 UI*  (7 doses)"
+  },
+  "reta_veltrane_60": {
+    "titulo": "Retatrutida 60mg (diluída - Veltrane)",
+    "texto": "_Frasco único 60mg/6mL — injeção, já vem pronta_\n\n▪️ *Já vem pronta (não diluir) — 6 mL:*\n1 mg → *10 UI*  (60 doses)\n2 mg → *20 UI*  (30 doses)\n4 mg → *40 UI*  (15 doses)\n6 mg → *60 UI*  (10 doses)\n8 mg → *80 UI*  (7 doses)\n10 mg → *100 UI*  (6 doses)\n12 mg → *120 UI*  (5 doses)"
+  },
+  "reta_retagen_oxygen_120": {
+    "titulo": "Retatrutida 120mg (diluída - Retagen Oxygen)",
+    "texto": "_Frasco único 120mg/6mL — já vem pronta_\n\n▪️ *Já vem pronta (não diluir) — 6 mL:*\n1 mg → *5 UI*  (120 doses)\n2 mg → *10 UI*  (60 doses)\n4 mg → *20 UI*  (30 doses)\n6 mg → *30 UI*  (20 doses)\n8 mg → *40 UI*  (15 doses)\n10 mg → *50 UI*  (12 doses)\n12 mg → *60 UI*  (10 doses)"
+  },
+  "reta_oxygen_60_liof": {
+    "titulo": "Retatrutida 60mg Liofilizada (Oxygen)",
+    "texto": "_1 vial de 60mg — dilua em 2mL OU 3mL de BAC_\n\n▪️ *Diluir em 2 mL de BAC:*\n1 mg → *3 UI*  (60 doses)\n2 mg → *7 UI*  (30 doses)\n4 mg → *13 UI*  (15 doses)\n6 mg → *20 UI*  (10 doses)\n8 mg → *27 UI*  (7 doses)\n10 mg → *33 UI*  (6 doses)\n12 mg → *40 UI*  (5 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n1 mg → *5 UI*  (60 doses)\n2 mg → *10 UI*  (30 doses)\n4 mg → *20 UI*  (15 doses)\n6 mg → *30 UI*  (10 doses)\n8 mg → *40 UI*  (7 doses)\n10 mg → *50 UI*  (6 doses)\n12 mg → *60 UI*  (5 doses)"
+  },
+  "reta_oxygen_160_aq": {
+    "titulo": "Retatrutida 160mg (diluída - Oxygen)",
+    "texto": "_Bujão único 160mg/9mL — já vem pronta_\n\n▪️ *Já vem pronta (não diluir) — 9 mL:*\n1 mg → *6 UI*  (160 doses)\n2 mg → *11 UI*  (80 doses)\n4 mg → *23 UI*  (40 doses)\n6 mg → *34 UI*  (26 doses)\n8 mg → *45 UI*  (20 doses)\n10 mg → *56 UI*  (16 doses)\n12 mg → *68 UI*  (13 doses)"
+  },
+  "tirze_tg_10": {
+    "titulo": "Tirzepatida TG 10mg",
+    "texto": "_Ampola 10mg/0,5mL — kit 4 ampolas (total 40mg)_\n\n2,5 mg → *13 UI*  (4 doses)\n5 mg → *25 UI*  (2 doses)\n7,5 mg → *38 UI*  (1 dose)\n10 mg → *50 UI*  (1 dose)"
+  },
+  "tirze_tg_15": {
+    "titulo": "Tirzepatida TG 15mg",
+    "texto": "_Ampola 15mg/0,5mL ou bujão único 60mg/2mL — mesma medição (30mg/mL)_\n\n2,5 mg → *8 UI*  (6 doses)\n5 mg → *17 UI*  (3 doses)\n7,5 mg → *25 UI*  (2 doses)\n10 mg → *33 UI*  (1 dose)\n12,5 mg → *42 UI*  (1 dose)\n15 mg → *50 UI*  (1 dose)"
+  },
+  "tirze_lipoless_15": {
+    "titulo": "Tirzepatida Lipoless 15mg (4 ampolas)",
+    "texto": "_Ampola 15mg/0,5mL — igual às outras marcas (kit 4 ampolas, total 60mg). Concentração 30mg/mL_\n\n2,5 mg → *8 UI*  (6 doses)\n5 mg → *17 UI*  (3 doses)\n7,5 mg → *25 UI*  (2 doses)\n10 mg → *33 UI*  (1 dose)\n12,5 mg → *42 UI*  (1 dose)\n15 mg → *50 UI*  (1 dose)"
+  },
+  "tirze_lipoless_md_15": {
+    "titulo": "Tirzepatida Lipoless MD 15mg (bujão único)",
+    "texto": "_A embalagem diz 15mg/0,6mL, mas na real são 60mg/2,4mL (mais líquido do que parece). Concentração 25mg/mL_\n\n2,5 mg → *10 UI*  (24 doses)\n5 mg → *20 UI*  (12 doses)\n7,5 mg → *30 UI*  (8 doses)\n10 mg → *40 UI*  (6 doses)\n12,5 mg → *50 UI*  (4 doses)\n15 mg → *60 UI*  (4 doses)"
+  },
+  "tirze_tirzec_15": {
+    "titulo": "Tirzepatida Tirzec 15mg",
+    "texto": "_Ampola 15mg/0,5mL ou bujão único 60mg/2mL — mesma medição (30mg/mL)_\n\n2,5 mg → *8 UI*  (6 doses)\n5 mg → *17 UI*  (3 doses)\n7,5 mg → *25 UI*  (2 doses)\n10 mg → *33 UI*  (1 dose)\n12,5 mg → *42 UI*  (1 dose)\n15 mg → *50 UI*  (1 dose)"
+  },
+  "tirze_lipoland_15": {
+    "titulo": "Tirzepatida LipoLand 15mg",
+    "texto": "_Ampola 15mg/0,5mL ou bujão único 60mg/2mL — mesma medição (30mg/mL)_\n\n2,5 mg → *8 UI*  (6 doses)\n5 mg → *17 UI*  (3 doses)\n7,5 mg → *25 UI*  (2 doses)\n10 mg → *33 UI*  (1 dose)\n12,5 mg → *42 UI*  (1 dose)\n15 mg → *50 UI*  (1 dose)"
+  },
+  "tirze_gluconex_15": {
+    "titulo": "Tirzepatida Gluconex 15mg",
+    "texto": "_Ampola 15mg/1mL — kit 4 ampolas (total 60mg)_\n\n2,5 mg → *17 UI*  (6 doses)\n5 mg → *33 UI*  (3 doses)\n7,5 mg → *50 UI*  (2 doses)\n10 mg → *67 UI*  (1 dose)\n12,5 mg → *83 UI*  (1 dose)\n15 mg → *100 UI*  (1 dose)"
+  },
+  "tirze_tirzedral_15": {
+    "titulo": "Tirzepatida Tirzedral 15mg",
+    "texto": "_Ampola 15mg/0,5mL — kit 4 ampolas (total 60mg)_\n\n2,5 mg → *8 UI*  (6 doses)\n5 mg → *17 UI*  (3 doses)\n7,5 mg → *25 UI*  (2 doses)\n10 mg → *33 UI*  (1 dose)\n12,5 mg → *42 UI*  (1 dose)\n15 mg → *50 UI*  (1 dose)"
+  },
+  "tirze_synedica_60": {
+    "titulo": "Tirzepatida Synedica",
+    "texto": "_Kit 4 frascos de 60mg cada — diluir CADA frasco_\n\n▪️ *Diluir em 2 mL de BAC:*\n2,5 mg → *8 UI*  (24 doses)\n5 mg → *17 UI*  (12 doses)\n7,5 mg → *25 UI*  (8 doses)\n10 mg → *33 UI*  (6 doses)\n12,5 mg → *42 UI*  (4 doses)\n15 mg → *50 UI*  (4 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n2,5 mg → *13 UI*  (24 doses)\n5 mg → *25 UI*  (12 doses)\n7,5 mg → *38 UI*  (8 doses)\n10 mg → *50 UI*  (6 doses)\n12,5 mg → *63 UI*  (4 doses)\n15 mg → *75 UI*  (4 doses)"
+  },
+  "tirze_zphc_150_liof": {
+    "titulo": "Tirzepatida 150mg Liofilizada (ZPHC)",
+    "texto": "_5 bujões de 30mg (total 150mg). Dilua CADA bujão separadamente. O kit traz 11mL de BAC no total._\n\n▪️ *Cada bujão em 2mL de BAC (por bujão):*\n2,5 mg → *17 UI*  (12 doses por bujão)\n5 mg → *33 UI*  (6 doses por bujão)\n7,5 mg → *50 UI*  (4 doses por bujão)\n10 mg → *67 UI*  (3 doses por bujão)\n12,5 mg → *83 UI*  (2 doses por bujão)\n15 mg → *100 UI*  (2 doses por bujão)\n\n▪️ *Cada bujão em 2,2mL de BAC (por bujão):*\n2,5 mg → *18 UI*  (12 doses por bujão)\n5 mg → *37 UI*  (6 doses por bujão)\n7,5 mg → *55 UI*  (4 doses por bujão)\n10 mg → *73 UI*  (3 doses por bujão)\n12,5 mg → *92 UI*  (2 doses por bujão)\n15 mg → *110 UI*  (2 doses por bujão)"
+  },
+  "tirze_combo_mix4": {
+    "titulo": "Tirzepatida COMBO MIX 4 (total 60mg)",
+    "texto": "_Kit 4 bujões de 15mg (1 de cada marca). Cada bujão em 0,5mL — medição padrão 15mg/0,5mL._\n\n2,5 mg → *8 UI*  (6 doses)\n5 mg → *17 UI*  (3 doses)\n7,5 mg → *25 UI*  (2 doses)\n10 mg → *33 UI*  (1 dose)\n12,5 mg → *42 UI*  (1 dose)\n15 mg → *50 UI*  (1 dose)"
+  },
+  "pept_10": {
+    "titulo": "Peptídeo 10mg (qualquer marca)",
+    "texto": "_Liofilizado 10mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n250 mcg → *5 UI*  (40 doses)\n500 mcg → *10 UI*  (20 doses)\n750 mcg → *15 UI*  (13 doses)\n1000 mcg → *20 UI*  (10 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n250 mcg → *8 UI*  (40 doses)\n500 mcg → *15 UI*  (20 doses)\n750 mcg → *23 UI*  (13 doses)\n1000 mcg → *30 UI*  (10 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n250 mcg → *13 UI*  (40 doses)\n500 mcg → *25 UI*  (20 doses)\n750 mcg → *38 UI*  (13 doses)\n1000 mcg → *50 UI*  (10 doses)"
+  },
+  "pept_5": {
+    "titulo": "Peptídeo 5mg (qualquer marca)",
+    "texto": "_Liofilizado 5mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n250 mcg → *10 UI*  (20 doses)\n500 mcg → *20 UI*  (10 doses)\n750 mcg → *30 UI*  (6 doses)\n1000 mcg → *40 UI*  (5 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n250 mcg → *15 UI*  (20 doses)\n500 mcg → *30 UI*  (10 doses)\n750 mcg → *45 UI*  (6 doses)\n1000 mcg → *60 UI*  (5 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n250 mcg → *25 UI*  (20 doses)\n500 mcg → *50 UI*  (10 doses)\n750 mcg → *75 UI*  (6 doses)\n1000 mcg → *100 UI*  (5 doses)"
+  },
+  "pept_20": {
+    "titulo": "Peptídeo 20mg (BPC+TB / combos)",
+    "texto": "_Liofilizado 20mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n250 mcg → *3 UI*  (80 doses)\n500 mcg → *5 UI*  (40 doses)\n750 mcg → *8 UI*  (26 doses)\n1000 mcg → *10 UI*  (20 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n250 mcg → *4 UI*  (80 doses)\n500 mcg → *8 UI*  (40 doses)\n750 mcg → *11 UI*  (26 doses)\n1000 mcg → *15 UI*  (20 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n250 mcg → *6 UI*  (80 doses)\n500 mcg → *13 UI*  (40 doses)\n750 mcg → *19 UI*  (26 doses)\n1000 mcg → *25 UI*  (20 doses)"
+  },
+  "ghk_100": {
+    "titulo": "GHK-Cu 100mg",
+    "texto": "_Liofilizado 100mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n1 mg → *2 UI*  (100 doses)\n2 mg → *4 UI*  (50 doses)\n3 mg → *6 UI*  (33 doses)\n4 mg → *8 UI*  (25 doses)\n5 mg → *10 UI*  (20 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n1 mg → *3 UI*  (100 doses)\n2 mg → *6 UI*  (50 doses)\n3 mg → *9 UI*  (33 doses)\n4 mg → *12 UI*  (25 doses)\n5 mg → *15 UI*  (20 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n1 mg → *5 UI*  (100 doses)\n2 mg → *10 UI*  (50 doses)\n3 mg → *15 UI*  (33 doses)\n4 mg → *20 UI*  (25 doses)\n5 mg → *25 UI*  (20 doses)"
+  },
+  "ghk_50": {
+    "titulo": "GHK-Cu 50mg",
+    "texto": "_Liofilizado 50mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n1 mg → *4 UI*  (50 doses)\n2 mg → *8 UI*  (25 doses)\n3 mg → *12 UI*  (16 doses)\n4 mg → *16 UI*  (12 doses)\n5 mg → *20 UI*  (10 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n1 mg → *6 UI*  (50 doses)\n2 mg → *12 UI*  (25 doses)\n3 mg → *18 UI*  (16 doses)\n4 mg → *24 UI*  (12 doses)\n5 mg → *30 UI*  (10 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n1 mg → *10 UI*  (50 doses)\n2 mg → *20 UI*  (25 doses)\n3 mg → *30 UI*  (16 doses)\n4 mg → *40 UI*  (12 doses)\n5 mg → *50 UI*  (10 doses)"
+  },
+  "ahk_100": {
+    "titulo": "AHK-Cu 100mg",
+    "texto": "_Liofilizado 100mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n1 mg → *2 UI*  (100 doses)\n2 mg → *4 UI*  (50 doses)\n3 mg → *6 UI*  (33 doses)\n4 mg → *8 UI*  (25 doses)\n5 mg → *10 UI*  (20 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n1 mg → *3 UI*  (100 doses)\n2 mg → *6 UI*  (50 doses)\n3 mg → *9 UI*  (33 doses)\n4 mg → *12 UI*  (25 doses)\n5 mg → *15 UI*  (20 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n1 mg → *5 UI*  (100 doses)\n2 mg → *10 UI*  (50 doses)\n3 mg → *15 UI*  (33 doses)\n4 mg → *20 UI*  (25 doses)\n5 mg → *25 UI*  (20 doses)"
+  },
+  "klow_80": {
+    "titulo": "Klow 80mg",
+    "texto": "_Liofilizado 80mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n1 mg → *3 UI*  (80 doses)\n2 mg → *5 UI*  (40 doses)\n3 mg → *8 UI*  (26 doses)\n4 mg → *10 UI*  (20 doses)\n5 mg → *13 UI*  (16 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n1 mg → *4 UI*  (80 doses)\n2 mg → *8 UI*  (40 doses)\n3 mg → *11 UI*  (26 doses)\n4 mg → *15 UI*  (20 doses)\n5 mg → *19 UI*  (16 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n1 mg → *6 UI*  (80 doses)\n2 mg → *13 UI*  (40 doses)\n3 mg → *19 UI*  (26 doses)\n4 mg → *25 UI*  (20 doses)\n5 mg → *31 UI*  (16 doses)"
+  },
+  "glow_70": {
+    "titulo": "Glow 70mg",
+    "texto": "_Liofilizado 70mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n1 mg → *3 UI*  (70 doses)\n2 mg → *6 UI*  (35 doses)\n3 mg → *9 UI*  (23 doses)\n4 mg → *11 UI*  (17 doses)\n5 mg → *14 UI*  (14 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n1 mg → *4 UI*  (70 doses)\n2 mg → *9 UI*  (35 doses)\n3 mg → *13 UI*  (23 doses)\n4 mg → *17 UI*  (17 doses)\n5 mg → *21 UI*  (14 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n1 mg → *7 UI*  (70 doses)\n2 mg → *14 UI*  (35 doses)\n3 mg → *21 UI*  (23 doses)\n4 mg → *29 UI*  (17 doses)\n5 mg → *36 UI*  (14 doses)"
+  },
+  "nad_500": {
+    "titulo": "NAD+ 500mg",
+    "texto": "_Liofilizado 500mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n50 mg → *20 UI*  (10 doses)\n100 mg → *40 UI*  (5 doses)\n250 mg → *100 UI*  (2 doses)\n500 mg → *200 UI*  (1 dose)\n\n▪️ *Diluir em 3 mL de BAC:*\n50 mg → *30 UI*  (10 doses)\n100 mg → *60 UI*  (5 doses)\n250 mg → *150 UI*  (2 doses)\n500 mg → *300 UI*  (1 dose)\n\n▪️ *Diluir em 5 mL de BAC:*\n50 mg → *50 UI*  (10 doses)\n100 mg → *100 UI*  (5 doses)\n250 mg → *250 UI*  (2 doses)\n500 mg → *500 UI*  (1 dose)"
+  },
+  "nad_1000": {
+    "titulo": "NAD+ 1000mg",
+    "texto": "_Liofilizado 1000mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n50 mg → *10 UI*  (20 doses)\n100 mg → *20 UI*  (10 doses)\n250 mg → *50 UI*  (4 doses)\n500 mg → *100 UI*  (2 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n50 mg → *15 UI*  (20 doses)\n100 mg → *30 UI*  (10 doses)\n250 mg → *75 UI*  (4 doses)\n500 mg → *150 UI*  (2 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n50 mg → *25 UI*  (20 doses)\n100 mg → *50 UI*  (10 doses)\n250 mg → *125 UI*  (4 doses)\n500 mg → *250 UI*  (2 doses)"
+  },
+  "cbl_20": {
+    "titulo": "CBL-514 20mg",
+    "texto": "_Liofilizado 20mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n250 mcg → *3 UI*  (80 doses)\n500 mcg → *5 UI*  (40 doses)\n750 mcg → *8 UI*  (26 doses)\n1000 mcg → *10 UI*  (20 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n250 mcg → *4 UI*  (80 doses)\n500 mcg → *8 UI*  (40 doses)\n750 mcg → *11 UI*  (26 doses)\n1000 mcg → *15 UI*  (20 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n250 mcg → *6 UI*  (80 doses)\n500 mcg → *13 UI*  (40 doses)\n750 mcg → *19 UI*  (26 doses)\n1000 mcg → *25 UI*  (20 doses)"
+  },
+  "cbl_60": {
+    "titulo": "CBL-514 60mg",
+    "texto": "_Liofilizado 60mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n250 mcg → *1 UI*  (240 doses)\n500 mcg → *2 UI*  (120 doses)\n750 mcg → *3 UI*  (80 doses)\n1000 mcg → *3 UI*  (60 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n250 mcg → *1 UI*  (240 doses)\n500 mcg → *3 UI*  (120 doses)\n750 mcg → *4 UI*  (80 doses)\n1000 mcg → *5 UI*  (60 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n250 mcg → *2 UI*  (240 doses)\n500 mcg → *4 UI*  (120 doses)\n750 mcg → *6 UI*  (80 doses)\n1000 mcg → *8 UI*  (60 doses)"
+  },
+  "ss31_50": {
+    "titulo": "SS-31 50mg",
+    "texto": "_Liofilizado 50mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n250 mcg → *1 UI*  (200 doses)\n500 mcg → *2 UI*  (100 doses)\n750 mcg → *3 UI*  (66 doses)\n1000 mcg → *4 UI*  (50 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n250 mcg → *2 UI*  (200 doses)\n500 mcg → *3 UI*  (100 doses)\n750 mcg → *5 UI*  (66 doses)\n1000 mcg → *6 UI*  (50 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n250 mcg → *3 UI*  (200 doses)\n500 mcg → *5 UI*  (100 doses)\n750 mcg → *8 UI*  (66 doses)\n1000 mcg → *10 UI*  (50 doses)"
+  },
+  "motsc_40": {
+    "titulo": "MOTS-c 40mg",
+    "texto": "_Liofilizado 40mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n250 mcg → *1 UI*  (160 doses)\n500 mcg → *3 UI*  (80 doses)\n750 mcg → *4 UI*  (53 doses)\n1000 mcg → *5 UI*  (40 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n250 mcg → *2 UI*  (160 doses)\n500 mcg → *4 UI*  (80 doses)\n750 mcg → *6 UI*  (53 doses)\n1000 mcg → *8 UI*  (40 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n250 mcg → *3 UI*  (160 doses)\n500 mcg → *6 UI*  (80 doses)\n750 mcg → *9 UI*  (53 doses)\n1000 mcg → *13 UI*  (40 doses)"
+  },
+  "epitalon_50": {
+    "titulo": "Epitalon 50mg",
+    "texto": "_Liofilizado 50mg_\n\n▪️ *Diluir em 2 mL de BAC:*\n250 mcg → *1 UI*  (200 doses)\n500 mcg → *2 UI*  (100 doses)\n750 mcg → *3 UI*  (66 doses)\n1000 mcg → *4 UI*  (50 doses)\n\n▪️ *Diluir em 3 mL de BAC:*\n250 mcg → *2 UI*  (200 doses)\n500 mcg → *3 UI*  (100 doses)\n750 mcg → *5 UI*  (66 doses)\n1000 mcg → *6 UI*  (50 doses)\n\n▪️ *Diluir em 5 mL de BAC:*\n250 mcg → *3 UI*  (200 doses)\n500 mcg → *5 UI*  (100 doses)\n750 mcg → *8 UI*  (66 doses)\n1000 mcg → *10 UI*  (50 doses)"
+  }
+};
+async function buscarFracionamento(){ return FRAC_TABELAS; }
 function _mgFrac(nome){ const m = _normNomeProd(nome).match(/(\d+(?:[.,]\d+)?)\s*mg/); return m ? parseFloat(m[1].replace(',','.')) : null; }
 // De-para nome->slug(s). Específico ANTES do genérico. (validado com 46 nomes reais)
 function slugsDoProduto(nome){
@@ -495,10 +646,11 @@ const MSG_PRAZOS_RASTREIO_MENU = `📦 *Prazos, Fretes e Rastreio*\n\n` +
   `3️⃣ Consultar *valor do frete*\n\n` +
   `_Digite o número, ou *menu* para voltar._`;
 
-const MSG_DUVIDAS_INTRO = `💬 *Tô aqui pra te ajudar!*\n\n` +
-  `Pode perguntar o que quiser: produtos, protocolos, doses, indicações, comparações... 😊\n\n` +
-  `💉 Já é *cliente* e quer a *tabela de fracionamento* ou o *protocolo* do que comprou? É só escrever *fracionamento* ou *protocolo* que eu puxo pelo seu CPF.\n\n` +
-  `E quando bater a vontade de comprar, é só falar que eu já te mostro as opções com preço. 😉`;
+const MSG_DUVIDAS_INTRO = `💬 *Como posso te ajudar?*\n\n` +
+  `1️⃣ *Tirar uma dúvida* (produtos, doses, indicações, comparações)\n` +
+  `2️⃣ *Tabela de fracionamento* do que você comprou 💉\n` +
+  `3️⃣ *Protocolo completo* do que você comprou 💪\n\n` +
+  `_Digite *1*, *2* ou *3*. (As opções 2 e 3 são cortesia pra cliente — eu puxo pelo seu CPF.)_`;
 
 const MSG_PRAZOS_COMPLETO = MSG_PRAZO_VAREJO + `\n\n` +
   `*🏭 ATACADO (pedido mínimo R$ 3.000):*\n` +
@@ -2207,7 +2359,14 @@ exports.handler = async (event) => {
     }
 
     if (state === 'DUVIDAS') {
-      // Tudo aqui é dúvida → reconhece produto (abre a lista) ou manda pra IA, que conduz pra compra.
+      // Menu numerado dos serviços (o cliente só aperta o número — sem adivinhar o que digitar).
+      if (num === 1) { await saveSession(sid, { ...session, state:'DUVIDAS_LIVRE' }); return respond(`Pode mandar sua pergunta! 😊 Produtos, doses, indicações, comparações... o que quiser saber.`); }
+      if (num === 2) { await saveSession(sid, { ...session, state:'PROTO_IDENTIFICAR', fracFluxo:true, protoTentouOutro:false }); return respond(`💉 Beleza! Me manda os *11 números do seu CPF* (ou o *e-mail* da compra) que eu puxo o que você comprou e já te mando a *tabela de fracionamento*. 😊`); }
+      if (num === 3) { await saveSession(sid, { ...session, state:'PROTO_IDENTIFICAR', fracFluxo:false, protoTentouOutro:false }); return respond(`💪 Show! Me manda os *11 números do seu CPF* (ou o *e-mail* da compra) que eu puxo o que você comprou e monto seu *protocolo completo*. 😊`); }
+      // Digitou uma pergunta direto (não um número) → trata como dúvida livre (IA/produto).
+      return await tratarTextoLivre(session, sid, n, MSG_DUVIDAS_INTRO, respond);
+    }
+    if (state === 'DUVIDAS_LIVRE') {
       return await tratarTextoLivre(session, sid, n, MSG_DUVIDAS_INTRO, respond);
     }
 
