@@ -64,13 +64,133 @@ function contextoLista(session){
 
 // Dispara a IA pra montar e ENVIAR o PROTOCOLO COMPLETO pós-venda dos produtos comprados.
 // Chamado quando o pedido é concluído (após a coleta de dados). Fire-and-forget.
-async function dispararIAProtocolo(phone, produtos){
+async function dispararIAProtocolo(phone, produtos, tabelas){
   try {
     await fetch(ATHENA_IA_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ phone: phone, tipo: 'protocolo', produtos: produtos || [] })
+      body: JSON.stringify({ phone: phone, tipo: 'protocolo', produtos: produtos || [], tabelas: tabelas || '' })
     });
   } catch (e) { /* pós-venda: se falhar o disparo, não afeta o pedido já concluído */ }
+}
+
+// ── FRACIONAMENTO (tabelas) ───────────────────────────────────────────────────
+// Lê o nó vitaflow_fracionamento no Firebase (slug -> {titulo, texto}) e casa o
+// NOME do produto do pedido com a(s) tabela(s) certa(s). O texto fica no Firebase
+// (o site também lê de lá); aqui fica só a lógica de reconhecimento.
+let _fracCache = null;
+async function buscarFracionamento(){
+  if (_fracCache) return _fracCache;
+  try {
+    const r = await fetchT(fbUrl('/vitaflow_fracionamento.json'), {}, 6000);
+    const d = await r.json();
+    _fracCache = d || {};
+  } catch (e) { _fracCache = {}; }
+  return _fracCache;
+}
+function _mgFrac(nome){ const m = _normNomeProd(nome).match(/(\d+(?:[.,]\d+)?)\s*mg/); return m ? parseFloat(m[1].replace(',','.')) : null; }
+// De-para nome->slug(s). Específico ANTES do genérico. (validado com 46 nomes reais)
+function slugsDoProduto(nome){
+  const t = _normNomeProd(nome), mg = _mgFrac(nome);
+  const has = function(){ for (var i=0;i<arguments.length;i++){ if(t.indexOf(arguments[i])<0) return false; } return true; };
+  if (t.includes('tirzepatida') || /\b(tg|tirzec|lipoless|lipoland|gluconex|tirzedral)\b/.test(t)){
+    if (has('combo')) return ['tirze_combo_mix4'];
+    if (t.includes('synedica')) return ['tirze_synedica_60'];
+    if (t.includes('gluconex')) return ['tirze_gluconex_15'];
+    if (t.includes('tirzedral')) return ['tirze_tirzedral_15'];
+    if (t.includes('lipoless')){
+      if (/\bmd\b/.test(t)) return ['tirze_lipoless_md_15'];
+      if (t.includes('ampola')) return ['tirze_lipoless_15'];
+      return ['tirze_lipoless_15','tirze_lipoless_md_15'];
+    }
+    if (t.includes('lipoland')) return ['tirze_lipoland_15'];
+    if (t.includes('tirzec')) return ['tirze_tirzec_15'];
+    if (/\btg\b/.test(t)) return mg===10 ? ['tirze_tg_10'] : ['tirze_tg_15'];
+    if (/150\s*mg/.test(t) || t.includes('liofil')) return ['tirze_zphc_150_liof'];
+    return ['tirze_tg_15'];
+  }
+  if (t.includes('retatrutida') || t.includes('retatrutide') || /\breta\b/.test(t) || t.includes('retagen')){
+    const liof = t.includes('liofil');
+    if (t.includes('synedica')) return ['reta_synedica_120_liof'];
+    if (t.includes('retagen')) return ['reta_retagen_oxygen_120'];
+    if (t.includes('veltrane')){ if (t.includes('diamond')) return ['reta_veltrane_diamond_120']; if (t.includes('gold')) return ['reta_veltrane_gold_90']; return ['reta_veltrane_60']; }
+    if (t.includes('oxygen')){ if (mg===160) return ['reta_oxygen_160_aq']; if (mg===60 && liof) return ['reta_oxygen_60_liof']; return ['reta_oxygen_80_aq']; }
+    if (t.includes('zphc') || t.includes('zhpc')){ if (mg===15) return ['reta_zphc_15_liof']; if (liof) return mg===120 ? ['reta_zphc_120_liof'] : ['reta_zphc_60_liof']; return mg===120 ? ['reta_zphc_120_aq'] : ['reta_zphc_60_aq']; }
+    return ['reta_zphc_60_aq'];
+  }
+  if (t.includes('ahk')) return ['ahk_100'];
+  if (t.includes('ghk')) return mg===50 ? ['ghk_50'] : ['ghk_100'];
+  if (t.includes('klow')) return ['klow_80'];
+  if (t.includes('glow')) return ['glow_70'];
+  if (t.includes('nad')) return mg>=1000 ? ['nad_1000'] : ['nad_500'];
+  if (t.includes('cbl')) return mg===60 ? ['cbl_60'] : ['cbl_20'];
+  if (t.includes('ss-31') || t.includes('ss31') || t.includes('elamipret')) return mg===50 ? ['ss31_50'] : ['pept_10'];
+  if (t.includes('mots')) return mg===40 ? ['motsc_40'] : ['pept_10'];
+  if (t.includes('epitalon') || t.includes('epithalon')) return mg===50 ? ['epitalon_50'] : ['pept_10'];
+  if (t.includes('slupp')) return ['pept_5'];
+  if (t.includes('cagril')) return ['pept_5'];
+  const ehPept = /\b(bpc|tb-?500|ipamorelin|pt-?141|semax|selank|kpv|dsip|tesamorelin|kisspeptin|melanotan|mt-?2|5-?amino|cjc|hgh|frag|slupp|cagril|dac|aod)\b/.test(t);
+  if (ehPept){ if (mg===20) return ['pept_20']; if (mg===5) return ['pept_5']; return ['pept_10']; }
+  return [];
+}
+// Retorna array de textos de tabela (já formatados) pra um nome de produto.
+async function tabelasDoProduto(nome){
+  const frac = await buscarFracionamento();
+  const out = [];
+  slugsDoProduto(nome).forEach(function(sl){
+    const it = frac[sl];
+    if (it && it.texto) out.push('💉 *FRACIONAMENTO — ' + (it.titulo || nome) + '*\n' + it.texto);
+  });
+  return out;
+}
+// Junta as tabelas de vários produtos (usa produto que não tem tabela → aviso curto).
+async function montarTabelas(nomes){
+  const blocos = [];
+  for (let i=0; i<(nomes||[]).length; i++){
+    const ts = await tabelasDoProduto(nomes[i]);
+    if (ts.length) blocos.push(ts.join('\n\n'));
+    else blocos.push('ℹ️ *' + nomes[i] + '*: ainda não tenho tabela de fracionamento desse produto (posso te ajudar por aqui mesmo, se quiser).');
+  }
+  return blocos.join('\n\n━━━━━━━━━━━━━━━━━━━━\n\n');
+}
+// Detecta pedido de TABELA DE FRACIONAMENTO (sem ser protocolo).
+function ehPedidoFracionamento(nMsg){
+  const t = ' ' + _normNomeProd(nMsg) + ' ';
+  return /(fracionament|fracionar|como fraciono|tabela de dilui|tabela de fracion|quantas? ui|quantas unidades|marca[cç][aã]o na seringa|dilui[cç][aã]o|como dilu|quanto.{0,6}dilu)/.test(t)
+    && !/pagamento|cupom|site|link/.test(t);
+}
+// Pergunta (após escolher o produto): protocolo completo (com tabela) OU só a tabela.
+function msgProtoTipo(nomes){
+  const lbl = (nomes && nomes.length>1) ? nomes.join(', ') : (nomes && nomes[0]) || 'seu produto';
+  return `Fechou: *${lbl}*. 💪\n\nO que você quer?\n\n1️⃣ *Protocolo completo* (já vem com a *tabela de fracionamento* junto)\n2️⃣ *Só a tabela de fracionamento*\n\n_Digite *1* ou *2*._`;
+}
+
+// ── PARCELAMENTO (simulação InfinitePay) ──────────────────────────────────────
+// Fatores PRECISOS extraídos das simulações reais da InfinitePay (batem centavo a
+// centavo). parcela = total × fator ÷ nº. À vista no Pix = SEM juros. Juros só no cartão.
+const FATOR_PARCELAS = {1:1.04384,2:1.064859,3:1.075382,4:1.085923,5:1.096495,6:1.107061,7:1.144083,8:1.155127,9:1.166218,10:1.177394,11:1.188767,12:1.2};
+function _rBRL(v){ return (Math.round(v*100)/100).toFixed(2).replace('.',','); }
+function simularParcelas(valor){
+  const V = Number(valor) || 0;
+  if (V <= 0) return null;
+  let txt = `💳 *SIMULAÇÃO DE PAGAMENTO — R$ ${_rBRL(V)}*\n\n✅ *À vista no Pix:* R$ ${_rBRL(V)} _(sem juros!)_\n\n*No cartão* (parcelado, taxas da InfinitePay):\n`;
+  for (let nP = 1; nP <= 12; nP++){ txt += `${nP}x de R$ ${_rBRL(V * FATOR_PARCELAS[nP] / nP)}\n`; }
+  txt += `\n_No próprio *link de pagamento* você escolhe em quantas vezes quer pagar (até 12x). Pode variar 1 centavo conforme a operadora._`;
+  return txt;
+}
+// Detecta interesse em PARCELAR. (não confunde com rastreio/cupom)
+function ehPedidoParcelamento(nMsg){
+  const t = ' ' + _normNomeProd(nMsg) + ' ';
+  return /(parcel|em quantas vezes|quantas vezes|no cartao|cartao de credito|prestacao|\ba prazo\b|em ate 12|em \d+ ?x|\d+ ?vezes|dividir o pagamento|dividir em)/.test(t)
+    && !/rastre|codigo|cupom/.test(t);
+}
+// Resolve o valor base pra simular: total do pedido > total do carrinho > número na msg.
+function baseParcelamento(session, nMsg){
+  let base = (session && session.total) || totalCarrinho((session && session.carrinho) || []) || 0;
+  if (base <= 0 && nMsg){
+    const m = String(nMsg).replace(/\.(?=\d{3}\b)/g,'').match(/(\d{2,7})(?:,(\d{2}))?/);
+    if (m) base = parseFloat(m[1] + (m[2] ? '.' + m[2] : ''));
+  }
+  return base;
 }
 
 // ── Desconto Athena e Cupons ──────────────────────────────────────────────────
@@ -362,7 +482,7 @@ function buildTriagem() {
     `*Como posso te ajudar agora?*\n\n` +
     `1️⃣ 🛒 *Comprar produtos*\n` +
     `2️⃣ 📦 *Prazos, fretes e rastreio* de pedido\n` +
-    `3️⃣ 💬 *Tirar dúvidas* (produtos, protocolos, indicações)`;
+    `3️⃣ 💬 *Dúvidas, protocolos e tabelas de fracionamento*`;
   const promo = promoAtiva();
   if (promo) m += `\n\n🚨 *${promo.titulo} ATIVA!* (dentro da opção *1* → Promoção do momento) ⚡`;
   m += `\n\n_Digite *1*, *2* ou *3*. E se já sabe o que quer, é só mandar o *nome do produto* que eu já te mostro! 😉_`;
@@ -377,6 +497,7 @@ const MSG_PRAZOS_RASTREIO_MENU = `📦 *Prazos, Fretes e Rastreio*\n\n` +
 
 const MSG_DUVIDAS_INTRO = `💬 *Tô aqui pra te ajudar!*\n\n` +
   `Pode perguntar o que quiser: produtos, protocolos, doses, indicações, comparações... 😊\n\n` +
+  `💉 Já é *cliente* e quer a *tabela de fracionamento* ou o *protocolo* do que comprou? É só escrever *fracionamento* ou *protocolo* que eu puxo pelo seu CPF.\n\n` +
   `E quando bater a vontade de comprar, é só falar que eu já te mostro as opções com preço. 😉`;
 
 const MSG_PRAZOS_COMPLETO = MSG_PRAZO_VAREJO + `\n\n` +
@@ -850,6 +971,23 @@ async function iniciarStack(session, sid, entries, respond) {
 }
 
 async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
+  // Quer PARCELAR → simula na hora (total do pedido/carrinho, ou valor que ele disser).
+  if (ehPedidoParcelamento(nMsg)) {
+    const base = baseParcelamento(session, nMsg);
+    if (base > 0) return respond(simularParcelas(base));
+    return respond(`💳 Claro! Você pode pagar *à vista no Pix (sem juros)* ou parcelar em *até 12x no cartão* (taxas da InfinitePay). 😊\n\nMe diz o *valor* que você quer simular (ex.: 1000), ou monte seu carrinho que eu já mostro as parcelas do total.`);
+  }
+  // Pediu TABELA DE FRACIONAMENTO → mesmo fluxo travado por CPF (só do que já comprou).
+  // No fim (PROTO_TIPO) a Athena oferece protocolo+tabela OU só a tabela.
+  if (ehPedidoFracionamento(nMsg)) {
+    if (session.protoVerificado && Array.isArray(session.protoProdutos) && session.protoProdutos.length) {
+      const lista = session.protoProdutos.map((p,i) => `${emojis(i)} ${p}`).join('\n');
+      await saveSession(sid, { ...session, state:'PROTO_ESCOLHER', errosSeguidos:0 });
+      return respond(`Beleza! 💉 Seus produtos:\n\n${lista}\n\n0️⃣ Outro produto (que ainda não comprei)\n\n*Pra qual você quer a tabela de fracionamento?* Pode ser *um número*, *vários* (ex.: 1 e 3) ou *todos*.`);
+    }
+    await saveSession(sid, { ...session, state:'PROTO_CLIENTE', fracFluxo:true, errosSeguidos:0 });
+    return respond(`Boa! 💉 Eu te mando a *tabela de fracionamento* certinha do que você comprou (e, se quiser, o protocolo completo junto).\n\nIsso é pra *cliente VitaFlow*. Você *já é cliente*? _(responde *sim* ou *não*)_`);
+  }
   // Pediu pra MONTAR um protocolo/plano (ou analisar exame) → fluxo travado por CPF:
   // só monta protocolo depois da compra e SÓ com os produtos que o cliente já comprou.
   if (ehPedidoProtocoloCompleto(nMsg)) {
@@ -1429,7 +1567,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
       : `🚚 Frete *${frete.label}* — ${session.estadoCliente}: ~~R$ ${(frete.valor||0).toFixed(2).replace('.',',')}~~ *GRÁTIS* 🎉\n`) +
     linhaFreteGratis + linhaBrinde +
     linhasDesc + linhaCupomInfo +
-    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu` +
+    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._` +
     linhaConviteCupom;
   const freteParaSalvar = { ...frete, valor: freteValorFinal };
   await saveSession(sid, {
@@ -1607,7 +1745,7 @@ async function gerarLinkPedido(session, sid, respond) {
   } catch {}
   await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
   return await responderDireto(sid, link
-    ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
+    ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão — é só escolher lá. (Quer ver os valores das parcelas antes? Digite *parcelar*.)_\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
     : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond);
 }
 // Leitor determinístico de reserva — funciona mesmo se a IA falhar.
@@ -1852,7 +1990,7 @@ exports.handler = async (event) => {
     // (frete, prazo, rastreio, atacado, tabela, grupo, promo) pode roubar o fluxo e APAGAR o
     // carrinho. Nesses estados, a mensagem vai direto pro handler do estado (que sabe lidar
     // com o carrinho). Isso corrige o caso "digitei 'frete' no resumo e perdi o pedido".
-    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
 
     // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
     // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
@@ -1875,7 +2013,7 @@ exports.handler = async (event) => {
     // A IA NÃO enxerga o carrinho e inventava "carrinho vazio" + reabria seleção (duplicava item).
     // Só quando há itens no carrinho e fora dos passos que já tratam isso (estado/frete/confirmar/pgto).
     const _temCarrinho = Array.isArray(session.carrinho) && session.carrinho.length > 0;
-    const _naoInterferir = ['ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const _naoInterferir = ['ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
     if (_temCarrinho && !_naoInterferir) {
       const ehVerCarrinho = /\b(meu carrinho|ver (o )?carrinho|carrinho de compras|quantos? (produtos?|itens?)|o que (tem|ta|esta|eu tenho|eu ja tenho) no (meu )?carrinho|itens do carrinho|o que eu (ja )?(escolhi|adicionei)|resumo do (meu )?carrinho)\b/.test(n);
       const ehFinalizar = /\b(finalizar|fechar (a |o )?(compra|pedido|carrinho)|concluir (a )?compra|ir pro pagamento|quero pagar|pode fechar|finaliza(r)?|encerrar (a )?compra|checkout)\b/.test(n);
@@ -1939,7 +2077,7 @@ exports.handler = async (event) => {
 
     const palavrasHumano = ['atendente','atendimento','humano','vendedor','pessoa real','falar com alguem','falar com pessoa','falar com atendimento','quero atendimento','suporte','reclamacao','reclamar'];
     // Em estados críticos (carrinho/pedido pago) NÃO apaga a sessão — escala mas preserva o pedido.
-    const estadoCritico = ['CARRINHO','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const estadoCritico = ['CARRINHO','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
     if (palavrasHumano.some(p => n.includes(p))) {
       await enviarTelegram(`🔔 CLIENTE QUER HUMANO\n📱 ${sid}\n📍 Estado: ${state}\n💬 ${mensagem}`);
       const _temCar = session.carrinho && session.carrinho.length;
@@ -2431,7 +2569,7 @@ exports.handler = async (event) => {
           `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
           `🔥 *${session.promoTitulo||'Promoção Relâmpago'}* — preços promocionais já aplicados` +
           (descPct ? `\n🏷️ Desconto extra (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') +
-          `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu`;
+          `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`;
         await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo' });
         return respond(resumo);
       }
@@ -2504,9 +2642,8 @@ exports.handler = async (event) => {
       const querTodos = /\b(todos|todas|tudo)\b/.test(s)
         || /\b(os dois|as duas|os tres|os três|os 2|os 3|ambos|as ambas|os quatro|todos eles|todas elas|cada um|uma de cada|um de cada|de cada|de todos|pra todos|para todos|todos que comprei|tudo que comprei|geral|todos os que|completo de tudo)\b/.test(s);
       if (querTodos) {
-        await saveSession(sid, { ...session, state:'MENU' });
-        await dispararIAProtocolo(sid, produtos);
-        return respond(`Show! 🙌 Já tô montando o *protocolo completo de todos os seus produtos* (${produtos.join(', ')}) — chega já já aqui embaixo. 💪`);
+        await saveSession(sid, { ...session, state:'PROTO_TIPO', protoEscolhidos: produtos });
+        return respond(msgProtoTipo(produtos));
       }
       // "0" sozinho → produto fora da lista (ainda não comprou)
       if (s === '0') {
@@ -2531,12 +2668,32 @@ exports.handler = async (event) => {
         const lista = produtos.map((p,i) => `${emojis(i)} ${p}`).join('\n');
         return respond(`Não entendi. 😊 Escolhe pelo *número* — pode ser *um*, *vários* (ex.: *1 e 3*, protocolo combinado) ou *todos*:\n\n${lista}\n\n0️⃣ Outro produto (que ainda não comprei)`);
       }
-      await saveSession(sid, { ...session, state:'MENU' });   // mantém protoProdutos + protoVerificado no session
-      await dispararIAProtocolo(sid, escolhidos);
+      await saveSession(sid, { ...session, state:'PROTO_TIPO', protoEscolhidos: escolhidos });
+      return respond(msgProtoTipo(escolhidos));
+    }
+
+    // Escolhe entre protocolo completo (com tabela) OU só a tabela de fracionamento.
+    if (state === 'PROTO_TIPO') {
+      const s = norm(mensagem);
+      if (/^(menu|inicio|início|voltar|cancelar)$/.test(s)) { await saveSession(sid, { ...session, state:'MENU' }); return respond(buildMenuPrincipal()); }
+      const escolhidos = session.protoEscolhidos || [];
+      if (!escolhidos.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond(buildMenuPrincipal()); }
+      // Opção 2 = SÓ a tabela de fracionamento (envio na hora, texto do Firebase).
+      const soTabela = num === 2 || /\b(so|apenas|somente)\b.{0,8}(tabela|fracion)|^\s*(tabela|fracionament)/.test(s);
+      if (soTabela) {
+        const tabelas = await montarTabelas(escolhidos);
+        await saveSession(sid, { ...session, state:'MENU', fracFluxo:false });
+        const partes = partirMensagem(`💉 *TABELA(S) DE FRACIONAMENTO*\n\n${tabelas}\n\n_Guarde essa mensagem! Se quiser o *protocolo completo* também, é só pedir. 😉_`, 3500);
+        return respond.apply(null, partes);
+      }
+      // Opção 1 (ou qualquer confirmação) = PROTOCOLO completo + tabela junto.
+      const tabelas = await montarTabelas(escolhidos);
+      await saveSession(sid, { ...session, state:'MENU', fracFluxo:false });
+      await dispararIAProtocolo(sid, escolhidos, tabelas);
       const nomes = escolhidos.join(', ');
       return respond(escolhidos.length > 1
-        ? `Show! 🙌 Já tô montando o *protocolo combinado* de ${nomes} — chega já já aqui embaixo. 💪`
-        : `Show! 🙌 Já tô montando o *protocolo completo do ${nomes}* — chega já já aqui embaixo. 💪`);
+        ? `Show! 🙌 Tô montando o *protocolo combinado* de ${nomes} — e a *tabela de fracionamento* vem junto. Chega já já aqui embaixo. 💪`
+        : `Show! 🙌 Tô montando o *protocolo completo do ${nomes}* — e a *tabela de fracionamento* vem junto. Chega já já aqui embaixo. 💪`);
     }
     if (state === 'PROTO_HUMANO') {
       const s = norm(mensagem);
@@ -2583,6 +2740,10 @@ exports.handler = async (event) => {
         }
         return await gerarLinkPedido(session, sid, respond);
       }
+      // Quer simular PARCELAMENTO na hora de fechar → mostra e mantém o pedido pronto.
+      if (ehPedidoParcelamento(mensagem)) {
+        return respond(simularParcelas(session.total || totalCarrinho(session.carrinho || [])) + `\n\nQuando quiser, digite *1* para *confirmar a compra* ou *2* para voltar ao menu.`);
+      }
       // Opção B: cliente pode digitar um código de cupom aqui (não em promoção/negociação)
       // Só tenta como CUPOM se PARECER um código (uma palavra curta alfanumérica) — assim
       // "frete", "prazo", "quero pagar" etc. NÃO viram "cupom inválido" e o pedido é preservado.
@@ -2614,6 +2775,10 @@ exports.handler = async (event) => {
     // AGUARDAR COMPROVANTE
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'AGUARDAR_COMPROVANTE') {
+      // Cliente perguntou sobre PARCELAR enquanto o link está aberto → simula (não confirma nada).
+      if (ehPedidoParcelamento(mensagem)) {
+        return respond(simularParcelas(session.total || 0) + `\n\n💳 É só abrir o *link de pagamento* que te mandei e escolher lá as parcelas (até 12x). 😉`);
+      }
       // ⚠️ REGRA CRÍTICA: a Athena NUNCA confirma pagamento por palavra do cliente nem por comprovante.
       // Somente o webhook real da InfinitePay (via GAS) confirma o pagamento e muda o estado para COLETA_DADOS.
       // Aqui, o cliente que diz "paguei"/manda print apenas recebe acolhimento. Se insistir 2+ vezes, aciona suporte humano.
@@ -2800,7 +2965,7 @@ exports.handler = async (event) => {
       if (session.cupomDocId) { try { await incrementarUsoCupom(session.cupomDocId); } catch (e) {} }
 
       // PROTOCOLO PÓS-VENDA: dispara a IA pra gerar e ENVIAR o protocolo completo (canal próprio).
-      try { await dispararIAProtocolo(sid, (carrinho || []).map(function(i){ return i.nome; })); } catch (e) {}
+      try { const _nomesProto = (carrinho || []).map(function(i){ return i.nome; }); const _tabProto = await montarTabelas(_nomesProto); await dispararIAProtocolo(sid, _nomesProto, _tabProto); } catch (e) {}
 
       await deleteAguardandoDados(sid);
       await deleteSession(sid);
