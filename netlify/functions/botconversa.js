@@ -2142,7 +2142,7 @@ exports.handler = async (event) => {
     // (frete, prazo, rastreio, atacado, tabela, grupo, promo) pode roubar o fluxo e APAGAR o
     // carrinho. Nesses estados, a mensagem vai direto pro handler do estado (que sabe lidar
     // com o carrinho). Isso corrige o caso "digitei 'frete' no resumo e perdi o pedido".
-    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
 
     // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
     // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
@@ -2165,7 +2165,7 @@ exports.handler = async (event) => {
     // A IA NÃO enxerga o carrinho e inventava "carrinho vazio" + reabria seleção (duplicava item).
     // Só quando há itens no carrinho e fora dos passos que já tratam isso (estado/frete/confirmar/pgto).
     const _temCarrinho = Array.isArray(session.carrinho) && session.carrinho.length > 0;
-    const _naoInterferir = ['ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const _naoInterferir = ['ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
     if (_temCarrinho && !_naoInterferir) {
       const ehVerCarrinho = /\b(meu carrinho|ver (o )?carrinho|carrinho de compras|quantos? (produtos?|itens?)|o que (tem|ta|esta|eu tenho|eu ja tenho) no (meu )?carrinho|itens do carrinho|o que eu (ja )?(escolhi|adicionei)|resumo do (meu )?carrinho)\b/.test(n);
       const ehFinalizar = /\b(finalizar|fechar (a |o )?(compra|pedido|carrinho)|concluir (a )?compra|ir pro pagamento|quero pagar|pode fechar|finaliza(r)?|encerrar (a )?compra|checkout)\b/.test(n);
@@ -2229,7 +2229,7 @@ exports.handler = async (event) => {
 
     const palavrasHumano = ['atendente','atendimento','humano','vendedor','pessoa real','falar com alguem','falar com pessoa','falar com atendimento','quero atendimento','suporte','reclamacao','reclamar'];
     // Em estados críticos (carrinho/pedido pago) NÃO apaga a sessão — escala mas preserva o pedido.
-    const estadoCritico = ['CARRINHO','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const estadoCritico = ['CARRINHO','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
     if (palavrasHumano.some(p => n.includes(p))) {
       await enviarTelegram(`🔔 CLIENTE QUER HUMANO\n📱 ${sid}\n📍 Estado: ${state}\n💬 ${mensagem}`);
       const _temCar = session.carrinho && session.carrinho.length;
@@ -2841,8 +2841,9 @@ exports.handler = async (event) => {
       const soTabela = num === 2 || /\b(so|apenas|somente)\b.{0,8}(tabela|fracion)|^\s*(tabela|fracionament)/.test(s);
       if (soTabela) {
         const tabelas = await montarTabelas(escolhidos);
-        await saveSession(sid, { ...session, state:'MENU', fracFluxo:false });
-        const partes = partirMensagem(`💉 *TABELA(S) DE FRACIONAMENTO*\n\n${tabelas}\n\n_Guarde essa mensagem! Se quiser o *protocolo completo* também, é só pedir. 😉_`, 3500);
+        // Mantém os produtos escolhidos e fica de olho: se ele responder "quero", monta o protocolo.
+        await saveSession(sid, { ...session, state:'POS_TABELA_FRAC', fracFluxo:false, protoEscolhidos: escolhidos });
+        const partes = partirMensagem(`💉 *TABELA(S) DE FRACIONAMENTO*\n\n${tabelas}\n\n_Guarde essa mensagem! Quer o *protocolo completo* desse(s) produto(s) também? Responde *quero* que eu monto na hora. 😉_`, 3500);
         return respond.apply(null, partes);
       }
       // Opção 1 (ou qualquer confirmação) = PROTOCOLO completo + tabela junto.
@@ -2853,6 +2854,26 @@ exports.handler = async (event) => {
       return respond(escolhidos.length > 1
         ? `Show! 🙌 Tô montando o *protocolo combinado* de ${nomes} — e a *tabela de fracionamento* vem junto. Chega já já aqui embaixo. 💪`
         : `Show! 🙌 Tô montando o *protocolo completo do ${nomes}* — e a *tabela de fracionamento* vem junto. Chega já já aqui embaixo. 💪`);
+    }
+    // Logo DEPOIS de mandar só a tabela: se o cliente disser "quero", monta o protocolo do mesmo produto.
+    if (state === 'POS_TABELA_FRAC') {
+      const s = norm(mensagem);
+      const escolhidos = session.protoEscolhidos || [];
+      // Reconhece MUITAS formas de dizer "sim, quero o protocolo" (não é lista fixa).
+      const disseSim = /\b(quero|qro|kero|queria|queru|gostaria|adoraria|preciso|manda|mandar|me manda|envia|enviar|monta|montar|faz|fazer|faca|faço|bota|coloca|quero sim|pode|pode ser|pode sim|pode mandar|podes|claro|lógico|logico|obvio|óbvio|com certeza|certeza|certamente|positivo|isso|isso mesmo|exato|aham|uhum|hum|opa|bora|beleza|blz|vamos|vamo|manda ver|tambem|também|tbm|esse|essa|o completo|completo|protocolo|sim)\b/.test(s)
+        || /^\s*(s|sim|ss|ok|okk?|okay|1)\s*$/.test(s);
+      const disseNao = /\b(nao|não|nem|depois|agora nao|agora não|deixa|dispensa|so a tabela|só a tabela|nada|to de boa|tô de boa)\b/.test(s);
+      const querComprar = /\b(comprar|compra|preco|preço|produto|carrinho|adicionar|catalogo|catálogo)\b/.test(s);
+      const querProto = disseSim && !disseNao && !querComprar;
+      if (querProto && escolhidos.length) {
+        const tabelas = await montarTabelas(escolhidos);
+        await saveSession(sid, { ...session, state:'MENU' });
+        await dispararIAProtocolo(sid, escolhidos, tabelas);
+        return respond(`Show! 🙌 Tô montando o *protocolo completo* de ${escolhidos.join(', ')} — chega já já aqui embaixo. 💪`);
+      }
+      // Não quis o protocolo → segue o fluxo normal (dúvida/produto/menu).
+      await saveSession(sid, { ...session, state:'MENU' });
+      return await tratarTextoLivre(session, sid, n, buildMenuPrincipal(), respond);
     }
     if (state === 'PROTO_HUMANO') {
       const s = norm(mensagem);
