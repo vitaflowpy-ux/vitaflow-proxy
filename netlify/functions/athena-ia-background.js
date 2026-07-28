@@ -291,6 +291,7 @@ COMO LEVAR O CLIENTE AO PRODUTO (sem pedir pra ele digitar o nome):
 
 RECOMENDAÇÃO E PROTOCOLO (é aqui que você brilha):
 - 🧠 SEU CONHECIMENTO DO MUNDO SOBRE PRODUTOS É IRRELEVANTE — VALE SÓ O CATÁLOGO. Você é um modelo de linguagem e "sabe" que existem dezenas de nootrópicos/peptídeos no mundo (Dihexa, P21, Cerebrolysin, Noopept, Semax variantes, NA-Semax-Amidate, Selank variantes, Melanotan, Oxitocina, EPO, etc.). ISSO NÃO IMPORTA AQUI. Se um produto NÃO aparece LITERALMENTE escrito no catálogo abaixo, para você ele NÃO EXISTE — é PROIBIDO citar o nome dele, nem como "opção", nem como "alternativa forte", nem "também tem". ANTES de escrever o nome de QUALQUER produto, confira que ele está escrito no catálogo. Ex.: se pra cognição o catálogo só mostra Semax e Selank, você recomenda SÓ Semax e Selank — NÃO acrescenta Dihexa, P21, Noopept da sua cabeça. Citar um produto e depois descobrir que "não temos" é o pior erro que você pode cometer — NUNCA faça isso.
+- 🧪 COMPOSIÇÃO DE BLENDS (Klow, Glow e QUALQUER mistura de peptídeos) — REGRA CRÍTICA (esse erro JÁ vazou pra cliente): é PROIBIDO inventar/adivinhar os componentes de um blend. Composições confirmadas: *Glow* = GHK-Cu + BPC-157 + TB-500; *Klow* = GHK-Cu + BPC-157 + TB-500 + KPV (é o Glow + KPV). Se um blend NÃO estiver nesta lista, NÃO liste componentes — fale do objetivo geral e pare. NUNCA diga que Klow/Glow têm AOD-9604, Tesamorelin ou algo fora dessas listas. Essa trava vale pra QUALQUER fato técnico (composição, "do que é feito", fabricante): sem acesso à internet, você só afirma o que está no catálogo ou nas FICHAS TÉCNICAS; o resto, descreve pelo objetivo e não inventa.
 - SÓ RECOMENDE O QUE ESTÁ NO CATÁLOGO. Ao indicar ou citar opções, use EXCLUSIVAMENTE produtos que aparecem no catálogo abaixo. Toda recomendação precisa ser comprável aqui — nada de mandar o cliente pra um beco sem saída.
 - ⚠️ NUNCA AFIRME QUE "NÃO TEMOS" UM PRODUTO baseado só no que você vê aqui. A loja tem CENTENAS de produtos e o catálogo acima pode estar RESUMIDO/CORTADO — um item pode existir sem aparecer na sua lista (ex.: Clembuterol/T3 e vários outros ficam na coleção "outros"). Se o cliente pedir algo que você NÃO está vendo, NÃO negue: ABRA a lista pra conferir no ESTOQUE REAL com [[LISTA:colecao:termo]] — o sistema procura em TODAS as coleções, mesmo que você erre a coleção. Só diga que não trabalhamos com o item DEPOIS que a busca real voltar vazia; aí sim ofereça a melhor alternativa do catálogo. Ex.: cliente "tem clembuterol?" → você não tem certeza, então abre [[LISTA:outros:clembuterol]] e deixa o sistema confirmar.
 - 🚫 PROIBIDO CITAR PRODUTO COM RESSALVA DE "PRECISO CONFIRMAR / VERIFICAR / SE TIVER NO ESTOQUE". Isso é INVENTAR com disclaimer. Se você NÃO tem certeza de que um produto existe no catálogo, NÃO fale o nome dele — nem como "opção", nem "talvez", nem "deixa eu ver se temos Dihexa/Noopept/P21...". Só existem DOIS caminhos honestos: (a) recomendar produtos que você VÊ no catálogo, citando o nome exato; ou (b) ABRIR a lista real com o marcador pra MOSTRAR o que existe. Jogar nomes de produtos que "talvez a gente tenha" é exatamente o que você NÃO pode fazer. A regra acima ("não negue, abra a lista") é pra CONFERIR abrindo a lista — NUNCA pra listar chutes de nomes.
@@ -415,9 +416,51 @@ REGRAS:
 - Se comprou mais de um produto, organize por produto e, se combinarem, explique como usar juntos.
 - Use *negrito* (um asterisco de cada lado) pra destacar títulos. NUNCA use ## nem ###.
 - Baseie-se em prática consolidada e responsável; NÃO invente. O que depender de avaliação individual, oriente procurar acompanhamento profissional. NÃO prometa cura nem milagre.
+- 🧪 COMPOSIÇÃO DE BLENDS (Klow, Glow e QUALQUER mistura de vários peptídeos) — REGRA CRÍTICA (esse erro JÁ vazou pra cliente num grupo): é TERMINANTEMENTE PROIBIDO inventar/adivinhar quais peptídeos formam um blend. Use SOMENTE as composições confirmadas abaixo. Se um blend NÃO estiver listado aqui, NÃO liste componentes — descreva o produto pelo objetivo geral e PARE (jamais chute nomes de peptídeos). Composições confirmadas da VitaFlow: *Glow* = GHK-Cu + BPC-157 + TB-500; *Klow* = GHK-Cu + BPC-157 + TB-500 + KPV (é o Glow + o KPV). NUNCA diga que Klow ou Glow contêm AOD-9604, Tesamorelin, Ipamorelin ou qualquer coisa fora dessas listas.
+- 🔒 TRAVA GERAL DE FATOS TÉCNICOS (vale pra TODO produto, não só blends): você NÃO tem acesso à internet e seu treino ERRA fatos de produto. Então, para COMPOSIÇÃO, "do que é feito", origem, marca-fabricante e afins: só afirme se estiver no CATÁLOGO ou na seção FICHAS TÉCNICAS que você recebe. Se NÃO tiver a informação confirmada, é PROIBIDO chutar — descreva o produto pelo OBJETIVO/uso geral e siga em frente, ou diga que confirma esse detalhe. Dose: use as âncoras deste prompt e o bom senso, sempre como ESTIMATIVA. Um chute apresentado como fato é o pior erro (já vazou pra cliente).
 - 🚫 VALIDADE DA ÁGUA BACTERIOSTÁTICA (BAC): é PROIBIDO dizer que a BAC "dura só 28 dias", "vale 28 dias" ou tem validade curta — é desinformação antiga já superada (a BAC tem conservante e dura muito mais). NUNCA cite 28 dias (nem prazo curto) pra água bacteriostática. Se for falar de prazo de uso, fale APENAS do PRODUTO JÁ RECONSTITUÍDO/diluído (peptídeo + água), nunca da água em si.
 - NÃO fale de preço nem de "comprar" (já foi comprado) e NUNCA mande pro site.
 - Feche desejando bons resultados e se colocando à disposição pra dúvidas.`;
+
+// ── FICHAS TÉCNICAS OFICIAIS (fonte da verdade p/ composição e "o que é") ──────
+// A IA usa SÓ isto pra composição/componentes. Blends com composição TRAVADA.
+// Doses = referência/estimativa. Editar aqui quando o Thiago revisar.
+const FICHAS_TECNICAS = `BLENDS / MISTURAS (composição TRAVADA — nunca invente componentes):
+- Klow = GHK-Cu + BPC-157 + TB-500 + KPV (regeneração, anti-inflamatório, pele).
+- Glow = GHK-Cu + BPC-157 + TB-500 (o Klow SEM o KPV).
+- BPC-157 + TB-500 = BPC-157 + TB-500 (recuperação/regeneração).
+- Durateston / Sustanon 250 = testosterona Propionato + Fenilpropionato + Isocaproato + Decanoato (base androgênica prolongada).
+- CutStack = normalmente Testosterona Propionato + Trembolona Acetato + Drostanolona (Masteron) Propionato (blend de corte; varia por marca — se não tiver certeza, fale do objetivo e não afirme a fórmula exata).
+- MyoMax Inibition = CJC-1295 + HGH Frag 176-191 + Folistatin.
+
+PEPTÍDEOS (substância ÚNICA — não são blend):
+- BPC-157: reparo/regeneração de tecidos, anti-inflamatório.
+- TB-500 (Timosina Beta-4): recuperação, cicatrização, flexibilidade.
+- GHK-Cu: peptídeo de cobre — pele, colágeno, cicatrização, cabelo.
+- AHK-Cu: peptídeo de cobre com foco capilar.
+- KPV: fragmento anti-inflamatório (da α-MSH).
+- SS-31 (Elamipretide): mitocondrial — energia celular, recuperação.
+- MOTS-c: mitocondrial — metabolismo, sensibilidade à insulina.
+- Ipamorelin: secretagogo de GH (GHRP) — libera GH, sono/recuperação.
+- CJC-1295 (com/sem DAC): análogo de GHRH — aumenta GH/IGF-1.
+- PT-141 (Bremelanotida): libido/disfunção sexual.
+- AOD-9604: fragmento de GH (176-191) — lipólise.
+- HGH Frag 176-191: fragmento de GH — lipólise.
+- CBL-514: lipolítico — gordura localizada.
+- Epitalon: pineal — longevidade/sono.
+- NAD+: coenzima — energia celular, longevidade.
+- Tesamorelin: análogo de GHRH — reduz gordura visceral.
+- Folistatin: inibidor de miostatina — ganho muscular.
+
+EMAGRECEDORES: Retatrutida (triplo agonista GLP-1/GIP/glucagon), Tirzepatida (duplo GLP-1/GIP), Semaglutida (GLP-1), Saxenda/Liraglutida (GLP-1 diário). Todos por TITULAÇÃO (menor dose eficaz).
+
+GH: Somatropina (HGH) — hormônio do crescimento recombinante (dose em UI).
+
+HORMÔNIOS (substância única, exceto Durateston/CutStack acima):
+- Testosterona (Enantato/Cipionato/Propionato/Undecanoato/Suspensão): o éster muda a meia-vida.
+- Nandrolona (Deca), NPP (nandrolona de éster curto), Trembolona (Acetato/Enantato/Hexa), Boldenona (Equipoise), Stanozolol (Winstrol), Oxandrolona (Anavar), Masteron (Drostanolona), Primobolan (Metenolona), Dianabol (Metandienona), Hemogenin (Oximetolona/Anadrol), HCG, Anastrozol (inibidor de aromatase), Proviron (Mesterolona).
+
+OUTROS: Clembuterol (beta-2 agonista, termogênico — NÃO é hormônio), T3 (Liotironina — tireoidiano), Botox (toxina botulínica), Água Bacteriostática (diluente pra reconstituir peptídeos).`;
 
 async function gerarProtocoloPosVenda(body){
   try {
@@ -426,7 +469,7 @@ async function gerarProtocoloPosVenda(body){
     console.log('[IA] PROTOCOLO pós-venda | phone:', phone, '| produtos:', produtos.join(' | '));
     if (!phone || !produtos.length) return { statusCode: 200, body: 'no-op' };
     const catalogo = await catalogoResumo();
-    const sys = PROTOCOLO_SYSTEM + `\n\n=== CATÁLOGO (referência de nomes/formatos reais — NÃO invente fora disto) ===\n${catalogo}`;
+    const sys = PROTOCOLO_SYSTEM + `\n\n=== FICHAS TÉCNICAS OFICIAIS (fonte da verdade p/ composição/o que é — use SÓ isto; NÃO invente) ===\n${FICHAS_TECNICAS}` + `\n\n=== CATÁLOGO (referência de nomes/formatos reais — NÃO invente fora disto) ===\n${catalogo}`;
     const pedido = `O cliente é cliente VitaFlow e tem: ${produtos.join(', ')}.\n\nMonte agora o PROTOCOLO COMPLETO e detalhado ${produtos.length > 1 ? 'de CADA um desses produtos, e explique como combiná-los quando fizer sentido' : 'desse produto'}, pronto pra enviar no WhatsApp. Entregue o protocolo INTEIRO, do começo ao fim, SEM cortar no meio. Use *negrito* pros títulos — NUNCA use # ## ###.`;
     // Limite dinâmico: quanto mais produtos, mais espaço (evita protocolo cortado). Teto 8000.
     const maxTok = Math.min(8000, 2200 + produtos.length * 1500);
@@ -465,7 +508,7 @@ exports.handler = async (event) => {
 
     const catalogo = await catalogoResumo();
     console.log('[IA] catalogo len:', catalogo.length, '| promoContext:', promoContext ? 'sim' : 'nao', '| histórico:', historico.length, '| ANTHROPIC_KEY presente:', !!ANTHROPIC_KEY);
-    let sys = SYSTEM + `\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n${catalogo}`;
+    let sys = SYSTEM + `\n\n=== FICHAS TÉCNICAS OFICIAIS (fonte da verdade p/ composição/o que é — use SÓ isto; NÃO invente) ===\n${FICHAS_TECNICAS}` + `\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n${catalogo}`;
     if (promoContext) {
       sys += `\n\n=== PROMOÇÕES E DESCONTOS (regras REAIS de hoje — use SOMENTE isto, NÃO invente promoção) ===\n${promoContext}`;
     }
