@@ -525,23 +525,18 @@ const TABELA_ATACADO_URL = 'https://drive.google.com/file/d/1olhYj0OW1cL0Wk0kk6-
 const WHATSAPP_ATACADO_1 = 'wa.me/5521998367319';
 const WHATSAPP_ATACADO_2 = 'wa.me/447537155723';
 
-const MSG_ATACADO = `*🏭 VENDAS NO ATACADO — VitaFlow*
+const MSG_ATACADO = `*🏭 ATACADO VitaFlow* — pedido mínimo *R$ 3.000* e *FRETE GRÁTIS!* 🚚
 
-Que ótimo seu interesse! Aqui estão as condições do nosso atacado:
+Aqui é simples: você monta seu pedido do jeito que quiser comigo. 😊
 
-💰 *Pedido mínimo:* R$ 3.000 por pedido
-📋 *Exclusivo* para produtos da tabela de atacado (itens fora da tabela não entram nessa modalidade)
-🔄 *Tabela atualizada diariamente* — os preços acompanham a flutuação do dólar, então valem para o dia da consulta
-🚚 *Logística diferenciada:* despacho em até 5 dias úteis após a compensação do pagamento (garante o controle de qualidade e a embalagem adequada). Após a postagem, os prazos de entrega por região seguem os mesmos do varejo.
+✅ Pode levar *qualquer produto* da tabela de atacado, na *quantidade que quiser* — um só ou vários, misturando à vontade.
+✅ A única regra é o *total do pedido fechar em R$ 3.000 ou mais* (é o nosso pedido mínimo de atacado).
+✅ *Frete grátis* pra todo o Brasil. 🚚
+ℹ️ No atacado não entram os 3% nem cupom — aqui o benefício é o frete grátis. E não dá pra misturar itens do varejo no mesmo pedido.
 
-📥 *Baixe a tabela atualizada de hoje:*
-${TABELA_ATACADO_URL}
+👉 Me diga o *nome do produto* que você quer (ex.: retatrutida, testosterona, bpc) que eu te mostro o preço e já vou montando seu pedido de atacado.
 
-⚠️ As vendas no atacado são feitas exclusivamente por um *consultor humano especializado* — eu (Athena) não processo esse tipo de pedido.
-
-*Quer que eu te redirecione para um dos nossos consultores de atacado?*
-1️⃣ Sim, quero falar com um consultor
-2️⃣ Não, voltar ao menu`;
+_Ou digite *1* pra baixar a *tabela completa* em PDF, ou *2* pra voltar ao menu._`;
 
 const MSG_ATACADO_CONTATOS = `*🏭 Consultores de Atacado — VitaFlow*
 
@@ -553,6 +548,82 @@ Fale agora com um dos nossos consultores especializados em atacado:
 Tenha em mãos a tabela de atacado e a lista de produtos que deseja. 😊
 
 _Digite *menu* para voltar ao início._`;
+
+// ── ATACADO: leitura da tabela do Firebase (a MESMA que o Conversor de Tabela salva) ──
+// vitaflow_atacado/tabela_fornecedor = { produtos:[{nome, usd, reais, status}], dolar, margem, data }
+// O preço em R$ é o campo `reais` (idêntico ao PDF). Se faltar, calcula usd*1.30*dolar*(1+margem/100).
+const ATACADO_MIN = 3000;
+async function lerTabelaAtacado() {
+  try {
+    const r = await fetch(fbUrl('/vitaflow_atacado/tabela_fornecedor.json'));
+    const d = await r.json();
+    if (!d || !Array.isArray(d.produtos)) return { produtos: [], data: '' };
+    const dolar = parseFloat(d.dolar) || 0;
+    const margem = parseFloat(d.margem) || 0;
+    const produtos = d.produtos.map(function (p) {
+      let preco = 0;
+      if (p && typeof p.reais === 'number' && p.reais > 0) preco = p.reais;
+      else {
+        const usd = parseFloat(p && p.usd) || 0;
+        if (usd > 0 && dolar > 0) preco = Math.round(usd * 1.3 * dolar * (1 + margem / 100) * 100) / 100;
+      }
+      return { nome: (p && p.nome) || '', preco: preco, status: (p && p.status) || 'disponivel' };
+    }).filter(function (p) { return p.nome && p.preco > 0 && p.status !== 'esgotado'; });
+    return { produtos: produtos, data: d.data || '' };
+  } catch (e) { return { produtos: [], data: '' }; }
+}
+function _normAtk(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ç/g, 'c');
+}
+function buscarAtacado(produtos, termo) {
+  const palavras = _normAtk(termo).split(/\s+/).filter(function (p) { return p.length >= 2; });
+  if (!palavras.length) return [];
+  return produtos.filter(function (p) {
+    const nome = _normAtk(p.nome);
+    return palavras.every(function (w) { return nome.indexOf(w) >= 0; });
+  });
+}
+function formatarListaAtk(lista) {
+  return lista.map(function (p, i) {
+    return emojis(i) + ' *' + p.nome + '* — R$ ' + p.preco.toFixed(2).replace('.', ',');
+  }).join('\n');
+}
+function faltaAtk(subtotal) { return Math.max(0, ATACADO_MIN - subtotal); }
+function msgCarrinhoAtk(cart) {
+  const sub = totalCarrinho(cart);
+  const falta = faltaAtk(sub);
+  let m = `*🛒 SEU PEDIDO DE ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n`;
+  if (falta > 0) m += `\n⚠️ Faltam *R$ ${falta.toFixed(2).replace('.', ',')}* pra atingir o mínimo de *R$ 3.000*.\n`;
+  else m += `\n✅ *Mínimo de R$ 3.000 atingido!* Frete *GRÁTIS* 🚚\n`;
+  m += `\n1️⃣ Adicionar mais um produto\n2️⃣ Finalizar pedido${falta > 0 ? ' _(precisa atingir R$ 3.000)_' : ''}\n3️⃣ Remover um item\n\n_Ou me manda o *nome* de outro produto do atacado._`;
+  return m;
+}
+// Entra na modalidade atacado. Se houver carrinho de VAREJO aberto, bloqueia (não mistura).
+async function entrarAtacado(session, sid, respond) {
+  if ((session.carrinho || []).length) {
+    await saveSession(sid, { ...session, state: 'ATK_BLOQUEIO' });
+    return respond(`Você já tem *itens no carrinho do varejo*. 🛒\n\nNão dá pra misturar *varejo* e *atacado* no mesmo pedido. O que você prefere?\n\n1️⃣ *Finalizar o varejo* primeiro\n2️⃣ *Esvaziar o varejo* e começar o atacado\n3️⃣ Voltar ao menu`);
+  }
+  await saveSession(sid, { ...session, state: 'ATACADO' });
+  return respond(MSG_ATACADO);
+}
+// Busca um termo na tabela de atacado e mostra a lista numerada (ou avisa se não achou).
+async function atkAbrirBusca(session, sid, termo, respond) {
+  const tab = await lerTabelaAtacado();
+  if (!tab.produtos.length) {
+    await saveSession(sid, { ...session, state: 'ATACADO' });
+    return respond(`Não consegui carregar a tabela de atacado agora. 😕\n\nVocê pode baixar a tabela completa em PDF aqui:\n${TABELA_ATACADO_URL}\n\nTenta de novo daqui a pouco, ou me manda o *nome* do produto que você quer.`);
+  }
+  const achados = buscarAtacado(tab.produtos, termo);
+  if (!achados.length) {
+    await saveSession(sid, { ...session, state: 'ATACADO' });
+    return respond(`Não encontrei *${termo}* na tabela de atacado. 🤔\n\nTenta outro nome, ou baixe a tabela completa em PDF:\n${TABELA_ATACADO_URL}`);
+  }
+  const lista = achados.slice(0, 30);
+  await saveSession(sid, { ...session, state: 'ATK_LISTA', atkLista: lista });
+  const mais = achados.length > 30 ? `\n\n_(Mostrei 30 de ${achados.length} resultados — me manda um nome mais específico se precisar.)_` : '';
+  return respond(`*🏭 Atacado — resultados para "${termo}":*\n\n${formatarListaAtk(lista)}${mais}\n\n*Digite o número do produto:* 👇`);
+}
 
 const MSG_PRAZO_VAREJO = `*📦 PRAZO DE POSTAGEM E ENTREGA — Varejo*
 
@@ -600,7 +671,8 @@ const MENU_PRINCIPAL_BASE = `🛒 *Comprar produtos*
 3️⃣ Hormônios 💪
 4️⃣ GH ⚡
 5️⃣ Outros (Botox, vitaminas e remédios em geral) 📦
-6️⃣ Promoção do momento 🔥`;
+6️⃣ Promoção do momento 🔥
+7️⃣ Atacado 🏭 _(mínimo R$ 3.000 · frete grátis)_`;
 
 function buildMenuPrincipal() {
   let menu = MENU_PRINCIPAL_BASE;
@@ -612,7 +684,8 @@ function buildMenuPrincipal() {
   } else {
     menu += `
 
-🎁 *Sabia que comprando comigo você já ganha 3% de desconto em todos os produtos?* É um benefício exclusivo meu! _(Não acumula com cupom ou promoção — vale sempre o MAIOR desconto pra você 😉)_`;
+🎁 *Sabia que comprando comigo você já ganha 3% de desconto em todos os produtos?* É um benefício exclusivo meu! _(Não acumula com cupom ou promoção — vale sempre o MAIOR desconto pra você 😉)_
+🏭 E no *atacado* (opção *7*), o *frete é grátis* — pedido mínimo de R$ 3.000.`;
   }
   menu += `
 
@@ -636,6 +709,7 @@ function buildTriagem() {
     `3️⃣ 💬 *Dúvidas, protocolos e tabelas de fracionamento*`;
   const promo = promoAtiva();
   if (promo) m += `\n\n🚨 *${promo.titulo} ATIVA!* (dentro da opção *1* → Promoção do momento) ⚡`;
+  m += `\n\n🎁 *No varejo comigo você tem 3% de desconto — e no atacado o frete é grátis!* 🏭`;
   m += `\n\n_Digite *1*, *2* ou *3*. E se já sabe o que quer, é só mandar o *nome do produto* que eu já te mostro! 😉_`;
   return m;
 }
@@ -2142,7 +2216,7 @@ exports.handler = async (event) => {
     // (frete, prazo, rastreio, atacado, tabela, grupo, promo) pode roubar o fluxo e APAGAR o
     // carrinho. Nesses estados, a mensagem vai direto pro handler do estado (que sabe lidar
     // com o carrinho). Isso corrige o caso "digitei 'frete' no resumo e perdi o pedido".
-    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS','ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','ATK_REMOVER','ATK_CONFIRMAR','ATK_BLOQUEIO','VAREJO_BLOQUEIO'].includes(state);
 
     // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
     // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
@@ -2297,8 +2371,7 @@ exports.handler = async (event) => {
 
     const ehAtacado = ["atacado","revenda","revender","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
     if (ehAtacado && !emCheckout) {
-      await saveSession(sid, { ...session, state:'ATACADO' });
-      return respond(MSG_ATACADO);
+      return await entrarAtacado(session, sid, respond);
     }
 
     const ehTabela = ["tabela","lista de preco","lista de preços","catalogo","catálogo","tabela de preco","tabela de preços","lista completa","ver precos","ver preços"].some(p => n.includes(p));
@@ -2309,7 +2382,7 @@ exports.handler = async (event) => {
 
     const ehPerguntaPrazo = ["prazo","quanto tempo","quantos dias","demora","chega em","tempo de entrega","prazo de entrega","prazo de postagem"].some(p => n.includes(p));
     if (ehPerguntaPrazo && !emCheckout && !["ATACADO","PRAZO_TIPO"].includes(state)) {
-      if (ehAtacado) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond(MSG_ATACADO); }
+      if (ehAtacado) { return await entrarAtacado(session, sid, respond); }
       await saveSession(sid, { ...session, state:'PRAZO_TIPO' });
       return respond(MSG_PERGUNTA_TIPO_PRAZO);
     }
@@ -2320,15 +2393,104 @@ exports.handler = async (event) => {
       return respond("🚚 *Consultar frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...");
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ATACADO (venda pela Athena) — mínimo R$ 3.000, frete grátis, sem 3%, sem cupom,
+    // não mistura com o varejo. Tabela lida do Firebase (a mesma do Conversor/PDF).
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (state === 'ATK_BLOQUEIO') {
+      if (num === 1) { return await irParaCheckout(session, sid, respond); }
+      if (num === 2) { await saveSession(sid, { ...session, carrinho: [], stackFila: [], state:'ATACADO' }); return respond('Prontinho, esvaziei o varejo. 🧹\n\n' + MSG_ATACADO); }
+      if (num === 3) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + buildMenuPrincipal()); }
+      return respond('Você tem itens no *carrinho do varejo*. Digite *1* pra finalizar o varejo, *2* pra esvaziar e ir pro atacado, ou *3* pra voltar ao menu:');
+    }
+
+    if (state === 'VAREJO_BLOQUEIO') {
+      if (num === 1) { await saveSession(sid, { ...session, state:'ATK_CART' }); return respond(msgCarrinhoAtk(session.carrinhoAtk || [])); }
+      if (num === 2) {
+        await saveSession(sid, { ...session, carrinhoAtk: [], state:'QUANTIDADE' });
+        const _p = session.produtoSelecionado || {};
+        return respond(`Prontinho, esvaziei o atacado. 🧹\n\nAgora sim — *quantas unidades* de *${_p.nome || 'produto'}* você quer?`);
+      }
+      if (num === 3) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + buildMenuPrincipal()); }
+      return respond('Você tem um *pedido de atacado* em aberto. Digite *1* pra finalizar o atacado, *2* pra esvaziar e comprar no varejo, ou *3* pra voltar:');
+    }
+
     if (state === 'ATACADO') {
-      if (num === 1) { await enviarTelegram(`🏭 CLIENTE QUER ATACADO\n📱 ${sid}\n💬 Redirecionado para consultores de atacado`); await saveSession(sid, { ...session, state:'MENU' }); return respond(MSG_ATACADO_CONTATOS); }
-      if (num === 2) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + MENU_PRINCIPAL); }
-      return respond('Digite *1* para falar com um consultor de atacado ou *2* para voltar ao menu:');
+      const _txtAtk = (mensagem || '').trim();
+      if (num === 1) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`); }
+      if (num === 2) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + buildMenuPrincipal()); }
+      if (!_txtAtk || _txtAtk.length < 2) return respond('Me diga o *nome do produto* do atacado (ex.: retatrutida, bpc, testosterona), ou digite *1* pra baixar a tabela em PDF, ou *2* pra voltar ao menu.');
+      return await atkAbrirBusca(session, sid, _txtAtk, respond);
+    }
+
+    if (state === 'ATK_LISTA') {
+      const _t = (mensagem || '').trim();
+      if (!/^\d/.test(_t)) return await atkAbrirBusca(session, sid, _t, respond); // digitou outro nome → nova busca
+      const lista = session.atkLista || [];
+      if (!num || num < 1 || num > lista.length) return respond(`Digite um número entre 1 e ${lista.length}, ou me manda outro *nome de produto* do atacado.`);
+      const prod = lista[num - 1];
+      await saveSession(sid, { ...session, state:'ATK_QTD', atkSel: prod });
+      return respond(`Você escolheu:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.', ',')} _(atacado)_\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
+    }
+
+    if (state === 'ATK_QTD') {
+      if (!/^\d/.test((mensagem || '').trim())) return respond('Me diz a *quantidade* em número, por favor (ex.: 10):');
+      if (!num || num < 1 || num > 999) return respond('Informe uma quantidade válida (1 a 999):');
+      const prod = session.atkSel || {};
+      const cart = session.carrinhoAtk || [];
+      const ix = cart.findIndex(function (i) { return i.nome === prod.nome; });
+      if (ix >= 0) cart[ix].qtd += num; else cart.push({ nome: prod.nome, preco: prod.preco, qtd: num, atacado: true });
+      await saveSession(sid, { ...session, state:'ATK_CART', carrinhoAtk: cart, atkSel: null });
+      return respond(`✅ Adicionado ao pedido de *atacado*:\n📦 *${prod.nome}* x${num}\n\n${msgCarrinhoAtk(cart)}`);
+    }
+
+    if (state === 'ATK_CART') {
+      const cart = session.carrinhoAtk || [];
+      const _t = (mensagem || '').trim();
+      if (num === 1) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Beleza! Me diga o *nome do produto* de atacado que você quer adicionar. 👇\n\n_(Ou digite *1* pra baixar a tabela completa em PDF.)_'); }
+      if (num === 2) {
+        if (!cart.length) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Seu pedido de atacado está vazio. Me diga o *nome do produto* que você quer. 😊'); }
+        const sub = totalCarrinho(cart);
+        if (sub < ATACADO_MIN) return respond(`Ainda não dá pra fechar: seu pedido de atacado está em *R$ ${sub.toFixed(2).replace('.', ',')}* e o mínimo é *R$ 3.000*.\nFaltam *R$ ${faltaAtk(sub).toFixed(2).replace('.', ',')}*.\n\nMe manda o *nome* de outro produto pra adicionar. 😊`);
+        await saveSession(sid, { ...session, state:'ATK_CONFIRMAR' });
+        return respond(`*📋 RESUMO DO PEDIDO — ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n🚚 Frete: *GRÁTIS* 🎉\n\n💰 *Total: R$ ${sub.toFixed(2).replace('.', ',')}*\n\n*Confirma?*\n1️⃣ Sim, gerar o link de pagamento\n2️⃣ Não, voltar`);
+      }
+      if (num === 3) {
+        if (!cart.length) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Seu pedido de atacado está vazio. 🛒'); }
+        await saveSession(sid, { ...session, state:'ATK_REMOVER' });
+        return respond(`*Qual item remover?*\n\n${cart.map(function (i, x) { return emojis(x) + ' *' + i.nome + '* x' + i.qtd; }).join('\n')}\n\n_Digite o número._`);
+      }
+      if (!/^\d/.test(_t) && _t.length >= 2) return await atkAbrirBusca(session, sid, _t, respond); // nome de produto → nova busca
+      return respond(msgCarrinhoAtk(cart));
+    }
+
+    if (state === 'ATK_REMOVER') {
+      const cart = session.carrinhoAtk || [];
+      if (!cart.length) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Seu pedido de atacado está vazio. 🛒\n\n' + MSG_ATACADO); }
+      if (!num || num < 1 || num > cart.length) return respond(`Digite um número entre 1 e ${cart.length} para remover.`);
+      const rem = cart.splice(num - 1, 1)[0];
+      await saveSession(sid, { ...session, state:'ATK_CART', carrinhoAtk: cart });
+      if (!cart.length) { await saveSession(sid, { ...session, carrinhoAtk: [], state:'ATACADO' }); return respond(`🗑️ *${rem.nome}* removido. Seu pedido de atacado ficou vazio.\n\nMe diga o *nome* de outro produto pra recomeçar. 😊`); }
+      return respond(`🗑️ *${rem.nome}* removido!\n\n${msgCarrinhoAtk(cart)}`);
+    }
+
+    if (state === 'ATK_CONFIRMAR') {
+      const cart = session.carrinhoAtk || [];
+      if (num === 2) { await saveSession(sid, { ...session, state:'ATK_CART' }); return respond(msgCarrinhoAtk(cart)); }
+      if (num === 1) {
+        if (!cart.length) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Seu pedido de atacado está vazio. 🛒'); }
+        const sub = totalCarrinho(cart);
+        if (sub < ATACADO_MIN) { await saveSession(sid, { ...session, state:'ATK_CART' }); return respond(`O pedido está abaixo de R$ 3.000 (faltam R$ ${faltaAtk(sub).toFixed(2).replace('.', ',')}). Adicione mais um produto pra fechar. 😊`); }
+        // Reutiliza o gerador de link do varejo, com carrinho de ATACADO, frete grátis e SEM desconto/cupom.
+        const sessAtk = { ...session, carrinho: cart, freteSelecionado: { label: 'Grátis (atacado)', valor: 0 }, estadoCliente: '', descontoReais: 0, descontoLabel: '', descontoTipo: 'atacado', total: sub, cupomDocId: null, cupomCodigo: null, brinde: null, atacado: true, carrinhoAtk: [] };
+        return await gerarLinkPedido(sessAtk, sid, respond);
+      }
+      return respond('Digite *1* pra gerar o link de pagamento ou *2* pra voltar.');
     }
 
     if (state === 'PRAZO_TIPO') {
       if (num === 1) { await saveSession(sid, { ...session, state:'MENU' }); return respond(MSG_PRAZO_VAREJO + '\n\n_Digite *menu* para ver nossos produtos._'); }
-      if (num === 2) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond(MSG_ATACADO); }
+      if (num === 2) { return await entrarAtacado(session, sid, respond); }
       return respond('Digite *1* para compra normal (varejo) ou *2* para atacado:');
     }
 
@@ -2401,6 +2563,7 @@ exports.handler = async (event) => {
         if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
         return respond('No momento não temos promoção ativa. 😊\n\n_Digite *menu* para ver as categorias._');
       }
+      if (num === 7) { return await entrarAtacado(session, sid, respond); }
       return await tratarTextoLivre(session, sid, n, buildMenuPrincipal(), respond);
     }
 
@@ -2621,6 +2784,11 @@ exports.handler = async (event) => {
       // não é número → troca de produto por texto, combo ou dúvida (IA)
       if (!/^\d/.test(n.trim())) return await tratarTextoLivre(session, sid, n, '', respond);
       if (!num || num < 1 || num > 99) return respond('Por favor, informe uma quantidade válida (1 a 99):');
+      // TRAVA anti-mistura: tem pedido de ATACADO aberto? Não pode adicionar item de varejo no mesmo pedido.
+      if ((session.carrinhoAtk || []).length) {
+        await saveSession(sid, { ...session, state:'VAREJO_BLOQUEIO' });
+        return respond(`Você tem um *pedido de atacado* em aberto. 🏭\n\nNão dá pra misturar *atacado* e *varejo* no mesmo pedido. O que você prefere?\n\n1️⃣ *Finalizar o atacado* primeiro\n2️⃣ *Esvaziar o atacado* e comprar no varejo\n3️⃣ Voltar ao menu`);
+      }
       const prod = session.produtoSelecionado || {};
       const carrinho = session.carrinho || [];
       carrinho.push({ nome: prod.nome, preco: prod.preco, qtd: num, colecao: prod.colecao || session.colecaoAtual || '', genesis: !!(prod.genesis || ehLinhaGenesis(prod.nome)) });
