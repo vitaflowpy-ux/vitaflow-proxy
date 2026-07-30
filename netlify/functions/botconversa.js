@@ -550,27 +550,26 @@ Tenha em mãos a tabela de atacado e a lista de produtos que deseja. 😊
 _Digite *menu* para voltar ao início._`;
 
 // ── ATACADO: leitura da tabela do Firebase (a MESMA que o Conversor de Tabela salva) ──
-// vitaflow_atacado/tabela_fornecedor = { produtos:[{nome, usd, reais, status}], dolar, margem, data }
-// O preço em R$ é o campo `reais` (idêntico ao PDF). Se faltar, calcula usd*1.30*dolar*(1+margem/100).
+// vitaflow_atacado/tabela_fornecedor = { produtos:[{nome, usd, status, reais}], data, ... }
+// O preço em R$ é DEFINIDO PELO THIAGO no Conversor de Tabela e gravado no campo `reais`
+// (o mesmo valor do PDF que o cliente vê). A Athena lê SOMENTE `reais` — NÃO calcula nada.
+// Os outros sistemas continuam lendo `usd` do jeito que sempre foi.
 const ATACADO_MIN = 3000;
 async function lerTabelaAtacado() {
   try {
     const r = await fetch(fbUrl('/vitaflow_atacado/tabela_fornecedor.json'));
     const d = await r.json();
-    if (!d || !Array.isArray(d.produtos)) return { produtos: [], data: '' };
-    const dolar = parseFloat(d.dolar) || 0;
-    const margem = parseFloat(d.margem) || 0;
-    const produtos = d.produtos.map(function (p) {
-      let preco = 0;
-      if (p && typeof p.reais === 'number' && p.reais > 0) preco = p.reais;
-      else {
-        const usd = parseFloat(p && p.usd) || 0;
-        if (usd > 0 && dolar > 0) preco = Math.round(usd * 1.3 * dolar * (1 + margem / 100) * 100) / 100;
-      }
+    if (!d) return { produtos: [], data: '', totalTabela: 0 };
+    // aceita produtos como array OU objeto (o RTDB às vezes devolve objeto)
+    let lista = [];
+    if (Array.isArray(d.produtos)) lista = d.produtos;
+    else if (d.produtos && typeof d.produtos === 'object') lista = Object.keys(d.produtos).map(function (k) { return d.produtos[k]; });
+    const produtos = lista.map(function (p) {
+      const preco = (p && p.reais != null) ? (parseFloat(p.reais) || 0) : 0;   // SOMENTE o campo reais
       return { nome: (p && p.nome) || '', preco: preco, status: (p && p.status) || 'disponivel' };
     }).filter(function (p) { return p.nome && p.preco > 0 && p.status !== 'esgotado'; });
-    return { produtos: produtos, data: d.data || '' };
-  } catch (e) { return { produtos: [], data: '' }; }
+    return { produtos: produtos, data: d.data || '', totalTabela: lista.length };
+  } catch (e) { return { produtos: [], data: '', totalTabela: 0 }; }
 }
 function _normAtk(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ç/g, 'c');
