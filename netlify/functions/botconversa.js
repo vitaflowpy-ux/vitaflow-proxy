@@ -690,11 +690,15 @@ function buildMenuPrincipal() {
 
 💬 *Dica:* você também pode digitar direto o *nome do produto* (ex.: retatrutida, stanozolol, gh) que eu já te mostro!
 
+0️⃣ Voltar ao início
+
 _Digite o número da opção_`;
   return menu;
 }
 
 const MENU_PRINCIPAL = MENU_PRINCIPAL_BASE + `
+
+0️⃣ Voltar ao início
 
 _Digite o número da opção_`;
 
@@ -717,13 +721,15 @@ const MSG_PRAZOS_RASTREIO_MENU = `📦 *Prazos, Fretes e Rastreio*\n\n` +
   `1️⃣ Ver *prazos de entrega* (varejo e atacado)\n` +
   `2️⃣ *Rastrear* meu pedido\n` +
   `3️⃣ Consultar *valor do frete*\n\n` +
-  `_Digite o número, ou *menu* para voltar._`;
+  `0️⃣ Voltar ao início\n\n` +
+  `_Digite o número, *0* para voltar ou *menu* para o início._`;
 
 const MSG_DUVIDAS_INTRO = `💬 *Como posso te ajudar?*\n\n` +
   `1️⃣ *Tirar uma dúvida* (produtos, doses, indicações, comparações)\n` +
   `2️⃣ *Tabela de fracionamento* do que você comprou 💉\n` +
   `3️⃣ *Protocolo completo* do que você comprou 💪\n\n` +
-  `_Digite *1*, *2* ou *3*. (As opções 2 e 3 são cortesia pra cliente — eu puxo pelo seu CPF.)_`;
+  `0️⃣ Voltar ao início\n\n` +
+  `_Digite *1*, *2*, *3* — ou *0* para voltar. (As opções 2 e 3 são cortesia pra cliente — eu puxo pelo seu CPF.)_`;
 
 const MSG_PRAZOS_COMPLETO = MSG_PRAZO_VAREJO + `\n\n` +
   `*🏭 ATACADO (pedido mínimo R$ 3.000):*\n` +
@@ -766,7 +772,9 @@ const MENU_PEPTIDEOS = `*💊 PEPTÍDEOS*
 15. Tesamorelin
 16. Outros peptídeos
 
-_Digite o número, o *nome do produto* ou *menu* para voltar_
+0️⃣ Voltar ao menu anterior
+
+_Digite o número, o *nome do produto*, *0* para voltar ou *menu* para o início_
 
 _Procurando Retatrutida, Tirzepatida ou Semaglutida? Estão em *Emagrecedores* (opção 2)._`;
 
@@ -789,7 +797,9 @@ const MENU_HORMONIOS = `*💉 HORMÔNIOS*
 15. CutStack
 16. Outros hormônios
 
-_Digite o número, o *nome do produto* ou *menu* para voltar_`;
+0️⃣ Voltar ao menu anterior
+
+_Digite o número, o *nome do produto*, *0* para voltar ou *menu* para o início_`;
 
 const MENU_FABRICANTES = `*🏭 BUSCAR POR FABRICANTE*
 
@@ -811,7 +821,9 @@ const MENU_FABRICANTES = `*🏭 BUSCAR POR FABRICANTE*
 16. Bratva Labs
 17. Outro fabricante (digitar nome)
 
-_Digite o número, o *nome do produto* ou *menu* para voltar_`;
+0️⃣ Voltar ao menu anterior
+
+_Digite o número, o *nome do produto*, *0* para voltar ou *menu* para o início_`;
 
 const MENU_TESTO = `*💉 TESTOSTERONA — qual éster você procura?*
 
@@ -820,7 +832,9 @@ const MENU_TESTO = `*💉 TESTOSTERONA — qual éster você procura?*
 3️⃣ Durateston (blend)
 4️⃣ Outras (Propionato, Suspensão, Undecanoato/Nebido)
 
-_Digite o número ou *menu* para voltar ao início_`;
+0️⃣ Voltar ao menu anterior
+
+_Digite o número, *0* para voltar ou *menu* para o início_`;
 
 const MENU_BASE_ESTER = `1️⃣ Testosterona
 2️⃣ Trembolona
@@ -828,7 +842,54 @@ const MENU_BASE_ESTER = `1️⃣ Testosterona
 4️⃣ Nandrolona
 5️⃣ Outras
 
-_Digite o número ou *menu* para voltar ao início_`;
+0️⃣ Voltar ao menu anterior
+
+_Digite o número, *0* para voltar ou *menu* para o início_`;
+
+// ── NAVEGAÇÃO: "0" ou "voltar" sobe UM nível na árvore de menus ───────────────
+// Formata uma produtoLista (objetos {nome,preco}) de volta em lista numerada.
+function fmtProdLista(arr) {
+  return (arr || []).map(function (p, i) {
+    var pr = Number(p.preco) || 0;
+    return emojis(i) + ' *' + p.nome + '*' + (pr > 0 ? (' — R$ ' + pr.toFixed(2).replace('.', ',')) : '');
+  }).join('\n');
+}
+// Sobe um nível conforme o estado atual (o "menu anterior").
+async function voltarAthena(session, sid, respond) {
+  var st = session.state;
+  if (st === 'MENU' || st === 'PRAZOS_RASTREIO' || st === 'DUVIDAS') {
+    await saveSession(sid, { ...session, state: 'TRIAGEM' }); return respond('↩️ *Voltando ao início*\n\n' + buildTriagem());
+  }
+  if (st === 'PEPTIDEOS' || st === 'HORMONIOS' || st === 'ATACADO' || st === 'LISTA_PRODUTOS') {
+    await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️ *Voltando às categorias*\n\n' + buildMenuPrincipal());
+  }
+  if (st === 'SUBMENU_TESTO' || st === 'FABRICANTES' || st === 'BUSCA_LIVRE') {
+    await saveSession(sid, { ...session, state: 'HORMONIOS' }); return respond('↩️\n\n' + MENU_HORMONIOS);
+  }
+  if (st === 'ESTER_BASE') {
+    await saveSession(sid, { ...session, state: 'SUBMENU_TESTO' }); return respond('↩️\n\n' + MENU_TESTO);
+  }
+  if (st === 'PRAZO_TIPO' || st === 'FRETE_AVULSO' || st === 'RASTREAR') {
+    await saveSession(sid, { ...session, state: 'PRAZOS_RASTREIO' }); return respond('↩️\n\n' + MSG_PRAZOS_RASTREIO_MENU);
+  }
+  if (st === 'DUVIDAS_LIVRE') {
+    await saveSession(sid, { ...session, state: 'DUVIDAS' }); return respond('↩️\n\n' + MSG_DUVIDAS_INTRO);
+  }
+  if (st === 'QUANTIDADE') {
+    var lista = session.produtoLista || [];
+    if (lista.length) { await saveSession(sid, { ...session, state: 'LISTA_PRODUTOS' }); return respond('↩️ *Voltando à lista*\n\n' + fmtProdLista(lista) + '\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_'); }
+    await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️\n\n' + buildMenuPrincipal());
+  }
+  if (st === 'ATK_LISTA') {
+    await saveSession(sid, { ...session, state: 'ATACADO' }); return respond('↩️\n\n' + MSG_ATACADO);
+  }
+  if (st === 'ATK_QTD') {
+    var listaAtk = session.atkLista || [];
+    if (listaAtk.length) { await saveSession(sid, { ...session, state: 'ATK_LISTA' }); return respond('↩️ *Voltando à lista de atacado*\n\n' + formatarListaAtk(listaAtk) + '\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_'); }
+    await saveSession(sid, { ...session, state: 'ATACADO' }); return respond('↩️\n\n' + MSG_ATACADO);
+  }
+  await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️\n\n' + buildMenuPrincipal());
+}
 
 // ── ENTREGA 3 — RECONHECIMENTO DE PRODUTO POR TEXTO ───────────────────────────
 // Específico ANTES do genérico (GHK-Cu/HGH Frag antes de GH). canonico=claro (direto);
@@ -1149,7 +1210,7 @@ async function resolverReconhecido(session, sid, e, respond, marca) {
       return respond('No momento não trabalhamos com *Saxenda*, mas temos ótimas alternativas para emagrecimento! 😊\n\nDigite *menu* e escolha *Emagrecedores* (opção 2).');
     }
     await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), errosSeguidos:0, pendenteRec:null });
-    return respond(`Não trabalhamos com *Saxenda*, mas tenho opções ainda mais procuradas para emagrecimento! 🔥\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
+    return respond(`Não trabalhamos com *Saxenda*, mas tenho opções ainda mais procuradas para emagrecimento! 🔥\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
   }
   let dados;
   if (e.tipo === 'busca_tudo') dados = await buscarTodosCache();
@@ -1179,7 +1240,7 @@ async function resolverReconhecido(session, sid, e, respond, marca) {
     if (porMarca.length) { unicas = porMarca; tituloMarca = ' — ' + marca.toUpperCase(); }
   }
   await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), errosSeguidos:0, pendenteRec:null });
-  return respond(`*${(e.label||'').toUpperCase()}${tituloMarca}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
+  return respond(`*${(e.label||'').toUpperCase()}${tituloMarca}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
 }
 
 // Inicia um COMBO/STACK determinístico: confirma que entendeu TODOS os produtos, anuncia a
@@ -2273,6 +2334,12 @@ exports.handler = async (event) => {
 
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
     const ehSaudacaoOuMenu = n === 'menu' || n === 'inicio' || n === 'voltar' || n === 'start' || saudacoes.some(s => n === s || n.startsWith(s+' ') || n.startsWith(s+'!'));
+
+    // ── "0" ou "voltar" = sobe UM nível na árvore (só nos menus navegáveis). "menu" continua indo pro início. ──
+    const NAV_VOLTAR = ['MENU','PEPTIDEOS','HORMONIOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','BUSCA_LIVRE','LISTA_PRODUTOS','QUANTIDADE','PRAZOS_RASTREIO','PRAZO_TIPO','FRETE_AVULSO','RASTREAR','DUVIDAS','DUVIDAS_LIVRE','ATACADO','ATK_LISTA','ATK_QTD'];
+    if ((n === '0' || n === 'voltar' || n === 'volta') && NAV_VOLTAR.indexOf(state) >= 0) {
+      return await voltarAthena(session, sid, respond);
+    }
     // COLETA_DADOS = pedido JÁ PAGO. Não deixa cair no menu por saudação; só sai com "menu" explícito.
     if (ehSaudacaoOuMenu && state === 'COLETA_DADOS' && n !== 'menu') {
       return respond('Seu pedido já está *pago e garantido*! 🧡 Só preciso dos dados de envio pra concluir.\n\nMe manda em linhas separadas: nome, CPF, telefone, rua e número, bairro, cidade, estado e CEP. 😊');
@@ -2537,7 +2604,7 @@ exports.handler = async (event) => {
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*💊 EMAGRECEDORES*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+        return respond(`*💊 EMAGRECEDORES*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 2) { await saveSession(sid, { ...session, state:'PEPTIDEOS' }); return respond(MENU_PEPTIDEOS); }
       if (num === 3) { await saveSession(sid, { ...session, state:'HORMONIOS' }); return respond(MENU_HORMONIOS); }
@@ -2546,14 +2613,14 @@ exports.handler = async (event) => {
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*⚡ GH*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+        return respond(`*⚡ GH*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 5) {
         const dados = await buscarCache('outros');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*📦 OUTROS (Botox, vitaminas e remédios em geral)*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+        return respond(`*📦 OUTROS (Botox, vitaminas e remédios em geral)*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 6) {
         if (PROMO_GENESIS.ativa) return await anunciarGenesis(session, sid, respond);
@@ -2641,7 +2708,7 @@ exports.handler = async (event) => {
       const unicas = [...new Set(linhas)];
       if (!unicas.length) return respond(`Nenhum *${label}* disponível no momento. 😕\n\n${MENU_TESTO}`);
       await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), errosSeguidos:0 });
-      return respond(`*${label}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
+      return respond(`*${label}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
     }
 
     if (state === 'ESTER_BASE') {
@@ -2655,7 +2722,7 @@ exports.handler = async (event) => {
       const baseLabel = base.charAt(0).toUpperCase() + base.slice(1);
       if (!unicas.length) return respond(`Não encontrei *${ester} de ${baseLabel}* disponível no momento. 😕\n\nQuer tentar outra base?\n\n${MENU_BASE_ESTER}`);
       await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), pendenteEster:null, errosSeguidos:0 });
-      return respond(`*${ester.toUpperCase()} DE ${baseLabel.toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
+      return respond(`*${ester.toUpperCase()} DE ${baseLabel.toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
     }
 
     if (state === 'PEPTIDEOS') {
@@ -2670,7 +2737,7 @@ exports.handler = async (event) => {
         const linhas = await buscarFiltradoGlobal('peptideos', mapa[num]);
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_PEPTIDEOS}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*${mapa[num][0].toUpperCase()}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+        return respond(`*${mapa[num][0].toUpperCase()}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 16) {
         const dados = await buscarCache('peptideos');
@@ -2678,7 +2745,7 @@ exports.handler = async (event) => {
         const linhas = dados.split('\n').filter(Boolean).filter(l => { const nProd = norm(l.split('|')[0]); return !todosTermos.some(t => nProd.includes(norm(t))); });
         if (!linhas.length) return respond(`Nenhum outro peptídeo encontrado.\n\n${MENU_PEPTIDEOS}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*OUTROS PEPTÍDEOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+        return respond(`*OUTROS PEPTÍDEOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       return await tratarTextoLivre(session, sid, n, MENU_PEPTIDEOS, respond);
     }
@@ -2707,7 +2774,7 @@ exports.handler = async (event) => {
         if (num === 2) linhas = linhas.filter(l => !norm(l).includes('enantato'));
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_HORMONIOS}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*${label}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+        return respond(`*${label}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 16) {
         const dados = await buscarCache('hormonios');
@@ -2715,7 +2782,7 @@ exports.handler = async (event) => {
         const linhas = dados.split('\n').filter(Boolean).filter(l => { const nProd = norm(l.split('|')[0]); return !todosTermos.some(t => nProd.includes(norm(t))); });
         if (!linhas.length) return respond(`Nenhum outro hormônio encontrado.\n\n${MENU_HORMONIOS}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
-        return respond(`*OUTROS HORMÔNIOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*`);
+        return respond(`*OUTROS HORMÔNIOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       return await tratarTextoLivre(session, sid, n, MENU_HORMONIOS, respond);
     }
@@ -2733,7 +2800,7 @@ exports.handler = async (event) => {
         const unicas = [...new Set(linhas)];
         if (!unicas.length) return respond(`Nenhum produto de *${fabMap[num]}* disponível.\n\n${MENU_FABRICANTES}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas) });
-        return respond(`*${fabMap[num].toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
+        return respond(`*${fabMap[num].toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 17) { await saveSession(sid, { ...session, state:'BUSCA_LIVRE' }); return respond('Digite o nome do fabricante que procura:'); }
       return await tratarTextoLivre(session, sid, n, MENU_FABRICANTES, respond);
@@ -2746,7 +2813,7 @@ exports.handler = async (event) => {
       const unicas = [...new Set(linhas)];
       if (!unicas.length) return respond(`Nenhum produto de *${mensagem}* encontrado.\n\n${MENU_FABRICANTES}`);
       await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas) });
-      return respond(`*${mensagem.toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*`);
+      return respond(`*${mensagem.toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
     }
 
     if (state === 'LISTA_PRODUTOS') {
