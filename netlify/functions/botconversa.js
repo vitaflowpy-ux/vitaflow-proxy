@@ -380,7 +380,7 @@ function msgPerguntaBrinde(carrinho){
 // Se j\u00e1 escolheu (ou j\u00e1 foi oferecido), segue direto pro estado/frete.
 async function irParaCheckout(session, sid, respond) {
   const carrinho = session.carrinho || [];
-  if (!session.brinde && !session.brindeOferecido && contarGenesis(carrinho) >= 2) {
+  if (PROMO_GENESIS.ativa && !session.brinde && !session.brindeOferecido && contarGenesis(carrinho) >= 2) {
     await saveSession(sid, { ...session, state:'ESCOLHER_BRINDE', brindeOferecido: true });
     return respond(msgPerguntaBrinde(carrinho));
   }
@@ -450,6 +450,7 @@ const PROMO_ANUNCIO = { ativa: false };
 function contextoPromo(){
   const linhas = [];
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
+  linhas.push('PROMOÇÃO ATUAL (a ÚNICA ativa hoje): FRETE GRÁTIS em pedidos acima de R$ 1.000 — o cliente usa o cupom *FRETEZERO* no checkout (site ou fechando comigo). Abaixo de R$ 1.000 o frete é o normal. NÃO existe promoção "Compre 2 Leve 3" nem brinde — não fale disso.');
   const rel = promoAtiva();
   if (rel && rel.produtos && rel.produtos.length) {
     const its = rel.produtos.map(p => `${p.nome}: de R$ ${reais(p.de)} por R$ ${reais(p.por)}`).join('; ');
@@ -484,7 +485,15 @@ async function anunciarLancamento(session, sid) {
 
 // ── PROMO GÊNESIS "Compre 2, Leve 3" = a PROMOÇÃO DO MOMENTO (opção 6 / "promoção") ──
 // Pra desligar no futuro: ativa:false.
-const PROMO_GENESIS = { ativa: true };
+const PROMO_GENESIS = { ativa: false };
+// Promoção atual (única): FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
+const MSG_PROMO_FRETE = `🚚 *PROMOÇÃO DO MOMENTO — FRETE GRÁTIS!* 🎉
+
+Em pedidos *acima de R$ 1.000*, o *frete é grátis* pra todo o Brasil! 🇧🇷
+
+É só usar o cupom *FRETEZERO* no fechamento (aqui comigo ou no site). 💚
+
+_E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
 async function anunciarGenesis(session, sid, respond, curto) {
   const intro = curto
     ? `🎁 *Continue na promo Gênesis — Compre 2, Leve 3!* Escolha mais um da linha (o 3º é grátis 😉):\n\n`
@@ -2329,7 +2338,7 @@ exports.handler = async (event) => {
       if (msg) return respond(msg);
       if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
       await saveSession(sid, { ...session, state:'MENU' });
-      return respond('No momento não temos promoção ativa. 😊\n\n' + buildMenuPrincipal());
+      return respond(MSG_PROMO_FRETE);
     }
 
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
@@ -2627,7 +2636,7 @@ exports.handler = async (event) => {
         const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
         if (msg) return respond(msg);
         if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
-        return respond('No momento não temos promoção ativa. 😊\n\n_Digite *menu* para ver as categorias._');
+        return respond(MSG_PROMO_FRETE);
       }
       if (num === 7) { return await entrarAtacado(session, sid, respond); }
       return await tratarTextoLivre(session, sid, n, buildMenuPrincipal(), respond);
@@ -3148,7 +3157,7 @@ exports.handler = async (event) => {
         if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
         // Rede de segurança: o brinde já é perguntado ANTES do frete (irParaCheckout).
         // Se, por algum caminho, o cliente chegou aqui sem ter sido oferecido, oferece agora.
-        if (!session.brinde && !session.brindeOferecido && contarGenesis(carrinho) >= 2) {
+        if (PROMO_GENESIS.ativa && !session.brinde && !session.brindeOferecido && contarGenesis(carrinho) >= 2) {
           await saveSession(sid, { ...session, state:'ESCOLHER_BRINDE', brindeOferecido: true });
           return respond(msgPerguntaBrinde(carrinho));
         }
