@@ -347,7 +347,7 @@ function baseParcelamento(session, nMsg){
 // ── Desconto Athena e Cupons ──────────────────────────────────────────────────
 const DESCONTO_ATHENA_PCT = 3;
 // ── PROMO DIA DOS PAIS: compre 2+ do MESMO produto → 10% off nessas unidades ──
-// Automática, SOMA com o desconto Athena/cupom. Expira sozinha em PROMO_DOBRO.fim.
+// Automática. NÃO acumula com o 3%/cupom: produto em dobro leva só os 10%; o 3%/cupom vale nos demais. Expira sozinha em PROMO_DOBRO.fim.
 // Pra desligar: ativa:false.
 const PROMO_DOBRO = { ativa: true, pct: 10, qtdMin: 2, fim: '2026-08-09T23:59:59-03:00' };
 function promoDobroAtiva(){ return PROMO_DOBRO.ativa && Date.now() <= new Date(PROMO_DOBRO.fim).getTime(); }
@@ -463,7 +463,7 @@ function contextoPromo(){
   const linhas = [];
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
   if (promoDobroAtiva()) {
-    linhas.push('PROMOÇÃO ATUAL (Dia dos Pais, até domingo 09/08): "COMPRE EM DOBRO, GANHE 10%" — qualquer produto que o cliente leve em 2 OU MAIS unidades ganha 10% de desconto NESSAS unidades, aplicado AUTOMÁTICO no fechamento (ex.: 2 iguais = os 2 com 10% off; 1 unidade não ganha esse desconto). Vale pra QUALQUER produto e SOMA com o desconto Athena de 3%. É desconto no preço, NÃO é "leve 3"/brinde. A antiga promoção de FRETE GRÁTIS / cupom FRETEZERO ENCERROU — NÃO mencione FRETEZERO nem frete grátis.');
+    linhas.push('PROMOÇÃO ATUAL (Dia dos Pais, até domingo 09/08): "COMPRE EM DOBRO, GANHE 10%" — qualquer produto que o cliente leve em 2 OU MAIS unidades ganha 10% de desconto NESSAS unidades, aplicado AUTOMÁTICO no fechamento (ex.: 2 iguais = os 2 com 10% off; 1 unidade não ganha esse desconto). Vale pra QUALQUER produto, mas NÃO acumula com o desconto de 3%/cupom: o produto comprado em dobro leva SÓ os 10%; o 3% (ou o cupom) vale apenas nos produtos que NÃO estão na promo (comprados em 1 unidade). É desconto no preço, NÃO é "leve 3"/brinde. A antiga promoção de FRETE GRÁTIS / cupom FRETEZERO ENCERROU — NÃO mencione FRETEZERO nem frete grátis.');
   } else {
     linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
   }
@@ -1824,8 +1824,9 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
 
   // ── DESCONTO ──
-  // Desconto Athena de 3% em TODO o carrinho vs cupom (vale o maior). Sem promo automática por produto.
-  const totalNormais = totalProd; // o desconto vale para o carrinho inteiro
+  // Desconto Athena de 3% vs cupom (vale o maior) — aplicado SÓ nos produtos fora da promo Dia dos Pais.
+  // NÃO ACUMULA: os produtos comprados em dobro (2+) levam só os 10% da promo e ficam de fora do 3%/cupom.
+  const totalNormais = carrinho.reduce((s,i)=> s + (((promoDobroAtiva() && i && i.qtd >= PROMO_DOBRO.qtdMin)) ? 0 : (i.preco * i.qtd)), 0);
   const descAthenaNormais = totalNormais * (DESCONTO_ATHENA_PCT / 100);
   let descCupomNormais = 0;
   if (cupomResultado && cupomResultado.ok && totalNormais > 0) {
@@ -1867,7 +1868,8 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     }
   }
 
-  // PROMO Dia dos Pais: compre 2+ do mesmo produto → 10% nessas unidades. SOMA com o desconto acima.
+  // PROMO Dia dos Pais: compre 2+ do mesmo produto → 10% nessas unidades. NÃO acumula: esses
+  // produtos NÃO recebem o 3%/cupom (já foram excluídos do totalNormais acima).
   const descPromo = descPromoDobro(carrinho);
   const descontoReais = descNormais;
   const totalComDesconto = totalProd - descontoReais - descPromo + freteValorFinal;
