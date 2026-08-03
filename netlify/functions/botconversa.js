@@ -1823,28 +1823,54 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const frete = session.freteSelecionado || {};
   const totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
 
-  // ── DESCONTO ──
-  // Desconto Athena de 3% vs cupom (vale o maior) — aplicado SÓ nos produtos fora da promo Dia dos Pais.
-  // NÃO ACUMULA: os produtos comprados em dobro (2+) levam só os 10% da promo e ficam de fora do 3%/cupom.
-  const totalNormais = carrinho.reduce((s,i)=> s + (((promoDobroAtiva() && i && i.qtd >= PROMO_DOBRO.qtdMin)) ? 0 : (i.preco * i.qtd)), 0);
-  const descAthenaNormais = totalNormais * (DESCONTO_ATHENA_PCT / 100);
-  let descCupomNormais = 0;
-  if (cupomResultado && cupomResultado.ok && totalNormais > 0) {
-    if (cupomResultado.tipo === 'pct') {
-      descCupomNormais = totalNormais * (cupomResultado.pct/100);
-      if (cupomResultado.maxDesc > 0) descCupomNormais = Math.min(descCupomNormais, cupomResultado.maxDesc);
-    } else {
-      descCupomNormais = Math.min(cupomResultado.valorFixo || cupomResultado.descontoReais || 0, totalNormais);
-    }
+  // ── DESCONTO (Option B: cada produto leva UM desconto — o MAIOR; nunca soma) ──
+  // Candidatos por produto: promo Dia dos Pais (10% se comprado em 2+), cupom, e o benefício
+  // Athena de 3%. Cada item fica com o MAIOR que se aplica a ele.
+  const _promoAtiva = promoDobroAtiva();
+  const _cupomOk = !!(cupomResultado && cupomResultado.ok);
+  const _cupomPct = (_cupomOk && cupomResultado.tipo === 'pct') ? (cupomResultado.pct || 0) : 0;
+  const _cupomFixo = (_cupomOk && cupomResultado.tipo !== 'pct' && cupomResultado.tipo !== 'frete')
+    ? (cupomResultado.valorFixo || cupomResultado.descontoReais || 0) : 0;
+
+  let descPromo = 0;        // soma dos itens em que a PROMO (10%) venceu
+  let descCupomAcc = 0;     // soma dos itens em que o CUPOM % venceu
+  let descAthenaAcc = 0;    // soma dos itens em que os 3% Athena venceram
+  let baseFora = 0;         // subtotal dos itens FORA da promo (base p/ cupom fixo)
+  carrinho.forEach(i => {
+    const linha = (i.preco || 0) * (i.qtd || 0);
+    const ehPromo = _promoAtiva && i && i.qtd >= PROMO_DOBRO.qtdMin;
+    if (!ehPromo) baseFora += linha;
+    const pPromo = ehPromo ? PROMO_DOBRO.pct : 0;                 // 10 ou 0
+    const melhorPct = Math.max(pPromo, _cupomPct, DESCONTO_ATHENA_PCT);
+    if (melhorPct === pPromo && pPromo > 0) descPromo += linha * pPromo / 100;
+    else if (melhorPct === _cupomPct && _cupomPct > 0) descCupomAcc += linha * _cupomPct / 100;
+    else descAthenaAcc += linha * DESCONTO_ATHENA_PCT / 100;
+  });
+
+  // Cupom de VALOR FIXO (R$): não compete por produto com a promo — vale só nos itens FORA da promo
+  // (os em dobro ficam com os 10%), e ainda assim vale o MAIOR entre ele e os 3% Athena.
+  if (_cupomFixo > 0) {
+    const descFixo = Math.min(_cupomFixo, baseFora);
+    const descAthenaFora = baseFora * DESCONTO_ATHENA_PCT / 100;
+    descCupomAcc = 0; descAthenaAcc = 0;
+    if (descFixo > descAthenaFora) descCupomAcc = descFixo; else descAthenaAcc = descAthenaFora;
   }
-  let descNormais = descAthenaNormais;
-  let labelNormais = `Desconto Athena (-${DESCONTO_ATHENA_PCT}%)`;
-  let cupomDocId = null, cupomCodigo = null;
-  if (descCupomNormais > descAthenaNormais) {
-    descNormais = descCupomNormais;
+
+  // teto (maxDesc) do cupom % incide sobre a parcela do cupom, se houver
+  if (_cupomPct > 0 && cupomResultado.maxDesc > 0 && descCupomAcc > cupomResultado.maxDesc) {
+    descCupomAcc = cupomResultado.maxDesc;
+  }
+
+  // parcela "normal" = cupom OU 3% Athena (nunca as duas por item)
+  let descNormais, labelNormais, cupomDocId = null, cupomCodigo = null;
+  if (descCupomAcc > 0) {
+    descNormais = descCupomAcc;
     labelNormais = `Cupom ${cupomResultado.codigo} (${cupomResultado.descTxt})`;
     cupomDocId = cupomResultado.docId;
     cupomCodigo = cupomResultado.codigo;
+  } else {
+    descNormais = descAthenaAcc;
+    labelNormais = `Desconto Athena (-${DESCONTO_ATHENA_PCT}%)`;
   }
 
   // Frete grátis via cupom
@@ -1857,8 +1883,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
 `;
       cupomDocId = cupomResultado.docId;
       cupomCodigo = cupomResultado.codigo;
-      descNormais = descAthenaNormais; // mantém 3% Athena nos produtos
-      labelNormais = `Desconto Athena (-${DESCONTO_ATHENA_PCT}%)`;
+      // descNormais já é o benefício Athena de 3% nos produtos fora da promo (calculado acima).
     } else if (cupomResultado.descontoFrete > 0) {
       freteValorFinal = Math.max(0, freteValorFinal - cupomResultado.descontoFrete);
       linhaFreteGratis = `🚚 *Desconto no frete* — Cupom ${cupomResultado.codigo}: -R$ ${cupomResultado.descontoFrete.toFixed(2).replace('.',',')}
@@ -1868,9 +1893,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     }
   }
 
-  // PROMO Dia dos Pais: compre 2+ do mesmo produto → 10% nessas unidades. NÃO acumula: esses
-  // produtos NÃO recebem o 3%/cupom (já foram excluídos do totalNormais acima).
-  const descPromo = descPromoDobro(carrinho);
+  // descPromo já foi calculado acima (parcela dos itens em que a promo Dia dos Pais venceu).
   const descontoReais = descNormais;
   const totalComDesconto = totalProd - descontoReais - descPromo + freteValorFinal;
 
@@ -1881,9 +1904,9 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   if (descPromo > 0) {
     linhasDesc += `🎁 Promo Dia dos Pais (compre 2): -R$ ${descPromo.toFixed(2).replace('.',',')}\n`;
   }
-  const linhaCupomInfo = (descCupomNormais > 0 && descCupomNormais <= descAthenaNormais)
-    ? `\n_(Seu cupom daria R$ ${descCupomNormais.toFixed(2).replace('.',',')} nos demais itens, mas o desconto Athena de 3% é maior e foi aplicado!)_` : '';
-  const linhaConviteCupom = (!cupomDocId && totalNormais > 0)
+  const linhaCupomInfo = (_cupomPct > 0 && descCupomAcc === 0)
+    ? `\n_(Seu cupom não superou o desconto que já apliquei — usei sempre o melhor pra você 😉)_` : '';
+  const linhaConviteCupom = (!cupomDocId && totalProd > 0)
     ? `\n\n🏷️ *TEM UM CUPOM DE DESCONTO?*\nÉ *AGORA*: digite o *código do cupom* antes de confirmar. 👇` : '';
   // Promo Gênesis: mostra o brinde (3º grátis) já escolhido no resumo
   const linhaBrinde = session.brinde
@@ -3221,10 +3244,10 @@ exports.handler = async (event) => {
           if (resultado.tipo === 'frete') {
             return await fecharResumoNormal({ ...session, cupomDocId:null, cupomCodigo:null }, sid, resultado, respond);
           }
-          if (resultado.descontoReais > (session.descontoReais || 0)) {
-            return await fecharResumoNormal({ ...session, cupomDocId:null, cupomCodigo:null }, sid, resultado, respond);
-          }
-          return respond(`Seu cupom *${resultado.codigo}* daria R$ ${resultado.descontoReais.toFixed(2).replace('.',',')}, mas o desconto de 3% que já apliquei é maior 😉\n\nDigite *1* para confirmar ou *2* para voltar ao menu.`);
+          // Option B: o fecharResumoNormal já dá a CADA produto o MAIOR desconto (promo/cupom/3%).
+          // Reprocessa com o cupom — se ele não vencer em nenhum item, o total fica igual e o cupom
+          // não é aplicado (o cliente nunca fica pior); a nota de "não superou" aparece no resumo.
+          return await fecharResumoNormal({ ...session, cupomDocId:null, cupomCodigo:null }, sid, resultado, respond);
         }
         return respond(`Não reconheci *${_txt}* como cupom. 😊 Mas seu *pedido está pronto*!\n\nDigite *1* para *confirmar a compra* ou *2* para voltar ao menu.`);
       }
