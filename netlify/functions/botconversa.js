@@ -346,6 +346,18 @@ function baseParcelamento(session, nMsg){
 
 // ── Desconto Athena e Cupons ──────────────────────────────────────────────────
 const DESCONTO_ATHENA_PCT = 3;
+// ── PROMO DIA DOS PAIS: compre 2+ do MESMO produto → 10% off nessas unidades ──
+// Automática, SOMA com o desconto Athena/cupom. Expira sozinha em PROMO_DOBRO.fim.
+// Pra desligar: ativa:false.
+const PROMO_DOBRO = { ativa: true, pct: 10, qtdMin: 2, fim: '2026-08-09T23:59:59-03:00' };
+function promoDobroAtiva(){ return PROMO_DOBRO.ativa && Date.now() <= new Date(PROMO_DOBRO.fim).getTime(); }
+// desconto (R$) que a promo dá no carrinho: pct% nas unidades dos produtos com qtd >= qtdMin
+function descPromoDobro(carrinho){
+  if (!promoDobroAtiva()) return 0;
+  return (carrinho || []).reduce(function(s,i){
+    return s + ((i && i.qtd >= PROMO_DOBRO.qtdMin) ? (i.preco * i.qtd * PROMO_DOBRO.pct / 100) : 0);
+  }, 0);
+}
 
 // ── PROMOÇÃO DO MOMENTO (editável) ───────────────────────────────────────────
 // Para trocar a promoção no futuro, edite só este bloco.
@@ -450,7 +462,11 @@ const PROMO_ANUNCIO = { ativa: false };
 function contextoPromo(){
   const linhas = [];
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
-  linhas.push('PROMOÇÃO ATUAL (a ÚNICA ativa hoje): FRETE GRÁTIS em pedidos acima de R$ 1.000 — o cliente usa o cupom *FRETEZERO* no checkout (site ou fechando comigo). Abaixo de R$ 1.000 o frete é o normal. NÃO existe promoção "Compre 2 Leve 3" nem brinde — não fale disso.');
+  if (promoDobroAtiva()) {
+    linhas.push('PROMOÇÃO ATUAL (Dia dos Pais, até domingo 09/08): "COMPRE EM DOBRO, GANHE 10%" — qualquer produto que o cliente leve em 2 OU MAIS unidades ganha 10% de desconto NESSAS unidades, aplicado AUTOMÁTICO no fechamento (ex.: 2 iguais = os 2 com 10% off; 1 unidade não ganha esse desconto). Vale pra QUALQUER produto e SOMA com o desconto Athena de 3%. É desconto no preço, NÃO é "leve 3"/brinde. A antiga promoção de FRETE GRÁTIS / cupom FRETEZERO ENCERROU — NÃO mencione FRETEZERO nem frete grátis.');
+  } else {
+    linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
+  }
   const rel = promoAtiva();
   if (rel && rel.produtos && rel.produtos.length) {
     const its = rel.produtos.map(p => `${p.nome}: de R$ ${reais(p.de)} por R$ ${reais(p.por)}`).join('; ');
@@ -494,6 +510,18 @@ Em pedidos *acima de R$ 1.000*, o *frete é grátis* pra todo o Brasil! 🇧🇷
 É só usar o cupom *FRETEZERO* no fechamento (aqui comigo ou no site). 💚
 
 _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
+// Mensagem da "promoção do momento" (opção 6 / "promoção"). Hoje = Dia dos Pais (compre 2, 10%).
+// A antiga promo de frete grátis (FRETEZERO) foi encerrada e NÃO é mais divulgada aqui.
+function msgPromoAtual(){
+  if (promoDobroAtiva()) {
+    return `🎁 *SEMANA DO DIA DOS PAIS — COMPROU EM DOBRO, GANHOU 10%!* 🧡\n\n` +
+      `Levou o *mesmo produto em dobro* (2 ou mais unidades)? Essas unidades ganham *10% de desconto*, aplicado automático quando você fecha comigo. ✅\n\n` +
+      `✔️ Vale pra *qualquer produto*\n✔️ O desconto é *só nos itens que você leva em dobro*\n📅 *Só até domingo (09/08)*\n\n` +
+      `_Ex.: 1 Masteron + 2 Durateston → os 2 Durateston com 10% OFF._\n\n` +
+      `_E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
+  }
+  return `No momento não temos promoção especial ativa, mas comprando comigo você já ganha *3% de desconto* em todos os produtos! 😊`;
+}
 async function anunciarGenesis(session, sid, respond, curto) {
   const intro = curto
     ? `🎁 *Continue na promo Gênesis — Compre 2, Leve 3!* Escolha mais um da linha (o 3º é grátis 😉):\n\n`
@@ -1839,12 +1867,17 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     }
   }
 
+  // PROMO Dia dos Pais: compre 2+ do mesmo produto → 10% nessas unidades. SOMA com o desconto acima.
+  const descPromo = descPromoDobro(carrinho);
   const descontoReais = descNormais;
-  const totalComDesconto = totalProd - descontoReais + freteValorFinal;
+  const totalComDesconto = totalProd - descontoReais - descPromo + freteValorFinal;
 
   let linhasDesc = '';
   if (descNormais > 0) {
     linhasDesc += `🏷️ ${labelNormais}: -R$ ${descNormais.toFixed(2).replace('.',',')}\n`;
+  }
+  if (descPromo > 0) {
+    linhasDesc += `🎁 Promo Dia dos Pais (compre 2): -R$ ${descPromo.toFixed(2).replace('.',',')}\n`;
   }
   const linhaCupomInfo = (descCupomNormais > 0 && descCupomNormais <= descAthenaNormais)
     ? `\n_(Seu cupom daria R$ ${descCupomNormais.toFixed(2).replace('.',',')} nos demais itens, mas o desconto Athena de 3% é maior e foi aplicado!)_` : '';
@@ -1867,7 +1900,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const freteParaSalvar = { ...frete, valor: freteValorFinal };
   await saveSession(sid, {
     ...session, state:'CONFIRMAR', freteSelecionado: freteParaSalvar, totalProd,
-    descontoReais, descontoLabel: labelNormais,
+    descontoReais, descontoPromo: descPromo, descontoLabel: labelNormais,
     total: totalComDesconto,
     descontoTipo: cupomDocId ? 'cupom' : 'athena', cupomDocId, cupomCodigo
   });
@@ -1993,11 +2026,14 @@ async function gerarLinkPedido(session, sid, respond) {
   const frete = session.freteSelecionado || {};
   const uf    = session.estadoCliente || '';
   const descontoReais = session.descontoReais || 0;
+  const descontoPromo = session.descontoPromo || 0;
   const totalFinal = session.total;
   let infoDesconto = '';
-  if (descontoReais > 0) {
+  if (descontoReais > 0 || descontoPromo > 0) {
     const lbl = session.descontoLabel || (session.descontoTipo === 'promo' ? (session.promoTitulo||'Promoção') : 'Desconto');
-    infoDesconto = `\n🏷️ ${lbl}: -R$ ${descontoReais.toFixed(2).replace('.',',')}\n💰 *Total: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
+    if (descontoReais > 0) infoDesconto += `\n🏷️ ${lbl}: -R$ ${descontoReais.toFixed(2).replace('.',',')}`;
+    if (descontoPromo > 0) infoDesconto += `\n🎁 Promo Dia dos Pais (compre 2): -R$ ${descontoPromo.toFixed(2).replace('.',',')}`;
+    infoDesconto += `\n💰 *Total: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
   }
   const orderNsu = await gerarNumeroPedido();
   // Promo Gênesis: grava o brinde vinculado ao número do pedido → vira Observação no registro.
@@ -2010,7 +2046,7 @@ async function gerarLinkPedido(session, sid, respond) {
       });
     } catch {}
   }
-  const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais);
+  const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais + descontoPromo);
   try {
     const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
     await fetch(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
@@ -2021,7 +2057,7 @@ async function gerarLinkPedido(session, sid, respond) {
         quantidade: carrinho.reduce((a,i)=>a+i.qtd,0),
         frete: frete.label, estado: uf, valor: totalFinal, ts: Date.now(),
         carrinho: carrinho, freteSelecionado: frete, estadoCliente: uf, total: totalFinal,
-        descontoReais: descontoReais, descontoLabel: session.descontoLabel || '',
+        descontoReais: descontoReais, descontoPromo: descontoPromo, descontoLabel: session.descontoLabel || '',
         descontoTipo: session.descontoTipo || '', cupomDocId: session.cupomDocId || null,
         cupomCodigo: session.cupomCodigo || null, link: link || '', brinde: session.brinde || null
       })
@@ -2338,7 +2374,7 @@ exports.handler = async (event) => {
       if (msg) return respond(msg);
       if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
       await saveSession(sid, { ...session, state:'MENU' });
-      return respond(MSG_PROMO_FRETE);
+      return respond(msgPromoAtual());
     }
 
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
@@ -2636,7 +2672,7 @@ exports.handler = async (event) => {
         const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
         if (msg) return respond(msg);
         if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
-        return respond(MSG_PROMO_FRETE);
+        return respond(msgPromoAtual());
       }
       if (num === 7) { return await entrarAtacado(session, sid, respond); }
       return await tratarTextoLivre(session, sid, n, buildMenuPrincipal(), respond);
