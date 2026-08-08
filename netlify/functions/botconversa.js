@@ -463,7 +463,7 @@ function contextoPromo(){
   const linhas = [];
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
   if (promoDobroAtiva()) {
-    linhas.push('PROMOÇÃO ATUAL (Dia dos Pais, até domingo 09/08): "COMPRE EM DOBRO, GANHE 10%" — qualquer produto que o cliente leve em 2 OU MAIS unidades ganha 10% de desconto NESSAS unidades, aplicado AUTOMÁTICO no fechamento (ex.: 2 iguais = os 2 com 10% off; 1 unidade não ganha esse desconto). Vale pra QUALQUER produto, mas NÃO acumula com o desconto de 3%/cupom: o produto comprado em dobro leva SÓ os 10%; o 3% (ou o cupom) vale apenas nos produtos que NÃO estão na promo (comprados em 1 unidade). É desconto no preço, NÃO é "leve 3"/brinde. A antiga promoção de FRETE GRÁTIS / cupom FRETEZERO ENCERROU — NÃO mencione FRETEZERO nem frete grátis.');
+    linhas.push('PROMOÇÃO ATUAL (8.8 + Dia dos Pais, só até domingo 09/08): "15% OFF EM TODA A LOJA" com o cupom PAPAI88. O cliente digita/usa o cupom PAPAI88 no fechamento e ganha 15% de desconto em QUALQUER produto, em QUALQUER quantidade (não precisa comprar em dobro; 1 unidade já entra). NÃO acumula com outros descontos: cada produto recebe o MAIOR desconto que se aplicar a ele, e o cupom de 15% é o melhor do período. SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE o cupom PAPAI88 (15% em tudo, válido só 08 e 09/08). É desconto no preço, NÃO é "leve 3"/brinde. NÃO mencione FRETEZERO nem frete grátis (encerrado). (Obs.: quem não usar o cupom mas levar o MESMO produto em 2+ unidades ainda ganha 10% automático nessas unidades — mas o PAPAI88 de 15% é sempre melhor, então priorize divulgar o cupom.)');
   } else {
     linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
   }
@@ -514,11 +514,11 @@ _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os prod
 // A antiga promo de frete grátis (FRETEZERO) foi encerrada e NÃO é mais divulgada aqui.
 function msgPromoAtual(){
   if (promoDobroAtiva()) {
-    return `🎁 *SEMANA DO DIA DOS PAIS — COMPROU EM DOBRO, GANHOU 10%!* 🧡\n\n` +
-      `Levou o *mesmo produto em dobro* (2 ou mais unidades)? Essas unidades ganham *10% de desconto*, aplicado automático quando você fecha comigo. ✅\n\n` +
-      `✔️ Vale pra *qualquer produto*\n✔️ O desconto é *só nos itens que você leva em dobro*\n📅 *Só até domingo (09/08)*\n\n` +
-      `_Ex.: 1 Masteron + 2 Durateston → os 2 Durateston com 10% OFF._\n\n` +
-      `_E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
+    return `🚨 *8.8 + DIA DOS PAIS — 15% OFF EM TODA A LOJA!* 🔥\n\n` +
+      `A maior data do varejo caiu junto com o Dia dos Pais — e é *15% de desconto em qualquer produto* usando o cupom abaixo. ✅\n\n` +
+      `🏷️ *Cupom:* *PAPAI88*\n✔️ Vale pra *qualquer produto e qualquer quantidade* (não precisa comprar em dobro)\n⏰ *Só 48h — sábado (08/08) e domingo (09/08)*\n\n` +
+      `É só me falar o que você quer que eu já aplico o *PAPAI88* no fechamento pra você. 😉\n\n` +
+      `_Comprando comigo você sempre leva o melhor desconto — o cupom de 15% já é o maior do período._`;
   }
   return `No momento não temos promoção especial ativa, mas comprando comigo você já ganha *3% de desconto* em todos os produtos! 😊`;
 }
