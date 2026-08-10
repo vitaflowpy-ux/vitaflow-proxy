@@ -462,8 +462,8 @@ const PROMO_ANUNCIO = { ativa: false };
 function contextoPromo(){
   const linhas = [];
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
-  if (promoDobroAtiva()) {
-    linhas.push('PROMOÇÃO ATUAL (8.8 + Dia dos Pais, só até domingo 09/08): "15% OFF EM TODA A LOJA" com o cupom PAPAI88. O cliente digita/usa o cupom PAPAI88 no fechamento e ganha 15% de desconto em QUALQUER produto, em QUALQUER quantidade (não precisa comprar em dobro; 1 unidade já entra). NÃO acumula com outros descontos: cada produto recebe o MAIOR desconto que se aplicar a ele, e o cupom de 15% é o melhor do período. SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE o cupom PAPAI88 (15% em tudo, válido só 08 e 09/08). É desconto no preço, NÃO é "leve 3"/brinde. NÃO mencione FRETEZERO nem frete grátis (encerrado). (Obs.: quem não usar o cupom mas levar o MESMO produto em 2+ unidades ainda ganha 10% automático nessas unidades — mas o PAPAI88 de 15% é sempre melhor, então priorize divulgar o cupom.)');
+  if (promoFreteAtiva()) {
+    linhas.push('PROMOÇÃO ATUAL — SEMANA DO FRETE GRÁTIS (só até domingo 16/08 à meia-noite): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE a Semana do Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até 16/08). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione o 8.8/PAPAI88 nem "15% OFF" (essa promoção já encerrou).');
   } else {
     linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
   }
@@ -502,23 +502,24 @@ async function anunciarLancamento(session, sid) {
 // ── PROMO GÊNESIS "Compre 2, Leve 3" = a PROMOÇÃO DO MOMENTO (opção 6 / "promoção") ──
 // Pra desligar no futuro: ativa:false.
 const PROMO_GENESIS = { ativa: false };
-// Promoção atual (única): FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
-const MSG_PROMO_FRETE = `🚚 *PROMOÇÃO DO MOMENTO — FRETE GRÁTIS!* 🎉
+// ── SEMANA DO FRETE GRÁTIS: frete grátis acima de R$ 1.000 com o cupom FRETEZERO ──
+// Auto-expira sozinha em .fim. Pra desligar antes: ativa:false. Pra trocar o prazo: edite .fim.
+const PROMO_FRETE = { ativa: true, fim: '2026-08-16T23:59:59-03:00' };
+function promoFreteAtiva(){ return PROMO_FRETE.ativa && Date.now() <= new Date(PROMO_FRETE.fim).getTime(); }
+// Promoção atual (única): SEMANA DO FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
+const MSG_PROMO_FRETE = `🚚 *SEMANA DO FRETE GRÁTIS — PRA TODO O BRASIL!* 🎉
 
-Em pedidos *acima de R$ 1.000*, o *frete é grátis* pra todo o Brasil! 🇧🇷
+Em pedidos *acima de R$ 1.000*, o *frete é por nossa conta* pra todo o Brasil! 🇧🇷
 
-É só usar o cupom *FRETEZERO* no fechamento (aqui comigo ou no site). 💚
+🏷️ É só usar o cupom *FRETEZERO* no fechamento (aqui comigo ou no site).
+⏰ *Só até domingo (16/08) à meia-noite!*
 
 _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
-// Mensagem da "promoção do momento" (opção 6 / "promoção"). Hoje = Dia dos Pais (compre 2, 10%).
-// A antiga promo de frete grátis (FRETEZERO) foi encerrada e NÃO é mais divulgada aqui.
+// Mensagem da "promoção do momento" (opção 6 / "promoção"). Hoje = Semana do Frete Grátis (FRETEZERO, >R$1.000, até 16/08).
+// Divulga a promo enquanto promoFreteAtiva() (auto-expira em PROMO_FRETE.fim); depois disso cai no texto padrão dos 3%.
 function msgPromoAtual(){
-  if (promoDobroAtiva()) {
-    return `🚨 *8.8 + DIA DOS PAIS — 15% OFF EM TODA A LOJA!* 🔥\n\n` +
-      `A maior data do varejo caiu junto com o Dia dos Pais — e é *15% de desconto em qualquer produto* usando o cupom abaixo. ✅\n\n` +
-      `🏷️ *Cupom:* *PAPAI88*\n✔️ Vale pra *qualquer produto e qualquer quantidade* (não precisa comprar em dobro)\n⏰ *Só 48h — sábado (08/08) e domingo (09/08)*\n\n` +
-      `É só me falar o que você quer que eu já aplico o *PAPAI88* no fechamento pra você. 😉\n\n` +
-      `_Comprando comigo você sempre leva o melhor desconto — o cupom de 15% já é o maior do período._`;
+  if (promoFreteAtiva()) {
+    return MSG_PROMO_FRETE;
   }
   return `No momento não temos promoção especial ativa, mas comprando comigo você já ganha *3% de desconto* em todos os produtos! 😊`;
 }
