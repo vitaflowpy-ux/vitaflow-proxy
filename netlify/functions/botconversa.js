@@ -2032,12 +2032,25 @@ async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReai
     return d?.url || null;
   } catch { return null; }
 }
+// Número de contingência no MESMO formato do GAS (VF-DDMM-AX<HHmm>, fuso de São Paulo).
+// Usado SÓ quando o GAS não responde — assim a InfinitePay NUNCA carimba um UUID no pedido.
+function numeroContingenciaAthena() {
+  try {
+    const p = new Intl.DateTimeFormat('en-GB', { timeZone:'America/Sao_Paulo', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(new Date());
+    const g = t => (p.find(x => x.type === t) || {}).value || '00';
+    return 'VF-' + g('day') + g('month') + '-AX' + g('hour') + g('minute');
+  } catch (e) {
+    return 'VF-0000-AX0000';
+  }
+}
 async function gerarNumeroPedido() {
   try {
     const r = await fetchT(GAS_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'gerar_numero', tipo:'A' }) }, 7000);
     const d = await r.json();
-    return d.order_nsu || null;
-  } catch { return null; }
+    if (d && d.order_nsu) return d.order_nsu;
+  } catch (e) {}
+  // GAS fora/sem resposta → número de contingência no formato VF (nunca deixa virar UUID da InfinitePay)
+  return numeroContingenciaAthena();
 }
 async function salvarPedidoGAS(pedido) {
   try {
