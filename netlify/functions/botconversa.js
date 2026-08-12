@@ -1,6 +1,6 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
-const INFINITEPAY_TAG = 'vitaflowoficial';
+const INFINITEPAY_TAG = 'vitafueloficial';
 const FIREBASE_URL    = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 // Segredo do Realtime Database (env var FIREBASE_SECRET no Netlify — NÃO hardcodar).
 // Passa por cima das regras, permitindo o backend ler/gravar mesmo com os nós fechados.
