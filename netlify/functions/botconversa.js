@@ -681,21 +681,23 @@ const MSG_PERGUNTA_TIPO_PRAZO = `📦 *Sobre prazo de entrega* — me diz qual o
 2️⃣ Compra no atacado (pedido mínimo R$ 3.000)`;
 
 // ── Tabela de fretes ──────────────────────────────────────────────────────────
+// Tabela IGUAL à do site (main-cart-footer). Valores em reais. Atualizada 14/08/2026.
+// RR não tem Transportadora (igual ao site). CE PAC = R$72,50.
 const FRETES = {
-  RJ:{PAC:45,SEDEX:60,Transp:70},  SP:{PAC:45,SEDEX:60,Transp:55},
-  MG:{PAC:45,SEDEX:70,Transp:70},  ES:{PAC:45,SEDEX:70,Transp:70},
-  DF:{PAC:45,SEDEX:60,Transp:72},  PR:{PAC:45,SEDEX:60,Transp:70},
-  SC:{PAC:45,SEDEX:70,Transp:70},  RS:{PAC:45,SEDEX:70,Transp:100},
-  GO:{PAC:45,SEDEX:70,Transp:76},  MS:{PAC:45,SEDEX:85,Transp:80},
-  BA:{PAC:58,SEDEX:90,Transp:80},  MT:{PAC:58,SEDEX:90,Transp:75},
-  CE:{PAC:72,SEDEX:105,Transp:80}, PA:{PAC:87,SEDEX:105,Transp:110},
-  PE:{PAC:87,SEDEX:115,Transp:120},TO:{PAC:87,SEDEX:105,Transp:110},
-  MA:{PAC:100,SEDEX:125,Transp:90},PB:{PAC:100,SEDEX:125,Transp:100},
-  RN:{PAC:100,SEDEX:125,Transp:100},PI:{PAC:100,SEDEX:125,Transp:110},
-  AL:{PAC:100,SEDEX:125,Transp:90},SE:{PAC:100,SEDEX:125,Transp:90},
-  AM:{PAC:100,SEDEX:125,Transp:110},RO:{PAC:100,SEDEX:110,Transp:170},
-  AP:{PAC:100,SEDEX:125,Transp:120},RR:{PAC:130,SEDEX:110,Transp:170},
-  AC:{PAC:130,SEDEX:110,Transp:150},
+  AC:{PAC:130,SEDEX:110,Transp:150}, AL:{PAC:100,SEDEX:125,Transp:90},
+  AM:{PAC:100,SEDEX:125,Transp:110}, AP:{PAC:100,SEDEX:125,Transp:120},
+  BA:{PAC:58,SEDEX:90,Transp:80},    CE:{PAC:72.5,SEDEX:105,Transp:80},
+  DF:{PAC:45,SEDEX:60,Transp:72},    ES:{PAC:45,SEDEX:70,Transp:70},
+  GO:{PAC:45,SEDEX:70,Transp:76},    MA:{PAC:100,SEDEX:125,Transp:90},
+  MG:{PAC:45,SEDEX:70,Transp:70},    MS:{PAC:45,SEDEX:85,Transp:80},
+  MT:{PAC:58,SEDEX:90,Transp:75},    PA:{PAC:87,SEDEX:105,Transp:110},
+  PB:{PAC:100,SEDEX:125,Transp:100}, PE:{PAC:87,SEDEX:115,Transp:120},
+  PI:{PAC:100,SEDEX:125,Transp:110}, PR:{PAC:45,SEDEX:60,Transp:70},
+  RJ:{PAC:45,SEDEX:70,Transp:70},    RN:{PAC:100,SEDEX:125,Transp:100},
+  RO:{PAC:100,SEDEX:110,Transp:170}, RR:{PAC:130,SEDEX:110,Transp:150},
+  RS:{PAC:45,SEDEX:70,Transp:100},   SC:{PAC:45,SEDEX:70,Transp:70},
+  SE:{PAC:100,SEDEX:125,Transp:90},  SP:{PAC:32,SEDEX:40,Transp:48},
+  TO:{PAC:87,SEDEX:105,Transp:110},
 };
 
 // ── Menus fixos ───────────────────────────────────────────────────────────────
