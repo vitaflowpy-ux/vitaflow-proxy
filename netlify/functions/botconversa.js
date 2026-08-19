@@ -349,7 +349,7 @@ const DESCONTO_ATHENA_PCT = 3;
 // ── PROMO DIA DOS PAIS: compre 2+ do MESMO produto → 10% off nessas unidades ──
 // Automática. NÃO acumula com o 3%/cupom: produto em dobro leva só os 10%; o 3%/cupom vale nos demais. Expira sozinha em PROMO_DOBRO.fim.
 // Pra desligar: ativa:false.
-const PROMO_DOBRO = { ativa: true, pct: 10, qtdMin: 2, fim: '2026-08-09T23:59:59-03:00' };
+const PROMO_DOBRO = { ativa: false, pct: 10, qtdMin: 2, fim: '2026-08-09T23:59:59-03:00' };
 function promoDobroAtiva(){ return PROMO_DOBRO.ativa && Date.now() <= new Date(PROMO_DOBRO.fim).getTime(); }
 // desconto (R$) que a promo dá no carrinho: pct% nas unidades dos produtos com qtd >= qtdMin
 function descPromoDobro(carrinho){
@@ -504,7 +504,7 @@ async function anunciarLancamento(session, sid) {
 const PROMO_GENESIS = { ativa: false };
 // ── SEMANA DO FRETE GRÁTIS: frete grátis acima de R$ 1.000 com o cupom FRETEZERO ──
 // Auto-expira sozinha em .fim. Pra desligar antes: ativa:false. Pra trocar o prazo: edite .fim.
-const PROMO_FRETE = { ativa: true, fim: '2026-08-16T23:59:59-03:00' };
+const PROMO_FRETE = { ativa: false, fim: '2026-08-16T23:59:59-03:00' };
 function promoFreteAtiva(){ return PROMO_FRETE.ativa && Date.now() <= new Date(PROMO_FRETE.fim).getTime(); }
 // Promoção atual (única): SEMANA DO FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
 const MSG_PROMO_FRETE = `🚚 *SEMANA DO FRETE GRÁTIS — PRA TODO O BRASIL!* 🎉
@@ -2063,6 +2063,12 @@ async function salvarPedidoGAS(pedido) {
 // Gera o pedido + link de pagamento (extraído do CONFIRMAR pra ser reusado após a escolha do brinde).
 // Se houver session.brinde (promo Gênesis), grava o brinde vinculado ao pedido pra virar Observação.
 async function gerarLinkPedido(session, sid, respond) {
+  // ── OBSERVAÇÃO DO PEDIDO: antes de gerar o link, pergunta se o cliente quer adicionar uma observação.
+  // Vale pra VAREJO e ATACADO (todos os caminhos que geram link passam por aqui). Só pergunta uma vez (obsColetada).
+  if (!session.obsColetada) {
+    await saveSession(sid, { ...session, state:'OBS_PERGUNTA' });
+    return respond('📝 Antes de gerar seu link de pagamento: quer adicionar alguma *observação* ao pedido? (ex.: ponto de referência, algum pedido especial)\n\n1️⃣ Sim\n2️⃣ Não');
+  }
   const carrinho = session.carrinho || [];
   const frete = session.freteSelecionado || {};
   const uf    = session.estadoCliente || '';
@@ -2087,6 +2093,16 @@ async function gerarLinkPedido(session, sid, respond) {
       });
     } catch {}
   }
+  // Observação do cliente: grava durável vinculada ao pedido (mesmo padrão do brinde) pra sobreviver até o registro pós-pagamento.
+  if (session.obsCliente && orderNsu) {
+    try {
+      const oKey = String(orderNsu).replace(/[^a-zA-Z0-9]/g,'_');
+      await fetch(fbUrl(`/vitaflow_obs_cliente/${oKey}.json`), {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ obs: session.obsCliente, order_nsu: orderNsu, ts: Date.now() })
+      });
+    } catch {}
+  }
   const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais + descontoPromo);
   try {
     const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
@@ -2100,12 +2116,13 @@ async function gerarLinkPedido(session, sid, respond) {
         carrinho: carrinho, freteSelecionado: frete, estadoCliente: uf, total: totalFinal,
         descontoReais: descontoReais, descontoPromo: descontoPromo, descontoLabel: session.descontoLabel || '',
         descontoTipo: session.descontoTipo || '', cupomDocId: session.cupomDocId || null,
-        cupomCodigo: session.cupomCodigo || null, link: link || '', brinde: session.brinde || null
+        cupomCodigo: session.cupomCodigo || null, link: link || '', brinde: session.brinde || null,
+        observacao: session.obsCliente || ''
       })
     });
   } catch {}
   const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
-  await enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}${session.brinde ? `\n🎁 Brinde (3º grátis): ${session.brinde}` : ''}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`);
+  await enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}${session.brinde ? `\n🎁 Brinde (3º grátis): ${session.brinde}` : ''}${session.obsCliente ? `\n📝 Obs: ${session.obsCliente}` : ''}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`);
   try {
     await fetch(GAS_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -2362,7 +2379,7 @@ exports.handler = async (event) => {
     // (frete, prazo, rastreio, atacado, tabela, grupo, promo) pode roubar o fluxo e APAGAR o
     // carrinho. Nesses estados, a mensagem vai direto pro handler do estado (que sabe lidar
     // com o carrinho). Isso corrige o caso "digitei 'frete' no resumo e perdi o pedido".
-    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS','ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','ATK_REMOVER','ATK_CONFIRMAR','ATK_BLOQUEIO','VAREJO_BLOQUEIO'].includes(state);
+    const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','OBS_PERGUNTA','OBS_TEXTO','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS','ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','ATK_REMOVER','ATK_CONFIRMAR','ATK_BLOQUEIO','VAREJO_BLOQUEIO'].includes(state);
 
     // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
     // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
@@ -2385,7 +2402,7 @@ exports.handler = async (event) => {
     // A IA NÃO enxerga o carrinho e inventava "carrinho vazio" + reabria seleção (duplicava item).
     // Só quando há itens no carrinho e fora dos passos que já tratam isso (estado/frete/confirmar/pgto).
     const _temCarrinho = Array.isArray(session.carrinho) && session.carrinho.length > 0;
-    const _naoInterferir = ['ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
+    const _naoInterferir = ['ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','OBS_PERGUNTA','OBS_TEXTO','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
     if (_temCarrinho && !_naoInterferir) {
       const ehVerCarrinho = /\b(meu carrinho|ver (o )?carrinho|carrinho de compras|quantos? (produtos?|itens?)|o que (tem|ta|esta|eu tenho|eu ja tenho) no (meu )?carrinho|itens do carrinho|o que eu (ja )?(escolhi|adicionei)|resumo do (meu )?carrinho)\b/.test(n);
       const ehFinalizar = /\b(finalizar|fechar (a |o )?(compra|pedido|carrinho)|concluir (a )?compra|ir pro pagamento|quero pagar|pode fechar|finaliza(r)?|encerrar (a )?compra|checkout)\b/.test(n);
@@ -3272,6 +3289,31 @@ exports.handler = async (event) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // OBSERVAÇÃO DO PEDIDO (varejo e atacado) — perguntada logo antes de gerar o link
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (state === 'OBS_PERGUNTA') {
+      const s = norm(mensagem);
+      const ehSim = s === '1' || /^(sim|s|quero|claro|isso|yes|adicionar|acrescentar|tem|positivo|com certeza|bora|vou|sim quero)\b/.test(s);
+      const ehNao = s === '2' || /^(nao|n|nenhuma|sem|nada|no|dispensa|deixa|negativo|pode gerar|gera|so gerar|só gerar|seguir|segue)\b/.test(s);
+      if (ehSim) {
+        await saveSession(sid, { ...session, state:'OBS_TEXTO' });
+        return respond('📝 Perfeito! Escreva a *observação* que você quer registrar no pedido:');
+      }
+      if (ehNao) {
+        return await gerarLinkPedido({ ...session, obsColetada:true, obsCliente:'' }, sid, respond);
+      }
+      return respond('Você quer adicionar alguma *observação* ao pedido?\n\n1️⃣ Sim\n2️⃣ Não');
+    }
+
+    if (state === 'OBS_TEXTO') {
+      const obsTxt = (mensagem || '').trim();
+      if (!obsTxt) return respond('Pode escrever a observação do pedido (ou digite *não* pra seguir sem):');
+      const ehNaoObs = /^(nao|n|sem|nenhuma|nada)$/.test(norm(obsTxt));
+      const obsFinalCli = ehNaoObs ? '' : obsTxt.slice(0, 300);
+      return await gerarLinkPedido({ ...session, obsColetada:true, obsCliente: obsFinalCli }, sid, respond);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // AGUARDAR COMPROVANTE
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'AGUARDAR_COMPROVANTE') {
@@ -3443,12 +3485,23 @@ exports.handler = async (event) => {
             }
             if (_br) _obsBrinde = 'BRINDE (3º grátis — promo Gênesis Compre 2 Leve 3): ' + _br;
           } catch (e) {}
+          // Observação do cliente: recupera da sessão OU do nó durável vitaflow_obs_cliente.
+          let _obsCliente = session.obsCliente || '';
+          try {
+            if (!_obsCliente && num_pedido) {
+              const _ro = await fetch(fbUrl(`/vitaflow_obs_cliente/${String(num_pedido).replace(/[^a-zA-Z0-9]/g,'_')}.json`));
+              const _do = await _ro.json();
+              if (_do && _do.obs) _obsCliente = _do.obs;
+            }
+          } catch (e) {}
+          // Junta brinde + observação do cliente no MESMO campo, sem um sobrescrever o outro.
+          const _obsFinal = [_obsBrinde, _obsCliente ? ('Obs. do cliente: ' + _obsCliente) : ''].filter(Boolean).join(' | ');
           await salvarPedidoGAS({
             order_nsu: num_pedido,
             paid_amount: Math.round(total * 100),
             capture_method: 'whatsapp_athena',
-            observacao: _obsBrinde,
-            customer: { name: coleta.nome, email: (coleta.email||'nao_informado').toLowerCase(), phone_number: coleta.telefone, document: coleta.cpf, observacao: _obsBrinde },
+            observacao: _obsFinal,
+            customer: { name: coleta.nome, email: (coleta.email||'nao_informado').toLowerCase(), phone_number: coleta.telefone, document: coleta.cpf, observacao: _obsFinal },
             address: { street: coleta.endereco, number: '', complement: coleta.complemento||'', neighborhood: coleta.bairro, city: coleta.cidade, state: coleta.estado, cep: coleta.cep },
             items
           });
@@ -3456,7 +3509,7 @@ exports.handler = async (event) => {
         try {
           const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
           await enviarTelegram(
-            `🤖 *VENDA ATHENA!*\n\n📦 ${num_pedido}\n👤 ${coleta.nome}\n🪪 ${coleta.cpf}\n📱 ${coleta.telefone}\n📧 ${coleta.email||'—'}\n🏠 ${coleta.endereco}${coleta.complemento?', '+coleta.complemento:''}, ${coleta.bairro}, ${coleta.cidade}-${coleta.estado}, ${coleta.cep}\n${itensTxt}\n🚚 ${frete.label} ${session.estadoCliente}\n💰 R$ ${total.toFixed(2)}\n📱 ${sid}`
+            `🤖 *VENDA ATHENA!*\n\n📦 ${num_pedido}\n👤 ${coleta.nome}\n🪪 ${coleta.cpf}\n📱 ${coleta.telefone}\n📧 ${coleta.email||'—'}\n🏠 ${coleta.endereco}${coleta.complemento?', '+coleta.complemento:''}, ${coleta.bairro}, ${coleta.cidade}-${coleta.estado}, ${coleta.cep}\n${itensTxt}\n🚚 ${frete.label} ${session.estadoCliente}\n💰 R$ ${total.toFixed(2)}${session.obsCliente?`\n📝 Obs: ${session.obsCliente}`:''}\n📱 ${sid}`
           );
         } catch (e) {}
       }
