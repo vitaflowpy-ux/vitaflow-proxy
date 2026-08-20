@@ -457,15 +457,15 @@ function reais(n) { return Number(n || 0).toLocaleString('pt-BR'); }
 // ── PROMO_ANUNCIO: desligado (Namorados encerrado). A promoção atual é a PROMO_PRODUTO (opção 8). ──
 const PROMO_ANUNCIO = { ativa: false };
 
-// ── PROMOÇÃO RELÂMPAGO GÊNESIS (compre 4 peptídeos Gênesis, ganhe 1 GHK-Cu 100mg) — SÓ DIVULGAÇÃO ──
+// ── PROMOÇÃO RELÂMPAGO GÊNESIS (compre 3 peptídeos Gênesis, ganhe 1 GHK-Cu 100mg) — SÓ DIVULGAÇÃO ──
 // A Athena apenas DIVULGA a promo. O brinde (GHK-Cu 100mg) é conferido/aplicado manualmente no fechamento.
 // Pra desligar: ativa:false.
-const PROMO_GENESIS_4x1 = { ativa: true };
-const MSG_PROMO_GENESIS_4X1 = `⚡ *PROMOÇÃO RELÂMPAGO — GÊNESIS PEPTÍDEOS!* 🧬
+const PROMO_GENESIS_3x1 = { ativa: true };
+const MSG_PROMO_GENESIS_3X1 = `⚡ *PROMOÇÃO RELÂMPAGO — GÊNESIS PEPTÍDEOS!* 🧬
 
-Na compra de *4 peptídeos da marca Gênesis*, você ganha *1 GHK-Cu 100mg GRÁTIS*! 🎁
+Na compra de *3 peptídeos da marca Gênesis*, você ganha *1 GHK-Cu 100mg GRÁTIS*! 🎁
 
-Pode *misturar* os produtos da linha Gênesis — juntou 4, o GHK-Cu 100mg vai de brinde. 💪
+Pode *misturar* os produtos da linha Gênesis — juntou 3, o GHK-Cu 100mg vai de brinde. 💪
 
 ⏳ *Só enquanto durar o estoque!*
 
@@ -478,11 +478,11 @@ function contextoPromo(){
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
   if (promoFreteAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — SEMANA DO FRETE GRÁTIS (só até domingo 16/08 à meia-noite): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE a Semana do Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até 16/08). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione o 8.8/PAPAI88 nem "15% OFF" (essa promoção já encerrou).');
-  } else if (!PROMO_GENESIS_4x1.ativa) {
+  } else if (!PROMO_GENESIS_3x1.ativa) {
     linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
   }
-  if (PROMO_GENESIS_4x1.ativa) {
-    linhas.push('PROMOÇÃO RELÂMPAGO ATIVA AGORA — GÊNESIS PEPTÍDEOS: na compra de 4 peptídeos da marca Gênesis (pode misturar os produtos da linha), o cliente ganha 1 GHK-Cu 100mg GRÁTIS. Válida só enquanto durar o estoque. É a marca Gênesis Peptídeos (NÃO confundir com "Biogenesis", que é outra marca). O brinde (GHK-Cu 100mg) é conferido/aplicado no fechamento pela equipe — a Athena só divulga. SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE esta promo. O benefício padrão de 3% continua valendo normalmente nos produtos. NÃO existe frete grátis/FRETEZERO nem "Compre 2 Leve 3" no momento — a única promoção ativa é esta.');
+  if (PROMO_GENESIS_3x1.ativa) {
+    linhas.push('PROMOÇÃO RELÂMPAGO ATIVA AGORA — GÊNESIS PEPTÍDEOS: na compra de 3 peptídeos da marca Gênesis (pode misturar os produtos da linha), o cliente ganha 1 GHK-Cu 100mg GRÁTIS. Válida só enquanto durar o estoque. É a marca Gênesis Peptídeos (NÃO confundir com "Biogenesis", que é outra marca). O brinde (GHK-Cu 100mg) é conferido/aplicado no fechamento pela equipe — a Athena só divulga. SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE esta promo. O benefício padrão de 3% continua valendo normalmente nos produtos. NÃO existe frete grátis/FRETEZERO nem "Compre 2 Leve 3" no momento — a única promoção ativa é esta.');
   }
   const rel = promoAtiva();
   if (rel && rel.produtos && rel.produtos.length) {
@@ -535,8 +535,8 @@ _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os prod
 // Mensagem da "promoção do momento" (opção 6 / "promoção"). Hoje = Semana do Frete Grátis (FRETEZERO, >R$1.000, até 16/08).
 // Divulga a promo enquanto promoFreteAtiva() (auto-expira em PROMO_FRETE.fim); depois disso cai no texto padrão dos 3%.
 function msgPromoAtual(){
-  if (PROMO_GENESIS_4x1.ativa) {
-    return MSG_PROMO_GENESIS_4X1;
+  if (PROMO_GENESIS_3x1.ativa) {
+    return MSG_PROMO_GENESIS_3X1;
   }
   if (promoFreteAtiva()) {
     return MSG_PROMO_FRETE;
