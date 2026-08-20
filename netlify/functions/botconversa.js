@@ -457,6 +457,20 @@ function reais(n) { return Number(n || 0).toLocaleString('pt-BR'); }
 // ── PROMO_ANUNCIO: desligado (Namorados encerrado). A promoção atual é a PROMO_PRODUTO (opção 8). ──
 const PROMO_ANUNCIO = { ativa: false };
 
+// ── PROMOÇÃO RELÂMPAGO GÊNESIS (compre 4 peptídeos Gênesis, ganhe 1 GHK-Cu 100mg) — SÓ DIVULGAÇÃO ──
+// A Athena apenas DIVULGA a promo. O brinde (GHK-Cu 100mg) é conferido/aplicado manualmente no fechamento.
+// Pra desligar: ativa:false.
+const PROMO_GENESIS_4x1 = { ativa: true };
+const MSG_PROMO_GENESIS_4X1 = `⚡ *PROMOÇÃO RELÂMPAGO — GÊNESIS PEPTÍDEOS!* 🧬
+
+Na compra de *4 peptídeos da marca Gênesis*, você ganha *1 GHK-Cu 100mg GRÁTIS*! 🎁
+
+Pode *misturar* os produtos da linha Gênesis — juntou 4, o GHK-Cu 100mg vai de brinde. 💪
+
+⏳ *Só enquanto durar o estoque!*
+
+_E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos. 😉_`;
+
 // Monta o contexto REAL de promoção/desconto pra IA assíncrona (fonte única = este arquivo).
 // A IA só fala de promoção com base no que estiver LIGADO aqui. Nada inventado.
 function contextoPromo(){
@@ -464,8 +478,11 @@ function contextoPromo(){
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
   if (promoFreteAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — SEMANA DO FRETE GRÁTIS (só até domingo 16/08 à meia-noite): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE a Semana do Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até 16/08). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione o 8.8/PAPAI88 nem "15% OFF" (essa promoção já encerrou).');
-  } else {
+  } else if (!PROMO_GENESIS_4x1.ativa) {
     linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
+  }
+  if (PROMO_GENESIS_4x1.ativa) {
+    linhas.push('PROMOÇÃO RELÂMPAGO ATIVA AGORA — GÊNESIS PEPTÍDEOS: na compra de 4 peptídeos da marca Gênesis (pode misturar os produtos da linha), o cliente ganha 1 GHK-Cu 100mg GRÁTIS. Válida só enquanto durar o estoque. É a marca Gênesis Peptídeos (NÃO confundir com "Biogenesis", que é outra marca). O brinde (GHK-Cu 100mg) é conferido/aplicado no fechamento pela equipe — a Athena só divulga. SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE esta promo. O benefício padrão de 3% continua valendo normalmente nos produtos. NÃO existe frete grátis/FRETEZERO nem "Compre 2 Leve 3" no momento — a única promoção ativa é esta.');
   }
   const rel = promoAtiva();
   if (rel && rel.produtos && rel.produtos.length) {
@@ -518,6 +535,9 @@ _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os prod
 // Mensagem da "promoção do momento" (opção 6 / "promoção"). Hoje = Semana do Frete Grátis (FRETEZERO, >R$1.000, até 16/08).
 // Divulga a promo enquanto promoFreteAtiva() (auto-expira em PROMO_FRETE.fim); depois disso cai no texto padrão dos 3%.
 function msgPromoAtual(){
+  if (PROMO_GENESIS_4x1.ativa) {
+    return MSG_PROMO_GENESIS_4X1;
+  }
   if (promoFreteAtiva()) {
     return MSG_PROMO_FRETE;
   }
@@ -2062,13 +2082,41 @@ async function salvarPedidoGAS(pedido) {
 
 // Gera o pedido + link de pagamento (extraído do CONFIRMAR pra ser reusado após a escolha do brinde).
 // Se houver session.brinde (promo Gênesis), grava o brinde vinculado ao pedido pra virar Observação.
-async function gerarLinkPedido(session, sid, respond) {
-  // ── OBSERVAÇÃO DO PEDIDO: antes de gerar o link, pergunta se o cliente quer adicionar uma observação.
-  // Vale pra VAREJO e ATACADO (todos os caminhos que geram link passam por aqui). Só pergunta uma vez (obsColetada).
-  if (!session.obsColetada) {
-    await saveSession(sid, { ...session, state:'OBS_PERGUNTA' });
-    return respond('📝 Antes de gerar seu link de pagamento: quer adicionar alguma *observação* ao pedido? (ex.: ponto de referência, algum pedido especial)\n\n1️⃣ Sim\n2️⃣ Não');
+// ── RESUMO DO PEDIDO (varejo): mostra o resumo (promo ou normal) e coloca em CONFIRMAR.
+// Chamado após o frete + a pergunta de observação.
+async function mostrarResumoPedido(session, sid, respond) {
+  const carrinho = session.carrinho || [];
+  const frete = session.freteSelecionado || {};
+  const totalProd = (typeof session.totalProd === 'number') ? session.totalProd : totalCarrinho(carrinho);
+  if (session.fluxoPromo) {
+    const descPct = session.descontoPromoPct || 0;
+    const descValor = totalProd * (descPct / 100);
+    const totalComDesconto = totalProd - descValor + frete.valor;
+    const resumo =
+      `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
+      `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
+      `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
+      `🔥 *${session.promoTitulo||'Promoção Relâmpago'}* — preços promocionais já aplicados` +
+      (descPct ? `\n🏷️ Desconto extra (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') +
+      `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`;
+    await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo' });
+    return respond(resumo);
   }
+  return await fecharResumoNormal({ ...session, freteSelecionado: frete, totalProd }, sid, null, respond);
+}
+// ── RESUMO DO PEDIDO (atacado): mostra o resumo e coloca em ATK_CONFIRMAR. Chamado após a pergunta de observação.
+async function mostrarResumoAtacado(session, sid, respond) {
+  const cart = session.carrinhoAtk || [];
+  const sub = totalCarrinho(cart);
+  await saveSession(sid, { ...session, state:'ATK_CONFIRMAR' });
+  return respond(`*📋 RESUMO DO PEDIDO — ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n🚚 Frete: *GRÁTIS* 🎉\n\n💰 *Total: R$ ${sub.toFixed(2).replace('.', ',')}*\n\n*Confirma?*\n1️⃣ Sim, gerar o link de pagamento\n2️⃣ Não, voltar`);
+}
+// Depois da observação, volta pro resumo certo (varejo ou atacado) conforme obsReturn.
+async function _seguirAposObs(session, sid, respond) {
+  if (session.obsReturn === 'atacado') return await mostrarResumoAtacado(session, sid, respond);
+  return await mostrarResumoPedido(session, sid, respond);
+}
+async function gerarLinkPedido(session, sid, respond) {
   const carrinho = session.carrinho || [];
   const frete = session.freteSelecionado || {};
   const uf    = session.estadoCliente || '';
@@ -2621,8 +2669,9 @@ exports.handler = async (event) => {
         if (!cart.length) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Seu pedido de atacado está vazio. Me diga o *nome do produto* que você quer. 😊'); }
         const sub = totalCarrinho(cart);
         if (sub < ATACADO_MIN) return respond(`Ainda não dá pra fechar: seu pedido de atacado está em *R$ ${sub.toFixed(2).replace('.', ',')}* e o mínimo é *R$ 3.000*.\nFaltam *R$ ${faltaAtk(sub).toFixed(2).replace('.', ',')}*.\n\nMe manda o *nome* de outro produto pra adicionar. 😊`);
-        await saveSession(sid, { ...session, state:'ATK_CONFIRMAR' });
-        return respond(`*📋 RESUMO DO PEDIDO — ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n🚚 Frete: *GRÁTIS* 🎉\n\n💰 *Total: R$ ${sub.toFixed(2).replace('.', ',')}*\n\n*Confirma?*\n1️⃣ Sim, gerar o link de pagamento\n2️⃣ Não, voltar`);
+        // OBSERVAÇÃO: pergunta antes do resumo do atacado (o fechar só passa aqui uma vez por checkout).
+        await saveSession(sid, { ...session, obsReturn:'atacado', state:'OBS_PERGUNTA' });
+        return respond('📝 Quer adicionar alguma *observação* ao seu pedido? (ex.: ponto de referência, algum pedido especial)\n\n1️⃣ Sim\n2️⃣ Não');
       }
       if (num === 3) {
         if (!cart.length) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Seu pedido de atacado está vazio. 🛒'); }
@@ -3055,22 +3104,9 @@ exports.handler = async (event) => {
       const carrinho = session.carrinho || [];
       if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
       const totalProd = totalCarrinho(carrinho);
-      if (session.fluxoPromo) {
-        const descPct = session.descontoPromoPct || 0;
-        const descValor = totalProd * (descPct / 100);
-        const totalComDesconto = totalProd - descValor + frete.valor;
-        const resumo =
-          `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
-          `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
-          `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
-          `🔥 *${session.promoTitulo||'Promoção Relâmpago'}* — preços promocionais já aplicados` +
-          (descPct ? `\n🏷️ Desconto extra (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') +
-          `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`;
-        await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo' });
-        return respond(resumo);
-      }
-      // Opção B: aplica os 3% e mostra o resumo direto; o cupom fica como convite discreto no resumo
-      return await fecharResumoNormal({ ...session, freteSelecionado: frete, totalProd }, sid, null, respond);
+      // OBSERVAÇÃO: pergunta logo após o frete e ANTES do resumo (FRETE só passa aqui uma vez por checkout).
+      await saveSession(sid, { ...session, freteSelecionado: frete, totalProd, obsReturn:'retail', state:'OBS_PERGUNTA' });
+      return respond('📝 Quer adicionar alguma *observação* ao seu pedido? (ex.: ponto de referência, algum pedido especial)\n\n1️⃣ Sim\n2️⃣ Não');
     }
 
     if (state === 'PERGUNTA_CUPOM') {
@@ -3300,7 +3336,7 @@ exports.handler = async (event) => {
         return respond('📝 Perfeito! Escreva a *observação* que você quer registrar no pedido:');
       }
       if (ehNao) {
-        return await gerarLinkPedido({ ...session, obsColetada:true, obsCliente:'' }, sid, respond);
+        return await _seguirAposObs({ ...session, obsColetada:true, obsCliente:'' }, sid, respond);
       }
       return respond('Você quer adicionar alguma *observação* ao pedido?\n\n1️⃣ Sim\n2️⃣ Não');
     }
@@ -3310,7 +3346,7 @@ exports.handler = async (event) => {
       if (!obsTxt) return respond('Pode escrever a observação do pedido (ou digite *não* pra seguir sem):');
       const ehNaoObs = /^(nao|n|sem|nenhuma|nada)$/.test(norm(obsTxt));
       const obsFinalCli = ehNaoObs ? '' : obsTxt.slice(0, 300);
-      return await gerarLinkPedido({ ...session, obsColetada:true, obsCliente: obsFinalCli }, sid, respond);
+      return await _seguirAposObs({ ...session, obsColetada:true, obsCliente: obsFinalCli }, sid, respond);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
