@@ -1011,6 +1011,7 @@ const DICT_PRODUTOS = [
   { label:'Hemogenin (Anadrol)', tipo:'lista', colecao:'hormonios', filtro:['hemogenin','oximetolona'], canonico:['hemogenin','anadrol','oximetolona'], apelidos:['hemo'] },
   { label:'Dianabol', tipo:'lista', colecao:'hormonios', filtro:['dianabol','metandienona'], canonico:['dianabol','metandienona','bombadrol'], apelidos:['dbol','diana'] },
   { label:'Clembuterol', tipo:'lista', colecao:'farmacia', filtro:['clembuterol'], canonico:['clembuterol','clenbuterol'], apelidos:['clen','clembu','clenbu'] },
+  { label:'Venvanse', tipo:'lista', colecao:'farmacia', filtro:['venvanse'], canonico:['venvanse','vyvanse','lisdexanfetamina'], apelidos:['venvans'] },
   { label:'HCG', tipo:'lista', colecao:'hormonios', filtro:['hcg'], canonico:['hcg'], apelidos:[] },
   { label:'Anastrozol / Proviron', tipo:'lista', colecao:'hormonios', filtro:['anastrozol','proviron'], canonico:['anastrozol','proviron','arimidex'], apelidos:[] },
   { label:'CutStack', tipo:'lista', colecao:'hormonios', filtro:['cutstack'], canonico:['cutstack','cut stack'], apelidos:[] },
@@ -1383,6 +1384,28 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
     });
     return respond(`Você quis dizer *${e.label}*? 🤔\n\n1️⃣ Sim\n2️⃣ Não`);
   }
+  // ── FALLBACK DETERMINÍSTICO (catálogo real, 900+ produtos) ──────────────────
+  // O nome digitado NÃO está no DICT_PRODUTOS, mas pode EXISTIR no catálogo. Antes de
+  // mandar pra IA (que só enxerga parte do catálogo e às vezes NEGA produto que existe),
+  // procura o texto em TODAS as coleções do cache. Achou → abre a lista REAL na hora.
+  // filtrarCache exige que TODAS as palavras (>2 letras) estejam no nome do produto —
+  // é preciso, não pega frase solta ("tem algo pra dormir" não casa com nada).
+  try {
+    const _tudoCat = await buscarTodosCache();
+    const _achadosCat = [...new Set(filtrarCache(_tudoCat, nMsg))];
+    if (_achadosCat.length) {
+      const _labelBusca = (nMsg || '').trim();
+      if ((session.carrinho || []).length > 0) {
+        // tem carrinho: pergunta antes pra não atropelar o pedido (igual ao fluxo do DICT)
+        await saveSession(sid, { ...session, errosSeguidos:0, state:'CONFIRMAR_VER_PRODUTO',
+          pendenteRec: { label:_labelBusca, tipo:'busca_tudo', colecao:'', filtro:[nMsg], ester:'', marca:'' } });
+        return respond(`Quer ver *${_labelBusca}*? Seu carrinho fica salvo. 🛒\n\n1️⃣ Sim, ver ${_labelBusca}\n2️⃣ Não, continuar de onde parei`);
+      }
+      await limparHistoricoIA(sid);
+      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(_achadosCat), errosSeguidos:0, pendenteRec:null });
+      return respond(`*${_labelBusca.toUpperCase()}*\n\n${formatarLista(_achadosCat)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
+    }
+  } catch (e) {}
   // Não reconheceu como produto → em vez do "não entendi" robótico, deixa a IA responder
   // de forma inteligente e assíncrona (sem timeout). Mantém o contexto/estado atual.
   await saveSession(sid, { ...session, errosSeguidos: (session.errosSeguidos || 0) + 1 });
