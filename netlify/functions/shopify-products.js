@@ -18,10 +18,14 @@ async function shopifyGet(url) {
 }
 
 function mapCategory(title) {
-  const t = (title || '').toLowerCase();
+  // normaliza (tira acento/maiúscula) pra bater com o título da coleção seja com acento ou sem
+  const t = (title || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   if (t.includes('peptid')) return 'Peptídeos';
   if (t.includes('horm')) return 'Hormônios';
   if (t === 'gh') return 'GH';
+  if (t.includes('estetic')) return 'Estética';
+  if (t.includes('farmac')) return 'Farmácia';
+  if (t.includes('sarm')) return 'SARMS';
   if (t.includes('mais vendid')) return 'Mais Vendidos';
   if (t.includes('promo')) return 'Promoções';
   if (t.includes('outro')) return 'Outros';
@@ -73,8 +77,9 @@ exports.handler = async function(event) {
     const allCols = [...customCols, ...smartCols];
 
     const catCols = allCols.filter(c => {
-      const t = c.title.toLowerCase();
+      const t = (c.title || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
       return t.includes('peptid') || t.includes('horm') || t === 'gh' ||
+             t.includes('estetic') || t.includes('farmac') || t.includes('sarm') ||
              t.includes('outro') || t.includes('mais vendid') || t.includes('promo');
     });
 
@@ -110,7 +115,7 @@ exports.handler = async function(event) {
           const pid = String(p.id);
           if (allProducts[pid]) {
             allProducts[pid].categories.push(cat);
-            const priority = ['Peptídeos','Hormônios','GH','Outros','Mais Vendidos','Promoções'];
+            const priority = ['Peptídeos','Hormônios','GH','Estética','Farmácia','SARMS','Outros','Mais Vendidos','Promoções'];
             const current = allProducts[pid].category;
             const currentIdx = priority.indexOf(current);
             const newIdx = priority.indexOf(cat);
