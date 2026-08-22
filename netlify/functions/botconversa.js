@@ -608,6 +608,105 @@ function msgSorteio(){
     `Quer saber quantos números você já tem? Me manda o seu *CPF*. 😉`;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   MENSAGEM 3 PÓS-VENDA — números da sorte. Adicionado em 22/08/2026.
+   MESMA conta do GAS e do sistema de orçamento: base = total pago − frete.
+   session.total  = produtos (já com desconto) + frete
+   frete.valor    = frete final (0 quando é grátis / atacado)
+
+   TIMING: nesta altura do código o pedido AINDA NÃO foi para o GAS
+   (salvarPedidoGAS roda depois, no bloco "trabalho pesado"). Então o que o GAS
+   devolve é o acumulado ANTERIOR, e o total do ciclo é anterior + esta compra.
+   Se o webhook for reentregue e o GAS já tiver este pedido, ele aparece em
+   pedidos[] e a soma NÃO é feita de novo.
+
+   A consulta usa timeout curto: se o GAS demorar, a mensagem sai só com os
+   números desta compra. O recibo NUNCA fica esperando o GAS.
+   Para desligar junto com o resto: SORTEIO.ativa = false.
+   ══════════════════════════════════════════════════════════════════════════ */
+const SORTEIO_TIMEOUT_MS = 4000;
+
+// Consulta o acumulado do ciclo. Devolve o objeto do GAS ou null (nunca lança).
+async function consultarAcumuladoSorteio(cpf, ms){
+  const doc = String(cpf || '').replace(/\D/g, '');
+  if (doc.length !== 11) return null;
+  try {
+    const r = await fetchT(GAS_URL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'sorteio_consultar', cpf: doc })
+    }, ms || SORTEIO_TIMEOUT_MS);
+    const d = await r.json();
+    return (d && d.success !== false) ? d : null;
+  } catch (e) { return null; }
+}
+
+// Monta o texto. Pura e síncrona de propósito — `acum` é o retorno de
+// consultarAcumuladoSorteio (ou null). Devolve '' quando não há nada a dizer.
+function blocoSorteioPosVenda(totalPago, freteValor, nomeCliente, acum, numPedido){
+  if (!SORTEIO.ativa) return '';
+  const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+  const baseDesta = r2((Number(totalPago) || 0) - (Number(freteValor) || 0));
+  if (baseDesta <= 0) return '';
+
+  // Acumulado do ciclo = o que o GAS já tem + esta compra (se ainda não contada).
+  let baseTotal = baseDesta;
+  if (acum) {
+    const baseGas = Number(acum.base) || 0;
+    const chave   = x => String(x || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const alvo    = chave(numPedido);
+    let jaContou  = false;
+    const peds = acum.pedidos || [];
+    for (let i = 0; i < peds.length; i++){
+      if (alvo && chave(peds[i] && peds[i].pedido) === alvo) { jaContou = true; break; }
+    }
+    baseTotal = jaContou ? r2(baseGas) : r2(baseGas + baseDesta);
+    if (baseTotal < baseDesta) baseTotal = baseDesta;   // nunca mostra menos que a própria compra
+  }
+
+  const c        = sorteioCicloAtual();
+  const quando   = `*domingo, ${sorteioDDMM(c.sorteio)}, às 20h*`;
+  const nDesta   = Math.floor(baseDesta / SORTEIO.porNumero);
+  const nTotal   = Math.floor(baseTotal / SORTEIO.porNumero);
+  const sobra    = r2(baseTotal - nTotal * SORTEIO.porNumero);
+  const falta    = r2(SORTEIO.porNumero - sobra);
+  const brl      = v => Number(v || 0).toFixed(2).replace('.', ',');
+  const anterior = r2(baseTotal - baseDesta);
+  const primeiro = String(nomeCliente || '').trim().split(/\s+/)[0];
+
+  let t = `🍀 *SORTEIO QUINZENAL VITAFLOW*\n\n`;
+  if (primeiro) t += `Olá, *${primeiro}*! `;
+
+  if (nDesta > 0){
+    t += `Sua compra te deu *${nDesta} número${nDesta > 1 ? 's' : ''} da sorte*! 🎉\n\n`;
+    if (anterior > 0 && nTotal > nDesta){
+      t += `Somando com suas compras anteriores deste ciclo, você está com *${nTotal} números* no total. 🔥\n\n`;
+    }
+  } else if (nTotal > 0){
+    // A compra sozinha não fechou R$ 100, mas o acumulado do ciclo já tinha número.
+    t += `Esta compra somou *R$ ${brl(baseDesta)}* ao seu acumulado do ciclo — você está com `;
+    t += `*${nTotal} número${nTotal > 1 ? 's' : ''} da sorte*! 🎉\n\n`;
+  } else {
+    t += `Faltam apenas *R$ ${brl(falta)}* pro seu 1º número da sorte! 🎲\n\n`;
+    t += `A cada *R$ ${SORTEIO.porNumero} em produtos* você ganha um número e concorre a um `;
+    t += `*vale-compras de ${SORTEIO.premio} na VitaFlow* no sorteio de ${quando}, pela Loteria Federal. `;
+    t += `O acumulado vale até *${sorteioDDMM(c.fim)}*.\n`;
+  }
+
+  if (nTotal > 0){
+    t += `Você está concorrendo a um *vale-compras de ${SORTEIO.premio} na VitaFlow* no sorteio de ${quando}, pela Loteria Federal.\n`;
+    if (sobra > 0){
+      t += `\nE faltam apenas *R$ ${brl(falta)}* pro seu ${nTotal + 1}º número — o acumulado vale até `;
+      t += `*${sorteioDDMM(c.fim)}*, somando qualquer compra nova. 😏\n`;
+    }
+  }
+
+  t += `\n🔎 *Confira quando quiser:*\n${SORTEIO.link}\n`;
+  t += `Ou me manda seu *CPF* aqui mesmo que eu te falo na hora. 😉\n\n`;
+  t += `_Os números aparecem poucos segundos depois da confirmação do pagamento._\n\n`;
+  t += `Ninguém vê os números de ninguém — só você enxerga os seus. 🍀`;
+  return t;
+}
+
 // Resposta com os números do cliente.
 function msgMeusNumeros(d){
   const c = sorteioCicloAtual();
@@ -3823,10 +3922,18 @@ exports.handler = async (event) => {
         `💬 Teve algum problema? Fale com a gente pelo WhatsApp assim que identificar qualquer divergência e envie o vídeo da abertura junto com os detalhes do pedido. Faremos tudo ao nosso alcance para resolver! 💪\n\n` +
         `— *Equipe VitaFlow* 🧡`;
 
+      // Mensagem 3 — números da sorte (vazia quando a compra não gera nada).
+      // Vai ENTRE a confirmação e o aviso, pra ser lida logo depois do recibo.
+      // A consulta do acumulado tem timeout curto e falha em silêncio: se o GAS
+      // não responder, a mensagem sai só com os números DESTA compra.
+      const _acumSorteio = SORTEIO.ativa ? await consultarAcumuladoSorteio(coleta.cpf) : null;
+      const msg3 = blocoSorteioPosVenda(total, (frete && frete.valor) || 0, coleta.nome || '', _acumSorteio, num_pedido);
+
       // 1) ENTREGA O RECIBO PRIMEIRO, pelo canal DIRETO da API (não depende do webhook).
       //    Assim o cliente recebe o recibo + o aviso SEMPRE, mesmo que o trabalho pesado
       //    abaixo (GAS/Telegram) demore e o webhook estoure timeout.
-      const reciboEnviado = await enviarWhatsAppDireto(sid, [msg1, msg2]);
+      //    enviarWhatsAppDireto pula texto vazio sozinho, então msg3 vazia não atrapalha.
+      const reciboEnviado = await enviarWhatsAppDireto(sid, [msg1, msg3, msg2]);
 
       // 2) TRABALHO PESADO só DEPOIS do recibo já ter saído (tudo best-effort, não trava nada).
       if (num_pedido) {
@@ -3885,7 +3992,10 @@ exports.handler = async (event) => {
       await deleteSession(sid);
       // Se o recibo já saiu pelo canal direto, responde vazio (evita duplicar). Se o envio
       // direto FALHOU, cai no fallback da resposta síncrona do webhook.
-      return reciboEnviado ? respond('') : respond(msg1, msg2);
+      // No fallback síncrono, respond() só tem 3 slots e não pode deixar buraco no meio:
+      // compacta a lista antes de mandar.
+      const _fb = [msg1, msg3, msg2].filter(Boolean);
+      return reciboEnviado ? respond('') : respond(_fb[0] || '', _fb[1] || '', _fb[2] || '');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
