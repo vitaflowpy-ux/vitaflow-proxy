@@ -479,7 +479,7 @@ _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os prod
 const ADM_NUMEROS = [
   '5511911338515'   // ⚠️ CONFIRA/AJUSTE: números autorizados (só dígitos, com o 55)
 ];
-const ADM_SENHA = '123456';        // ⚠️ TROQUE esta senha
+const ADM_SENHA = 'vfadm2026';        // ⚠️ TROQUE esta senha
 
 function ehNumeroAdm(sid){
   const s = String(sid || '').replace(/\D/g, '');
@@ -2166,17 +2166,20 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   // descPromo já foi calculado acima (parcela dos itens em que a promo Dia dos Pais venceu).
   const descontoReais = descNormais;
   const totalComDesconto = Math.max(0, totalProd - descontoReais - descPromo + freteValorFinal - valeAbatido);
-  // Vale cobre 100% do pedido: o gateway não emite link de R$ 0.
+  // Vale cobre 100% do pedido: o gateway não emite link de R$ 0. O pedido é fechado
+  // direto, sem link — mesma regra do site (capture_method 'vale_integral').
   if (_cupomVale > 0 && totalComDesconto < 1) {
+    session.valeIntegral = true;
+    session.valeCodigo = cupomResultado.codigo;
+    session.valeDocId = cupomResultado.docId;
     return respond(
       `🎟️ *Seu vale-compras de R$ ${_cupomVale.toFixed(2).replace('.',',')} cobre o pedido inteiro!*\n\n` +
       `${resumoCarrinho(carrinho)}\n` +
       `🚚 ${frete.label || 'Frete'}: R$ ${(freteValorFinal).toFixed(2).replace('.',',')}\n` +
       `💰 Total: R$ ${(totalProd + freteValorFinal).toFixed(2).replace('.',',')}\n\n` +
-      `Só que o sistema de pagamento não consegue emitir uma cobrança de *R$ 0,00*. 😅\n\n` +
-      `Me manda uma mensagem que eu *finalizo esse pedido na mão* pra você, sem custo nenhum — ` +
-      `ou adicione mais algum produto se quiser aproveitar melhor o vale.\n\n` +
-      `_Digite *menu* para continuar comprando._`
+      `💰 *Total a pagar: R$ 0,00* — não precisa pagar nada! 🎉\n\n` +
+      `Digite *confirmar* que eu finalizo seu pedido agora mesmo.\n\n` +
+      `_Ou digite *menu* se quiser adicionar mais produtos e aproveitar melhor o vale._`
     );
   }
 
