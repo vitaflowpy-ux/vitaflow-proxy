@@ -472,6 +472,88 @@ Pode *misturar* os produtos da linha Gênesis — juntou 3, o GHK-Cu 100mg vai d
 _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos. 😉_`;
 
 // ══════════════════════════════════════════════════════════════════════════════
+// MODO ADM / PROGRAMADOR — Thiago testa a Athena e puxa protocolo/tabela na hora,
+// sem a trava de "só do que o cliente já comprou".
+// Ativação: mensagem tem que vir de um número da lista E trazer a senha.
+// ══════════════════════════════════════════════════════════════════════════════
+const ADM_NUMEROS = [
+  '5511911338515'   // ⚠️ CONFIRA/AJUSTE: números autorizados (só dígitos, com o 55)
+];
+const ADM_SENHA = '123456';        // ⚠️ TROQUE esta senha
+
+function ehNumeroAdm(sid){
+  const s = String(sid || '').replace(/\D/g, '');
+  return ADM_NUMEROS.some(n => String(n).replace(/\D/g, '') === s);
+}
+// "adm <senha>" — só entra se o número TAMBÉM estiver autorizado.
+function tentaEntrarAdm(sid, mensagem){
+  if (!ehNumeroAdm(sid)) return false;
+  const m = String(mensagem || '').trim().toLowerCase();
+  return m === 'adm ' + ADM_SENHA.toLowerCase() || m === ADM_SENHA.toLowerCase();
+}
+
+function msgAdmMenu(){
+  return `🔧 *MODO ADM* — Athena\n\n` +
+    `*tabela <produto>* — tabela de fracionamento de qualquer produto\n` +
+    `   _ex: tabela reta 120 zphc_\n\n` +
+    `*protocolo <produto>* — protocolo completo, sem precisar de CPF\n` +
+    `   _ex: protocolo tirzepatida 15mg_\n\n` +
+    `*tabelas* — lista todas as tabelas que eu tenho\n\n` +
+    `*promo* — mostra o que eu sei de promoção/sorteio agora\n\n` +
+    `*sair* — volta ao atendimento normal\n\n` +
+    `_Você está no modo ADM. Os clientes não têm acesso a isto._`;
+}
+
+// Lista todas as tabelas de fracionamento embutidas.
+async function msgAdmTabelas(){
+  const frac = await buscarFracionamento();
+  const chaves = Object.keys(frac || {});
+  if (!chaves.length) return `Não encontrei nenhuma tabela cadastrada.`;
+  const linhas = chaves.map((k, i) => `${i + 1}. *${(frac[k] && frac[k].titulo) || k}*\n   _slug:_ \`${k}\``);
+  return `📋 *TABELAS DE FRACIONAMENTO* — ${chaves.length} cadastradas\n\n` + linhas.join('\n');
+}
+
+// Tabela de um produto qualquer (sem trava de compra).
+async function msgAdmTabela(termo){
+  const nome = String(termo || '').trim();
+  if (!nome) return `Me diz o produto. _Ex: tabela reta 120 zphc_`;
+  const ts = await tabelasDoProduto(nome);
+  if (ts.length) return ts.join('\n\n');
+  // não casou pelo reconhecedor: tenta achar pelo título
+  const frac = await buscarFracionamento();
+  const alvo = _normNomeProd(nome);
+  const achados = Object.keys(frac).filter(k => {
+    const t = _normNomeProd((frac[k] && frac[k].titulo) || k);
+    return alvo.split(/\s+/).filter(Boolean).every(w => t.indexOf(w) >= 0);
+  });
+  if (achados.length === 1){
+    const it = frac[achados[0]];
+    return '💉 *FRACIONAMENTO — ' + (it.titulo || achados[0]) + '*\n' + it.texto;
+  }
+  if (achados.length > 1){
+    return `Achei ${achados.length} tabelas com "${nome}":\n\n` +
+      achados.map((k, i) => `${i + 1}. *${(frac[k] && frac[k].titulo) || k}*`).join('\n') +
+      `\n\n_Manda mais específico, ou use o slug: *tabela <slug>*_`;
+  }
+  return `Não tenho tabela pra "${nome}". Use *tabelas* pra ver a lista completa.`;
+}
+
+// Protocolo de qualquer produto — dispara a mesma IA do pós-venda, sem exigir CPF.
+async function admProtocolo(sid, termo){
+  const nome = String(termo || '').trim();
+  if (!nome) return `Me diz o produto. _Ex: protocolo tirzepatida 15mg_`;
+  const tabelas = await montarTabelas([nome]);
+  dispararIAProtocolo(sid, [nome], tabelas);
+  return `💪 Montando o *protocolo de ${nome}*…\n\nA IA vai mandar aqui em seguida (leva alguns segundos).\n\n_Modo ADM: sem trava de CPF._`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CUPOM VALE-COMPRAS — abate PRODUTOS + FRETE, até o valor do vale.
+// Sem troco: gastou menos, perde a diferença. Gastou mais, paga o resto.
+// ══════════════════════════════════════════════════════════════════════════════
+function ehCupomVale(tipo){ return String(tipo || '') === 'vale'; }
+
+// ══════════════════════════════════════════════════════════════════════════════
 // SORTEIO QUINZENAL — divulgação + consulta dos números pelo CPF
 // Ligado em 22/08/2026. Pra desligar: ativa:false (some de tudo: menu, IA e texto).
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1944,19 +2026,28 @@ async function validarCupom(codigo, subtotalProdutos) {
     if (!ativo) return { ok:false, motivo:'Este cupom está inativo.' };
     if (tipoVal === 'prazo' && expiraStr && new Date(expiraStr) < new Date()) return { ok:false, motivo:'Este cupom expirou.' };
     if (tipoVal === 'unico' && usosAtual >= 1) return { ok:false, motivo:'Este cupom já foi utilizado.' };
+    // uso único COM prazo: as duas regras juntas. (Faltava aqui — o site já tratava,
+    // então pela Athena o cupom valia para sempre e podia ser usado várias vezes.)
+    if (tipoVal === 'unico_prazo') {
+      if (expiraStr && new Date(expiraStr) < new Date()) return { ok:false, motivo:'Este cupom expirou.' };
+      if (usosAtual >= 1) return { ok:false, motivo:'Este cupom já foi utilizado.' };
+    }
     if (tipoVal === 'usos' && maxUsos > 0 && usosAtual >= maxUsos) return { ok:false, motivo:'Este cupom atingiu o limite de usos.' };
     if (minPed > 0 && subtotalProdutos < minPed) return { ok:false, motivo:`Pedido mínimo de R$ ${minPed.toFixed(2).replace('.',',')} para este cupom.` };
     let descontoReais = 0;
     if (tipo === 'pct') { descontoReais = subtotalProdutos * (valor/100); if (maxDesc > 0) descontoReais = Math.min(descontoReais, maxDesc); }
+    else if (tipo === 'vale') { descontoReais = Math.min(valor, subtotalProdutos); }  // o frete entra depois, no fechamento
     else { descontoReais = Math.min(valor, subtotalProdutos); }
     const descTxt = tipo === 'frete'
       ? (valor === 0 ? 'Frete Grátis' : `R$ ${valor.toFixed(2).replace('.',',')} off no frete`)
+      : tipo === 'vale' ? `vale-compras de R$ ${valor.toFixed(2).replace('.',',')}`
       : tipo === 'pct' ? `${valor}% off` : `R$ ${valor.toFixed(2).replace('.',',')} off`;
     // frete grátis: tipo='frete', valor=0 → grátis total; valor>0 → desconto fixo no frete
     const freteGratis = tipo === 'frete' && valor === 0;
     const descontoFrete = tipo === 'frete' ? valor : 0;
     return { ok:true, docId: found.id, descontoReais, descTxt, codigo: cod,
-             tipo, pct: valor, maxDesc, valorFixo: valor, freteGratis, descontoFrete };
+             tipo, pct: valor, maxDesc, valorFixo: valor, freteGratis, descontoFrete,
+             valorVale: (tipo === 'vale' ? valor : 0) };
   } catch { return { ok:false, motivo:'Erro ao verificar cupom. Tente novamente.' }; }
 }
 async function incrementarUsoCupom(docId) {
@@ -1990,7 +2081,8 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const _promoAtiva = promoDobroAtiva();
   const _cupomOk = !!(cupomResultado && cupomResultado.ok);
   const _cupomPct = (_cupomOk && cupomResultado.tipo === 'pct') ? (cupomResultado.pct || 0) : 0;
-  const _cupomFixo = (_cupomOk && cupomResultado.tipo !== 'pct' && cupomResultado.tipo !== 'frete')
+  const _cupomVale = (_cupomOk && cupomResultado.tipo === 'vale') ? (cupomResultado.valorVale || cupomResultado.valorFixo || 0) : 0;
+  const _cupomFixo = (_cupomOk && cupomResultado.tipo !== 'pct' && cupomResultado.tipo !== 'frete' && cupomResultado.tipo !== 'vale')
     ? (cupomResultado.valorFixo || cupomResultado.descontoReais || 0) : 0;
 
   let descPromo = 0;        // soma dos itens em que a PROMO (10%) venceu
@@ -2054,11 +2146,41 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     }
   }
 
+  // ── VALE-COMPRAS: abate PRODUTOS + FRETE, até o valor do vale. ──
+  // Sem troco: gastou menos que o vale, perde a diferença; gastou mais, paga o resto.
+  // Não acumula com nada (nem os 3% Athena, nem promo) — o vale já é o benefício.
+  let valeAbatido = 0, linhaVale = '';
+  if (_cupomVale > 0) {
+    const baseVale = totalProd + freteValorFinal;          // produto + frete
+    valeAbatido = Math.min(_cupomVale, baseVale);
+    descNormais = 0; descPromo = 0; labelNormais = '';     // o vale substitui os outros
+    cupomDocId = cupomResultado.docId;
+    cupomCodigo = cupomResultado.codigo;
+    const sobra = _cupomVale - valeAbatido;
+    linhaVale = `🎟️ *Vale-compras ${cupomResultado.codigo}:* -R$ ${valeAbatido.toFixed(2).replace('.',',')}\n`;
+    if (sobra > 0) {
+      linhaVale += `_Seu vale é de R$ ${_cupomVale.toFixed(2).replace('.',',')} e o pedido deu R$ ${baseVale.toFixed(2).replace('.',',')} — a diferença de R$ ${sobra.toFixed(2).replace('.',',')} não volta como troco (uso único). Se quiser, adicione mais produtos pra aproveitar tudo. 😉_\n`;
+    }
+  }
+
   // descPromo já foi calculado acima (parcela dos itens em que a promo Dia dos Pais venceu).
   const descontoReais = descNormais;
-  const totalComDesconto = totalProd - descontoReais - descPromo + freteValorFinal;
+  const totalComDesconto = Math.max(0, totalProd - descontoReais - descPromo + freteValorFinal - valeAbatido);
+  // Vale cobre 100% do pedido: o gateway não emite link de R$ 0.
+  if (_cupomVale > 0 && totalComDesconto < 1) {
+    return respond(
+      `🎟️ *Seu vale-compras de R$ ${_cupomVale.toFixed(2).replace('.',',')} cobre o pedido inteiro!*\n\n` +
+      `${resumoCarrinho(carrinho)}\n` +
+      `🚚 ${frete.label || 'Frete'}: R$ ${(freteValorFinal).toFixed(2).replace('.',',')}\n` +
+      `💰 Total: R$ ${(totalProd + freteValorFinal).toFixed(2).replace('.',',')}\n\n` +
+      `Só que o sistema de pagamento não consegue emitir uma cobrança de *R$ 0,00*. 😅\n\n` +
+      `Me manda uma mensagem que eu *finalizo esse pedido na mão* pra você, sem custo nenhum — ` +
+      `ou adicione mais algum produto se quiser aproveitar melhor o vale.\n\n` +
+      `_Digite *menu* para continuar comprando._`
+    );
+  }
 
-  let linhasDesc = '';
+  let linhasDesc = linhaVale;
   if (descNormais > 0) {
     linhasDesc += `🏷️ ${labelNormais}: -R$ ${descNormais.toFixed(2).replace('.',',')}\n`;
   }
@@ -2709,7 +2831,7 @@ exports.handler = async (event) => {
     }
 
     // ── SORTEIO ── "quantos números eu tenho", "sorteio", "meus números" ──
-    if (!emCheckout && !['AGUARDAR_COMPROVANTE','COLETA_DADOS','PROTOCOLO'].includes(state) && ehIntencaoSorteio(n)) {
+    if (!emCheckout && state !== 'ADM' && !['AGUARDAR_COMPROVANTE','COLETA_DADOS','PROTOCOLO'].includes(state) && ehIntencaoSorteio(n)) {
       if (ehCPFsolto(mensagem)) {
         const _s = await consultarSorteioGAS(mensagem);
         await saveSession(sid, { ...session, state:'MENU' });
@@ -2733,10 +2855,33 @@ exports.handler = async (event) => {
       }
     }
 
+    // ── MODO ADM ── só do número autorizado E com a senha ──
+    if (tentaEntrarAdm(sid, mensagem)) {
+      await saveSession(sid, { ...session, state:'ADM' });
+      return respond(msgAdmMenu());
+    }
+    if (state === 'ADM') {
+      const raw = String(mensagem || '').trim();
+      const low = raw.toLowerCase();
+      if (/^(sair|menu|voltar|exit)$/.test(low)) {
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond(`✅ Saí do modo ADM. Atendimento normal de volta.\n\n` + buildMenuPrincipal());
+      }
+      if (/^(tabelas|listar|lista)$/.test(low)) return respond(await msgAdmTabelas());
+      if (/^promo$/.test(low)) {
+        return respond(`🔎 *O QUE EU SEI DE PROMOÇÃO AGORA*\n_(é exatamente isto que vai pra IA)_\n\n` + contextoPromo());
+      }
+      let m = raw.match(/^tabela\s+(.+)$/i);
+      if (m) return respond(await msgAdmTabela(m[1]));
+      m = raw.match(/^protocolo\s+(.+)$/i);
+      if (m) return respond(await admProtocolo(sid, m[1]));
+      return respond(msgAdmMenu());
+    }
+
     // ── RASTREIO universal ── cliente manda CPF, nº de pedido ou pede rastreio em QUALQUER menu ──
     // Trava: nunca em estados de pagamento. E não rouba número simples de menu (1-2 dígitos puros).
     const ehNumeroSimplesMenu = /^\d{1,2}$/.test(n.trim());
-    if (!['AGUARDAR_COMPROVANTE','COLETA_DADOS','RASTREAR','PROTOCOLO','SORTEIO'].includes(state)
+    if (!['AGUARDAR_COMPROVANTE','COLETA_DADOS','RASTREAR','PROTOCOLO','SORTEIO','ADM'].includes(state)
         && !emCheckout
         && !ehNumeroSimplesMenu
         && ehIntencaoRastreio(n, mensagem)) {
