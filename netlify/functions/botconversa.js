@@ -471,6 +471,111 @@ Pode *misturar* os produtos da linha Gênesis — juntou 3, o GHK-Cu 100mg vai d
 
 _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos. 😉_`;
 
+// ══════════════════════════════════════════════════════════════════════════════
+// SORTEIO QUINZENAL — divulgação + consulta dos números pelo CPF
+// Ligado em 22/08/2026. Pra desligar: ativa:false (some de tudo: menu, IA e texto).
+// ══════════════════════════════════════════════════════════════════════════════
+const SORTEIO = {
+  ativa: true,
+  link: 'https://vitaflowoficial.com/pages/sorteio',
+  premio: 'R$ 1.000',
+  porNumero: 100
+};
+
+// Ciclo vigente — MESMA conta do GAS e da página. Nunca precisa trocar data.
+function sorteioCicloAtual(){
+  const C1i = new Date(2026, 7, 22, 0, 0, 0);   // sáb 22/08/2026 — abre o C-01
+  const A   = new Date(2026, 8, 6, 0, 0, 0);    // dom 06/09/2026 — abre o C-02
+  const hoje = new Date();
+  if (hoje < A) return { ini: C1i, fim: new Date(2026, 8, 5, 23, 59, 59), sorteio: A };
+  const k = Math.floor((hoje - A) / (14 * 86400000));
+  const ini = new Date(A.getTime() + k * 14 * 86400000);
+  return { ini, fim: new Date(ini.getTime() + 14 * 86400000 - 1000), sorteio: new Date(ini.getTime() + 14 * 86400000) };
+}
+function sorteioDDMM(d){ const p = n => String(n).padStart(2,'0'); return `${p(d.getDate())}/${p(d.getMonth()+1)}`; }
+function sorteioDiasRestantes(){
+  const c = sorteioCicloAtual();
+  const ms = c.fim.getTime() - Date.now();
+  if (ms <= 0) return 0;
+  return Math.max(1, Math.ceil(ms / 86400000));
+}
+
+// Consulta os números do CPF no GAS (mesma URL que o rastreio já usa).
+async function consultarSorteioGAS(cpf){
+  try {
+    const r = await fetch(GAS_URL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'sorteio_consultar', cpf: String(cpf||'').replace(/\D/g,'') })
+    });
+    const d = await r.json();
+    return (d && d.success) ? d : null;
+  } catch { return null; }
+}
+
+// Texto de divulgação (usado no menu e quando o cliente pergunta do sorteio).
+function msgSorteio(){
+  const c = sorteioCicloAtual();
+  const dias = sorteioDiasRestantes();
+  return `🎲 *SORTEIO QUINZENAL VITAFLOW*\n\n` +
+    `A cada *R$ ${SORTEIO.porNumero} em produtos* você ganha *1 número da sorte* — e concorre a um ` +
+    `*vale-compras de ${SORTEIO.premio} na VitaFlow*! 🎁\n\n` +
+    `📅 *Ciclo atual:* ${sorteioDDMM(c.ini)} a ${sorteioDDMM(c.fim)}` +
+    (dias > 0 ? ` _(fecha em ${dias} ${dias === 1 ? 'dia' : 'dias'})_` : '') + `\n` +
+    `🍀 *Sorteio:* domingo ${sorteioDDMM(c.sorteio)} às 20h, pela *Loteria Federal*\n\n` +
+    `_Vale a soma de todas as suas compras no período — não precisa ser num pedido só._\n\n` +
+    `Quer saber quantos números você já tem? Me manda o seu *CPF*. 😉`;
+}
+
+// Resposta com os números do cliente.
+function msgMeusNumeros(d){
+  const c = sorteioCicloAtual();
+  const dias = sorteioDiasRestantes();
+  const nums = (d && d.numeros) || [];
+  const base = Number((d && d.base) || 0);
+
+  if (!nums.length) {
+    if (base > 0) {
+      const falta = 100 - (base % 100);
+      return `🎲 *Seus números da sorte*\n\n` +
+        `Você já comprou *R$ ${reais(base)}* neste ciclo — faltam só *R$ ${reais(falta)}* pro seu ` +
+        `*primeiro número*! 🍀\n\n` +
+        `Quer que eu monte um pedidinho pra fechar essa faixa? É só me dizer o produto. 😉\n\n` +
+        `_Ciclo até ${sorteioDDMM(c.fim)} · sorteio domingo ${sorteioDDMM(c.sorteio)} às 20h_`;
+    }
+    return `🎲 *Seus números da sorte*\n\n` +
+      `Ainda não encontrei compras suas neste ciclo (${sorteioDDMM(c.ini)} a ${sorteioDDMM(c.fim)}).\n\n` +
+      `A partir de *R$ ${SORTEIO.porNumero}* em produtos você já ganha seu *primeiro número* e concorre ao ` +
+      `*vale-compras de ${SORTEIO.premio}*! 🎁\n\n` +
+      `Quer ver os produtos? Digite *menu*. 😊`;
+  }
+
+  const sobra = Math.round((base - Math.floor(base/100) * 100) * 100) / 100;
+  const falta = Math.round((100 - sobra) * 100) / 100;
+  const lista = nums.map(x => `*${x}*`).join(' · ');
+  let msg = `🎲 *Seus números da sorte*\n\n`;
+  if (d.nome) msg += `Olá, *${d.nome}*! `;
+  msg += `Você tem *${nums.length} ${nums.length === 1 ? 'número' : 'números'}* neste ciclo:\n\n${lista}\n\n`;
+  msg += `💰 Compras no ciclo: *R$ ${reais(base)}*\n`;
+  msg += `🎯 Faltam *R$ ${reais(falta)}* pro seu *${nums.length + 1}º número*!\n\n`;
+  msg += `📅 Ciclo até *${sorteioDDMM(c.fim)}*` + (dias > 0 ? ` _(${dias} ${dias === 1 ? 'dia' : 'dias'})_` : '') + `\n`;
+  msg += `🍀 Sorteio *domingo ${sorteioDDMM(c.sorteio)} às 20h* pela Loteria Federal\n\n`;
+  msg += `_Boa sorte!_ 🤞`;
+  return msg;
+}
+
+// Reconhece a intenção. Evita roubar "número do pedido" (isso é rastreio).
+function ehIntencaoSorteio(n){
+  if (!SORTEIO.ativa) return false;
+  if (n.includes('numero do pedido') || n.includes('numero de pedido')) return false;
+  if (n.includes('sorteio') || n.includes('sortear') || n.includes('sorteado')) return true;
+  if (n.includes('numero da sorte') || n.includes('numeros da sorte')) return true;
+  if (n.includes('meus numeros') || n.includes('meu numero da sorte')) return true;
+  if (n.includes('vale compras') || n.includes('vale-compras')) return true;
+  if (n.includes('bilhete')) return true;
+  if (n.includes('quantos') && n.includes('numero')) return true;
+  return false;
+}
+
 // Monta o contexto REAL de promoção/desconto pra IA assíncrona (fonte única = este arquivo).
 // A IA só fala de promoção com base no que estiver LIGADO aqui. Nada inventado.
 function contextoPromo(){
@@ -494,6 +599,11 @@ function contextoPromo(){
   }
   if (PROMO_GENESIS.ativa) {
     linhas.push('PROMOÇÃO DE LANÇAMENTO ATIVA AGORA: linha *Gênesis Peptídeos* — "COMPRE 2, LEVE 3": na compra de 2 peptídeos da linha Gênesis, o 3º é GRÁTIS (qualquer produto da linha, pode misturar). Frete grátis acima de R$1.000 com o cupom FRETEZERO. O cliente escolhe o brinde no fechamento (o sistema pergunta). Os produtos são da marca *Gênesis Peptídeos* — NÃO confunda com "Biogenesis", que é outra marca. Pra mostrar a linha, abra a lista buscando "genesis peptideos".');
+  }
+  if (SORTEIO.ativa) {
+    const _c = sorteioCicloAtual();
+    const _d = sorteioDiasRestantes();
+    linhas.push(`SORTEIO QUINZENAL ATIVO AGORA: a cada R$ ${SORTEIO.porNumero} pagos EM PRODUTOS dentro do ciclo, o cliente ganha 1 NÚMERO DA SORTE e concorre a um VALE-COMPRAS DE ${SORTEIO.premio} na VitaFlow. Ciclo atual: ${sorteioDDMM(_c.ini)} a ${sorteioDDMM(_c.fim)}${_d > 0 ? ' (fecha em ' + _d + ' dia(s))' : ''}. O sorteio é no domingo ${sorteioDDMM(_c.sorteio)} às 20h, pela LOTERIA FEDERAL — a VitaFlow não escolhe o ganhador. Vale a SOMA de todas as compras do cliente no período (não precisa ser num pedido só) e conta o valor PAGO em produtos, já com desconto; FRETE NÃO CONTA para gerar número. Só pedidos com pagamento confirmado. Os números ZERAM a cada ciclo. O prêmio é vale-compras (NÃO é dinheiro) e vale para produtos e frete. O cliente consulta os próprios números pelo CPF — aqui comigo ou em ${SORTEIO.link}. SEMPRE que o cliente perguntar de promoção/desconto/sorteio, DIVULGUE o sorteio. Se ele perguntar quantos números tem, peça o CPF.`);
   }
   if (linhas.length === 1) linhas.push('Não há promoção relâmpago nem lançamento com desconto especial ativos no momento (só o benefício padrão acima). NÃO invente promoções.');
   return linhas.join('\n');
@@ -540,6 +650,9 @@ function msgPromoAtual(){
   }
   if (promoFreteAtiva()) {
     return MSG_PROMO_FRETE;
+  }
+  if (SORTEIO.ativa) {
+    return msgSorteio() + `\n\n_E comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
   }
   return `No momento não temos promoção especial ativa, mas comprando comigo você já ganha *3% de desconto* em todos os produtos! 😊`;
 }
@@ -2595,10 +2708,35 @@ exports.handler = async (event) => {
       return respond(msgGrupoVip());
     }
 
+    // ── SORTEIO ── "quantos números eu tenho", "sorteio", "meus números" ──
+    if (!emCheckout && !['AGUARDAR_COMPROVANTE','COLETA_DADOS','PROTOCOLO'].includes(state) && ehIntencaoSorteio(n)) {
+      if (ehCPFsolto(mensagem)) {
+        const _s = await consultarSorteioGAS(mensagem);
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond(_s ? msgMeusNumeros(_s)
+          : `😕 Não consegui consultar seus números agora. Tenta de novo em instantes, ou veja em ${SORTEIO.link}`);
+      }
+      await saveSession(sid, { ...session, state:'SORTEIO' });
+      return respond(msgSorteio());
+    }
+
+    // ── SORTEIO: cliente já está no estado e mandou o CPF ──
+    if (state === 'SORTEIO') {
+      if (ehCPFsolto(mensagem)) {
+        const _s = await consultarSorteioGAS(mensagem);
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond(_s ? msgMeusNumeros(_s)
+          : `😕 Não consegui consultar seus números agora. Tenta de novo em instantes, ou veja em ${SORTEIO.link}`);
+      }
+      if (!['menu','voltar','0'].includes(n.trim())) {
+        return respond(`Me manda o seu *CPF* (só os números) que eu confiro quantos números da sorte você já tem. 😊\n\n_Digite *menu* para voltar._`);
+      }
+    }
+
     // ── RASTREIO universal ── cliente manda CPF, nº de pedido ou pede rastreio em QUALQUER menu ──
     // Trava: nunca em estados de pagamento. E não rouba número simples de menu (1-2 dígitos puros).
     const ehNumeroSimplesMenu = /^\d{1,2}$/.test(n.trim());
-    if (!['AGUARDAR_COMPROVANTE','COLETA_DADOS','RASTREAR','PROTOCOLO'].includes(state)
+    if (!['AGUARDAR_COMPROVANTE','COLETA_DADOS','RASTREAR','PROTOCOLO','SORTEIO'].includes(state)
         && !emCheckout
         && !ehNumeroSimplesMenu
         && ehIntencaoRastreio(n, mensagem)) {
