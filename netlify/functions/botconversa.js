@@ -2385,7 +2385,12 @@ async function enviarWhatsAppDireto(sid, textos){
 // se o BotConversa REENTREGAR a resposta do webhook (o que duplicava o link de pagamento), a
 // reentrega mostra NADA — a mensagem real já saiu uma única vez pela API direta. Fallback: se
 // o envio direto falhar, cai na resposta síncrona normal.
-async function responderDireto(sid, texto, respond){
+async function responderDireto(sid, texto, respond, assistente){
+  // Na Stella (companhia VitaMK) o envio direto NÃO serve: a BOTCONVERSA_API_KEY é da
+  // companhia Athena, então ele acha o contato na Athena e entrega pelo número errado
+  // (ou devolve vazio) — o link some na conversa da Stella. Nessa trilha respondemos
+  // pela resposta SÍNCRONA do webhook (é como o RESUMO chega e funciona).
+  if (assistente && assistente !== 'Athena') return respond(texto);
   const ok = await enviarWhatsAppDireto(sid, [texto]);
   return ok ? respond('') : respond(texto);
 }
@@ -2478,7 +2483,7 @@ async function _seguirAposObs(session, sid, respond) {
   if (session.obsReturn === 'atacado') return await mostrarResumoAtacado(session, sid, respond);
   return await mostrarResumoPedido(session, sid, respond);
 }
-async function gerarLinkPedido(session, sid, respond) {
+async function gerarLinkPedido(session, sid, respond, assistente) {
   const carrinho = session.carrinho || [];
   const frete = session.freteSelecionado || {};
   const uf    = session.estadoCliente || '';
@@ -2545,7 +2550,7 @@ async function gerarLinkPedido(session, sid, respond) {
   await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
   return await responderDireto(sid, link
     ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão — é só escolher lá. (Quer ver os valores das parcelas antes? Digite *parcelar*.)_\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
-    : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond);
+    : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond, assistente);
 }
 // Leitor determinístico de reserva — funciona mesmo se a IA falhar.
 // Detecta CPF (11 dígitos), CEP (8 dígitos / 00000-000), telefone (10-11 díg.), email,
@@ -3119,7 +3124,7 @@ exports.handler = async (event) => {
         if (sub < ATACADO_MIN) { await saveSession(sid, { ...session, state:'ATK_CART' }); return respond(`O pedido está abaixo de R$ 3.000 (faltam R$ ${faltaAtk(sub).toFixed(2).replace('.', ',')}). Adicione mais um produto pra fechar. 😊`); }
         // Reutiliza o gerador de link do varejo, com carrinho de ATACADO, frete grátis e SEM desconto/cupom.
         const sessAtk = { ...session, carrinho: cart, freteSelecionado: { label: 'Grátis (atacado)', valor: 0 }, estadoCliente: '', descontoReais: 0, descontoLabel: '', descontoTipo: 'atacado', total: sub, cupomDocId: null, cupomCodigo: null, brinde: null, atacado: true, carrinhoAtk: [] };
-        return await gerarLinkPedido(sessAtk, sid, respond);
+        return await gerarLinkPedido(sessAtk, sid, respond, nomeAssistente);
       }
       return respond('Digite *1* pra gerar o link de pagamento ou *2* pra voltar.');
     }
@@ -3723,7 +3728,7 @@ exports.handler = async (event) => {
           await saveSession(sid, { ...session, state:'ESCOLHER_BRINDE', brindeOferecido: true });
           return respond(msgPerguntaBrinde(carrinho));
         }
-        return await gerarLinkPedido(session, sid, respond);
+        return await gerarLinkPedido(session, sid, respond, nomeAssistente);
       }
       // Quer simular PARCELAMENTO na hora de fechar → mostra e mantém o pedido pronto.
       if (ehPedidoParcelamento(mensagem)) {
@@ -3941,7 +3946,11 @@ exports.handler = async (event) => {
       //    Assim o cliente recebe o recibo + o aviso SEMPRE, mesmo que o trabalho pesado
       //    abaixo (GAS/Telegram) demore e o webhook estoure timeout.
       //    enviarWhatsAppDireto pula texto vazio sozinho, então msg3 vazia não atrapalha.
-      const reciboEnviado = await enviarWhatsAppDireto(sid, [msg1, msg3, msg2]);
+      // Na Stella (VitaMK), o envio direto usa a key da Athena e não entrega aqui — força
+      // o fallback síncrono (respond) logo abaixo, que responde na conversa certa.
+      const reciboEnviado = (nomeAssistente && nomeAssistente !== 'Athena')
+        ? false
+        : await enviarWhatsAppDireto(sid, [msg1, msg3, msg2]);
 
       // 2) TRABALHO PESADO só DEPOIS do recibo já ter saído (tudo best-effort, não trava nada).
       if (num_pedido) {
