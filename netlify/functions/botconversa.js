@@ -2732,6 +2732,13 @@ exports.handler = async (event) => {
   const headers = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json' };
   if (event.httpMethod === 'OPTIONS') return { statusCode:200, headers, body:'' };
   if (event.httpMethod !== 'POST')    return { statusCode:405, headers, body: JSON.stringify({error:'Method not allowed'}) };
+  // ── Nome do assistente por numero (multi-marca) ───────────────────────────────
+  // Padrao "Athena". Quando a requisicao vier com "assistente" (ex.: disparo pelo
+  // numero Vitaflow manda assistente:"Stella"), o nome e trocado SOMENTE no texto que
+  // sai pro cliente (respond/transferir) — nada tecnico (funcoes, constantes, valores
+  // gravados como descontoTipo:'athena') e afetado.
+  let nomeAssistente = 'Athena';
+  const aplicarNome = (t) => (nomeAssistente && nomeAssistente !== 'Athena' && t) ? String(t).replace(/Athena/g, nomeAssistente) : t;
   const respond = (r, r2='', r3='') => {
     // Se a mensagem única for grande demais (ex.: lista de 73 produtos), o WhatsApp recusa
     // e mostra "Erro ao enviar mensagem". Divide automaticamente em até 3 mensagens.
@@ -2743,12 +2750,13 @@ exports.handler = async (event) => {
         ? p[2] + '\n\n_Tem mais produtos aqui! Se não achar, me manda o *nome* do que procura que eu filtro pra você. 😊_'
         : (p[2] || '');
     }
-    return { statusCode:200, headers, body: JSON.stringify({ resposta:r, resposta2:r2, resposta3:r3, transferir:false }) };
+    return { statusCode:200, headers, body: JSON.stringify({ resposta:aplicarNome(r), resposta2:aplicarNome(r2), resposta3:aplicarNome(r3), transferir:false }) };
   };
-  const transferir = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:r, resposta2:'', resposta3:'', transferir:true }) });
+  const transferir = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:aplicarNome(r), resposta2:'', resposta3:'', transferir:true }) });
 
   try {
     const body = JSON.parse(event.body || '{}');
+    nomeAssistente = ((body.assistente || body.nome_assistente || 'Athena') + '').trim() || 'Athena';
     const mensagem = (body.mensagem || body.message || body.texto || '').trim();
     const rawId = body.phone || body.subscriber_id || 'default';
     const sid = rawId.replace(/\D/g,'').replace(/^0+/,'').replace(/^55(\d{10,11})$/,'55$1') || rawId;
