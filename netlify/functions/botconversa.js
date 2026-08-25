@@ -32,11 +32,16 @@ const RECIBO_BASE     = 'https://melodious-pony-e4f4f5.netlify.app/recibo-auto.h
 // (background function) e ela RESPONDE sozinha via BotConversa. Aqui só disparamos
 // (retorna rápido, sem timeout); a resposta chega em seguida como mensagem empurrada.
 const ATHENA_IA_URL = process.env.ATHENA_IA_URL || 'https://vitaflow-proxy.netlify.app/.netlify/functions/athena-ia-background';
+// Assistente da REQUISIÇÃO atual (Athena por padrão; vira "Stella" quando o disparo vem do
+// número Vitaflow/VitaMK com assistente:"Stella"). É setado no início do handler. No Lambda
+// cada invocação roda isolada, então esta variável de módulo é segura (não há concorrência
+// dentro do mesmo container). A IA assíncrona usa isso pra responder pela companhia certa.
+let ASSISTENTE_ATUAL = 'Athena';
 async function dispararIA(phone, mensagem, contexto){
   try {
     await fetch(ATHENA_IA_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ phone: phone, mensagem: mensagem, promoContext: contextoPromo(), contexto: contexto || '' })
+      body: JSON.stringify({ phone: phone, mensagem: mensagem, promoContext: contextoPromo(), contexto: contexto || '', assistente: ASSISTENTE_ATUAL })
     });
   } catch (e) { /* se falhar o disparo, o ack síncrono já foi enviado */ }
 }
@@ -68,7 +73,7 @@ async function dispararIAProtocolo(phone, produtos, tabelas){
   try {
     await fetch(ATHENA_IA_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ phone: phone, tipo: 'protocolo', produtos: produtos || [], tabelas: tabelas || '' })
+      body: JSON.stringify({ phone: phone, tipo: 'protocolo', produtos: produtos || [], tabelas: tabelas || '', assistente: ASSISTENTE_ATUAL })
     });
   } catch (e) { /* pós-venda: se falhar o disparo, não afeta o pedido já concluído */ }
 }
@@ -453,6 +458,14 @@ function promoAtiva() {
   return (PROMO_RELAMPAGO.ativa && PROMO_RELAMPAGO.produtos && PROMO_RELAMPAGO.produtos.length) ? PROMO_RELAMPAGO : null;
 }
 function reais(n) { return Number(n || 0).toLocaleString('pt-BR'); }
+// Formata o CPF no padrão 000.000.000-00. Só formata quando há EXATAMENTE 11 dígitos
+// (aceita o cliente digitar com ou sem pontuação); se não for 11 dígitos, devolve o
+// que veio (não corrompe/inventa dado).
+function formatarCPF(cpf){
+  var d = String(cpf == null ? '' : cpf).replace(/\D/g, '');
+  if (d.length !== 11) return String(cpf == null ? '' : cpf).trim();
+  return d.slice(0,3) + '.' + d.slice(3,6) + '.' + d.slice(6,9) + '-' + d.slice(9);
+}
 
 // ── PROMO_ANUNCIO: desligado (Namorados encerrado). A promoção atual é a PROMO_PRODUTO (opção 8). ──
 const PROMO_ANUNCIO = { ativa: false };
@@ -2547,7 +2560,7 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
         valor: totalFinal.toFixed(2).replace('.',','), phone: sid })
     });
   } catch {}
-  await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
+  await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, link: link || '', cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
   return await responderDireto(sid, link
     ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão — é só escolher lá. (Quer ver os valores das parcelas antes? Digite *parcelar*.)_\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
     : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond, assistente);
@@ -2762,6 +2775,7 @@ exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || '{}');
     nomeAssistente = ((body.assistente || body.nome_assistente || 'Athena') + '').trim() || 'Athena';
+    ASSISTENTE_ATUAL = nomeAssistente; // deixa a IA assíncrona responder pela companhia certa
     const mensagem = (body.mensagem || body.message || body.texto || '').trim();
     const rawId = body.phone || body.subscriber_id || 'default';
     const sid = rawId.replace(/\D/g,'').replace(/^0+/,'').replace(/^55(\d{10,11})$/,'55$1') || rawId;
@@ -2837,6 +2851,17 @@ exports.handler = async (event) => {
         return await irParaCheckout(session, sid, respond);
       }
     }
+    // "carrinho" (palavra solta, ou o erro comum "carinho") SEMPRE mostra o carrinho —
+    // cheio OU vazio. Antes caía na IA ("Deixa eu ver isso pra você") e travava,
+    // justamente a palavra que o sistema manda o cliente digitar.
+    if ((/^\s*carrinhos?\s*$/.test(n) || n === 'carinho') && !_naoInterferir) {
+      if (_temCarrinho) {
+        await saveSession(sid, { ...session, state:'CARRINHO' });
+        return respond(msgCarrinhoMenu(session.carrinho));
+      }
+      await saveSession(sid, { ...session, state:'TRIAGEM' });
+      return respond('🛒 Seu carrinho está *vazio* por enquanto.\n\n' + buildTriagem());
+    }
 
     // ── LEAD FRIO: clique no botão "Sim, quero conhecer" do template aprovado pela Meta ──
     // O WhatsApp envia o texto do botão como mensagem. Detecta, apresenta a VitaFlow e abre o menu.
@@ -2855,7 +2880,7 @@ exports.handler = async (event) => {
       if (msg) return respond(msg);
       if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
       await saveSession(sid, { ...session, state:'MENU' });
-      return respond(msgPromoAtual());
+      return respond(msgPromoAtual() + '\n\n0️⃣ Voltar ao menu');
     }
 
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
@@ -2920,7 +2945,7 @@ exports.handler = async (event) => {
           const novoLink = await gerarLinkInfinitePay(carrinho, frete.valor, pend.order_nsu, novoDesc);
           const lbl = `Desconto especial (-${NEGOCIACAO_PCT_TOTAL}%)`;
           await salvarPendingMerge(pend.pKey, { negociado:true, descontoReais:novoDesc, descontoLabel:lbl, total:novoTotal, link: novoLink || pend.link || '' });
-          await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', carrinho, freteSelecionado:frete, estadoCliente: pend.estado || session.estadoCliente, total:novoTotal, descontoReais:novoDesc, descontoLabel:lbl, descontoTipo:'athena', orderNsu:pend.order_nsu, cupomDocId:null, cupomCodigo:null });
+          await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', carrinho, freteSelecionado:frete, estadoCliente: pend.estado || session.estadoCliente, total:novoTotal, descontoReais:novoDesc, descontoLabel:lbl, descontoTipo:'athena', orderNsu:pend.order_nsu, link: novoLink || pend.link || '', cupomDocId:null, cupomCodigo:null });
           await enviarTelegram(`🤝 *NEGOCIAÇÃO (Athena)*\n📦 ${pend.order_nsu||'—'}\n📱 ${sid}\n💸 Desconto especial ${NEGOCIACAO_PCT_TOTAL}% → R$ ${novoTotal.toFixed(2).replace('.',',')}`);
           return respond(
             `Olha, vou fazer uma condição ESPECIAL pra você fechar agora comigo! 🤝\n\n` +
@@ -3216,7 +3241,7 @@ exports.handler = async (event) => {
         const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
         if (msg) return respond(msg);
         if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
-        return respond(msgPromoAtual());
+        return respond(msgPromoAtual() + '\n\n0️⃣ Voltar ao menu');
       }
       if (num === 9) { return await entrarAtacado(session, sid, respond); }
       return await tratarTextoLivre(session, sid, n, buildMenuPrincipal(), respond);
@@ -3792,7 +3817,9 @@ exports.handler = async (event) => {
     if (state === 'AGUARDAR_COMPROVANTE') {
       // Cliente perguntou sobre PARCELAR enquanto o link está aberto → simula (não confirma nada).
       if (ehPedidoParcelamento(mensagem)) {
-        return respond(simularParcelas(session.total || 0) + `\n\n💳 É só abrir o *link de pagamento* que te mandei e escolher lá as parcelas (até 12x). 😉`);
+        return respond(simularParcelas(session.total || 0) + (session.link
+          ? `\n\n💳 *Seu link de pagamento:*\n${session.link}\n\n_No próprio link você escolhe as parcelas (até 12x)._ 😉`
+          : `\n\n💳 É só abrir o *link de pagamento* que te mandei e escolher lá as parcelas (até 12x). 😉`));
       }
       // ⚠️ REGRA CRÍTICA: a Athena NUNCA confirma pagamento por palavra do cliente nem por comprovante.
       // Somente o webhook real da InfinitePay (via GAS) confirma o pagamento e muda o estado para COLETA_DADOS.
@@ -3828,11 +3855,14 @@ exports.handler = async (event) => {
         );
       }
 
-      // Mensagem padrão de pedido em aberto (não fala em "digite SIM" — só o pagamento confirma)
+      // Mensagem padrão de pedido em aberto (não fala em "digite SIM" — só o pagamento confirma).
+      // Reenvia o LINK salvo na sessão, pra "cadê o link?" sempre devolver o link.
+      const _linkPend = session.link ? `💳 *Link de pagamento:*\n${session.link}\n\n` : '';
       return respond(
         `⏳ Você tem um pedido em aberto aguardando pagamento:\n\n` +
         `${resumoCarrinho(carrinhoPend)}\n` +
         `💰 *R$ ${totalPend.toFixed(2).replace(".",",")}*\n\n` +
+        _linkPend +
         `É só concluir o pagamento pelo seu link — assim que cair, *eu confirmo automaticamente aqui* e já pego seus dados de envio. 🚀\n\n` +
         `Se quiser cancelar e começar do zero, digite *menu*. 😊`
       );
@@ -3849,6 +3879,7 @@ exports.handler = async (event) => {
       const coleta = { ...(session.coleta||{}) };
       Object.keys(dadosNovos).forEach(k => { const v = dadosNovos[k]; if (v && String(v).trim().length >= 1 && !coleta[k]) coleta[k] = v; });
       if (coleta.estado) coleta.estado = String(coleta.estado).toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
+      if (coleta.cpf) coleta.cpf = formatarCPF(coleta.cpf); // grava o CPF sempre como 000.000.000-00
       const obrigatorios = ['nome','cpf','telefone','endereco','bairro','cidade','estado','cep'];
       const faltam = obrigatorios.filter(c => !coleta[c] || String(coleta[c]).length < 2);
 
