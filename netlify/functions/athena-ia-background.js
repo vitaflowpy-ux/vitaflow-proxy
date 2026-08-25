@@ -19,6 +19,19 @@
 //       e manda a fala + a lista numerada. O cliente só escolhe o número.
 
 const BOTCONVERSA_KEY  = '8c9e69c3-3c9f-4f23-b480-be4a0de29640'; // confere com a chave do painel BotConversa
+// Cada COMPANHIA do BotConversa tem sua PRÓPRIA API key. A Stella (VitaMK) usa uma key
+// diferente da Athena; sem a key certa, a resposta da IA sai pela companhia errada e NÃO
+// chega na conversa. O botconversa.js manda body.assistente ("Athena" ou "Stella").
+const BOTCONVERSA_KEYS = {
+  'Athena': '8c9e69c3-3c9f-4f23-b480-be4a0de29640',
+  'Stella': 'ccad05d4-c30e-493c-89b6-74ae04480e53'
+};
+function keyDoAssistente(a){ return (a && BOTCONVERSA_KEYS[a]) ? BOTCONVERSA_KEYS[a] : BOTCONVERSA_KEY; }
+// Troca "Athena" por "Stella" (ou outro nome) SÓ no texto que vai pro cliente, quando o
+// assistente não é a Athena. As regras internas do prompt continuam falando "Athena".
+function aplicarNomeAssistente(t, assistente){
+  return (assistente && assistente !== 'Athena' && t) ? String(t).replace(/Athena/g, assistente) : t;
+}
 // CORRIGIDO: a base certa da API do BotConversa tem "/webhook" no fim (fonte: app oficial no Pipedream).
 const BOTCONVERSA_BASE = 'https://backend.botconversa.com.br/api/v1/webhook';
 const FIREBASE_URL     = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
@@ -203,20 +216,22 @@ function normalizarPhone(raw){
 
 // Empurra a mensagem pro cliente pela API do BotConversa (mesmo padrão do send-whatsapp.js).
 // Retorna { ok, etapa, status, detalhe } pra gente saber EXATAMENTE onde travou.
-async function enviarBotConversa(phone, message){
+// apiKey: key da companhia certa (Athena ou Stella). Sem ela, cai na key padrão (Athena).
+async function enviarBotConversa(phone, message, apiKey){
+  const KEY = apiKey || BOTCONVERSA_KEY;
   const phoneNorm = normalizarPhone(phone);
   console.log('[IA] enviarBotConversa -> phone bruto:', phone, '| normalizado:', phoneNorm);
   try {
     let subId = null;
 
-    const r1 = await fetch(`${BOTCONVERSA_BASE}/subscriber/get_by_phone/${phoneNorm}/`, { headers: { 'api-key': BOTCONVERSA_KEY } });
+    const r1 = await fetch(`${BOTCONVERSA_BASE}/subscriber/get_by_phone/${phoneNorm}/`, { headers: { 'api-key': KEY } });
     const t1 = await r1.text();
     console.log('[IA] get_by_phone status:', r1.status, '| body:', t1.slice(0, 200));
     if (r1.ok) { try { subId = (JSON.parse(t1) || {}).id || null; } catch {} }
 
     if (!subId) {
       const r2 = await fetch(`${BOTCONVERSA_BASE}/subscriber/`, {
-        method: 'POST', headers: { 'api-key': BOTCONVERSA_KEY, 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'api-key': KEY, 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: phoneNorm, name: 'Cliente' })
       });
       const t2 = await r2.text();
@@ -231,7 +246,7 @@ async function enviarBotConversa(phone, message){
     console.log('[IA] subscriberId:', subId);
 
     const r3 = await fetch(`${BOTCONVERSA_BASE}/subscriber/${subId}/send_message/`, {
-      method: 'POST', headers: { 'api-key': BOTCONVERSA_KEY, 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'api-key': KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'text', value: message })
     });
     const t3 = await r3.text();
@@ -246,11 +261,11 @@ async function enviarBotConversa(phone, message){
 }
 
 // Envia texto possivelmente grande em VÁRIAS mensagens (o WhatsApp recusa mensagem única enorme).
-async function enviarLongo(phone, texto){
+async function enviarLongo(phone, texto, apiKey){
   const partes = partirMensagem(texto, 3800);
   let ultimo = { ok:false, etapa:'vazio', status:0, detalhe:'nada a enviar' };
   for (const p of partes){
-    if (p && p.trim()) ultimo = await enviarBotConversa(phone, p);
+    if (p && p.trim()) ultimo = await enviarBotConversa(phone, p, apiKey);
   }
   return ultimo;
 }
@@ -471,6 +486,8 @@ OUTROS: Clembuterol (beta-2 agonista, termogênico — NÃO é hormônio), T3 (L
 async function gerarProtocoloPosVenda(body){
   try {
     const phone = body.phone;
+    const assistente = (body.assistente || 'Athena');
+    const apiKey = keyDoAssistente(assistente);
     const produtos = Array.isArray(body.produtos) ? body.produtos.filter(Boolean) : [];
     console.log('[IA] PROTOCOLO pós-venda | phone:', phone, '| produtos:', produtos.join(' | '));
     if (!phone || !produtos.length) return { statusCode: 200, body: 'no-op' };
@@ -488,7 +505,7 @@ async function gerarProtocoloPosVenda(body){
     // Tabela(s) de fracionamento (resolvidas pelo botconversa e enviadas no payload) vão JUNTO.
     const _tabelas = String(body.tabelas || '').trim();
     if (_tabelas) texto += `\n\n━━━━━━━━━━━━━━━━━━━━\n\n💉 *TABELA(S) DE FRACIONAMENTO*\n\n` + _tabelas;
-    const envio = await enviarLongo(phone, texto);
+    const envio = await enviarLongo(phone, aplicarNomeAssistente(texto, assistente), apiKey);
     console.log('[IA] PROTOCOLO enviado:', JSON.stringify(envio));
     return { statusCode: 200, body: 'ok' };
   } catch (e) {
@@ -501,12 +518,14 @@ exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || '{}');
     const phone = body.phone;
+    const assistente = (body.assistente || 'Athena');   // "Athena" ou "Stella"
+    const apiKey = keyDoAssistente(assistente);          // key da companhia certa
     // Modo PROTOCOLO pós-venda: gera e envia o protocolo completo dos produtos comprados.
     if ((body.tipo || '') === 'protocolo') return await gerarProtocoloPosVenda(body);
     const mensagem = (body.mensagem || '').toString().trim();
     const promoContext = (body.promoContext || '').toString().trim(); // regras REAIS de promoção/desconto (vêm do botconversa.js)
     const contexto = (body.contexto || '').toString().trim(); // o que o cliente está VENDO agora (lista aberta)
-    console.log('[IA] START | phone:', phone, '| mensagem:', mensagem, '| contexto:', contexto ? 'sim' : 'nao');
+    console.log('[IA] START | phone:', phone, '| assistente:', assistente, '| mensagem:', mensagem, '| contexto:', contexto ? 'sim' : 'nao');
     if (!phone || !mensagem) { console.log('[IA] no-op: faltou phone ou mensagem'); return { statusCode: 200, body: 'no-op' }; }
 
     // Memória: carrega o que já foi conversado com esse cliente.
@@ -562,7 +581,7 @@ exports.handler = async (event) => {
             { role:'user', content: mensagem },
             { role:'assistant', content: replyLimpo || '(abriu combo)' }
           ]));
-          const envio = await enviarLongo(phone, corpo);
+          const envio = await enviarLongo(phone, aplicarNomeAssistente(corpo, assistente), apiKey);
           console.log('[IA] RESULTADO ENVIO (stack):', JSON.stringify(envio));
           return { statusCode: 200, body: 'ok' };
         }
@@ -587,7 +606,7 @@ exports.handler = async (event) => {
           { role:'user', content: mensagem },
           { role:'assistant', content: replyLimpo || `(abriu a lista de ${termo || colecao})` }
         ]));
-        const envio = await enviarLongo(phone, corpo);
+        const envio = await enviarLongo(phone, aplicarNomeAssistente(corpo, assistente), apiKey);
         console.log('[IA] RESULTADO ENVIO (lista):', JSON.stringify(envio));
         return { statusCode: 200, body: 'ok' };
       }
@@ -600,7 +619,7 @@ exports.handler = async (event) => {
       { role:'user', content: mensagem },
       { role:'assistant', content: textoFinal }
     ]));
-    const envio = await enviarLongo(phone, textoFinal);
+    const envio = await enviarLongo(phone, aplicarNomeAssistente(textoFinal, assistente), apiKey);
     console.log('[IA] RESULTADO ENVIO:', JSON.stringify(envio));
     return { statusCode: 200, body: 'ok' };
   } catch (e) {
