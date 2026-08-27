@@ -2874,6 +2874,53 @@ exports.handler = async (event) => {
       return respond(MSG_BOAS_VINDAS_LEAD + '\n\n' + buildMenuPrincipal());
     }
 
+    // ── RECUPERAÇÃO DE CARRINHO: botões do template 'athenarecuperacarrinho' (dia seguinte) ──
+    // O template (disparado pelo GAS recuperarCarrinhosDiaSeguinte, +24h) tem 2 botões de resposta
+    // rápida. O WhatsApp envia o TEXTO do botão como mensagem — tratamos aqui, antes do roteamento.
+    //   "Quero finalizar" → a Athena GERA UM LINK NOVO (o antigo pode ter expirado) pro MESMO pedido.
+    //   "Tive uma dúvida"  → conversa consultiva; se o cliente reclamar de preço, a NEGOCIAÇÃO de 5%
+    //                        (mais abaixo) assume — 5% sobre os produtos do carrinho, sem somar o 3%.
+    // Guard state!=='COLETA_DADOS': quem já pagou está informando endereço; não intercepta.
+    if (n === 'quero finalizar' && state !== 'COLETA_DADOS') {
+      const pend = await lerPending(sid);
+      if (pend && Array.isArray(pend.carrinho) && pend.carrinho.length) {
+        const carrinho = pend.carrinho;
+        const frete = pend.freteSelecionado || { label: pend.frete || 'Frete', valor: 0 };
+        const desc = pend.descontoReais || 0;
+        const descPromo = pend.descontoPromo || 0;
+        const totalPend = (typeof pend.total === 'number') ? pend.total : (parseFloat(pend.valor) || 0);
+        const estadoPend = pend.estado || pend.estadoCliente || session.estadoCliente || '';
+        // link NOVO pro MESMO order_nsu (não duplica pedido; mesmo padrão da negociação)
+        const novoLink = await gerarLinkInfinitePay(carrinho, frete.valor || 0, pend.order_nsu, desc + descPromo);
+        await salvarPendingMerge(pend.pKey, { link: novoLink || pend.link || '' });
+        await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', carrinho, freteSelecionado: frete,
+          estadoCliente: estadoPend, total: totalPend, descontoReais: desc, descontoPromo: descPromo,
+          descontoLabel: pend.descontoLabel || '', descontoTipo: pend.descontoTipo || '',
+          orderNsu: pend.order_nsu, link: novoLink || pend.link || '',
+          cupomDocId: pend.cupomDocId || null, cupomCodigo: pend.cupomCodigo || null });
+        await enviarTelegram(`🔁 *RECUPERAÇÃO — Quero finalizar*\n📦 ${pend.order_nsu||'—'}\n📱 ${sid}\n💳 Link novo gerado`);
+        return respond(
+          `Que bom que você voltou! 🙌 Já *renovei seu link de pagamento* (o anterior podia ter expirado):\n\n` +
+          `${resumoCarrinho(carrinho)}\n` +
+          `🚚 ${frete.label || 'Frete'}${estadoPend ? ' — ' + estadoPend : ''}\n` +
+          `💰 *Total: R$ ${totalPend.toFixed(2).replace('.',',')}*\n\n` +
+          (novoLink ? `💳 *Link atualizado:*\n${novoLink}\n\n` : '') +
+          `_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão. Assim que você pagar, *eu confirmo automaticamente aqui* e já sigo com seu envio._ 🚀`
+        );
+      }
+      // sem pedido salvo (carrinho do site, ou link já limpo): se a sessão ainda tem carrinho, vai pro checkout; senão, menu.
+      if (Array.isArray(session.carrinho) && session.carrinho.length) {
+        return await irParaCheckout(session, sid, respond);
+      }
+      await saveSession(sid, { ...session, state:'MENU' });
+      return respond(`Que bom que você voltou! 🙌 Me conta o que você tinha no carrinho (ou o que procura) que eu já monto pra você e te passo o link certinho. 💚\n\n` + buildMenuPrincipal());
+    }
+    if (n === 'tive uma duvida' && state !== 'COLETA_DADOS') {
+      await saveSession(sid, { ...session, state:'MENU' });
+      await enviarTelegram(`🔁 *RECUPERAÇÃO — Tive uma dúvida*\n📱 ${sid}`);
+      return respond(`Claro, tô aqui pra isso! 😊 Me conta o que ficou de dúvida — pode ser sobre o *produto*, a *entrega*, o *pagamento* ou o *preço*. A gente resolve juntos pra você fechar tranquilo. 💚`);
+    }
+
     const ehPromo = n.includes('promo') || n.includes('namorados');
     if (ehPromo && !emCheckout) {
       if (PROMO_GENESIS.ativa) return await anunciarGenesis(session, sid, respond);
