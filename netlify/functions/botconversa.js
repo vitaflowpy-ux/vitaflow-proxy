@@ -2110,6 +2110,69 @@ async function salvarPendingMerge(pKey, patch) {
     });
   } catch {}
 }
+
+// ── PRODUTOS SEM DESCONTO (bloqueio GLOBAL) ───────────────────────────────────
+// Lista única no RTDB: vitaflow_sem_desconto = { produtos:{id:nome}, colecoes:{handle:true} }.
+// A Athena casa por NOME (o catálogo dela é "nome|preço" — não tem product_id). As coleções
+// marcadas são expandidas para produtos {id,nome} no painel (Gestão de Cupons), então aqui
+// basta casar o NOME contra produtos{}. Produto na lista = NENHUM desconto (nem 3% Athena,
+// nem cupom, nem promo). Vale-compras NÃO é bloqueado (é crédito do próprio cliente).
+async function lerSemDescontoNomes() {
+  try {
+    const r = await fetch(fbUrl('/vitaflow_sem_desconto/produtos.json'));
+    const d = await r.json();
+    if (!d || typeof d !== 'object') return null;
+    const set = {};
+    Object.keys(d).forEach(k => { const nm = _normNomeProd(String(d[k] || '')); if (nm) set[nm] = true; });
+    return Object.keys(set).length ? set : null;
+  } catch { return null; }
+}
+function produtoBloqueado(nome, setNomes) {
+  if (!setNomes) return false;
+  return !!setNomes[_normNomeProd(String(nome || ''))];
+}
+
+// ── PROMOÇÃO DE PREÇO POR QUANTIDADE ──────────────────────────────────────────
+// Config: RTDB vitaflow_promo_precos = { <id>: { nome, ativo, agrupado, n, base(cent),
+// precoN(cent), produtos:{id:nome} } }. A Athena casa por NOME. Produto de promo NÃO recebe
+// 3%/cupom (é "não acumula"): o preço da faixa É o preço final. Retorna array de grupos ativos.
+async function lerPromoPrecos() {
+  try {
+    const r = await fetch(fbUrl('/vitaflow_promo_precos.json'));
+    const d = await r.json();
+    if (!d || typeof d !== 'object') return null;
+    const grupos = [];
+    Object.keys(d).forEach(k => {
+      const g = d[k];
+      if (!g || !g.ativo || !g.produtos) return;
+      const nomes = {};
+      Object.keys(g.produtos).forEach(id => { const nm = _normNomeProd(String(g.produtos[id] || '')); if (nm) nomes[nm] = true; });
+      if (Object.keys(nomes).length) grupos.push({ n: Number(g.n) || 2, base: (Number(g.base) || 0) / 100, precoN: (Number(g.precoN) || 0) / 100, agrupado: g.agrupado !== false, nomes });
+    });
+    return grupos.length ? grupos : null;
+  } catch { return null; }
+}
+// A qual grupo de promo o item pertence (ou null).
+function grupoPromoDoItem(nome, promoP) {
+  if (!promoP) return null;
+  const n = _normNomeProd(String(nome || ''));
+  for (let i = 0; i < promoP.length; i++) { if (promoP[i].nomes[n]) return promoP[i]; }
+  return null;
+}
+// Sobrescreve o preço dos itens de promo pela faixa: base (abaixo de n) ou precoN (n+ un).
+// agrupado: a contagem soma TODOS os itens do grupo no carrinho (misturar marcas conta).
+function aplicarPromoPreco(carrinho, promoP) {
+  if (!promoP || !Array.isArray(carrinho)) return;
+  promoP.forEach(g => {
+    let qtdGrupo = 0;
+    carrinho.forEach(i => { if (g.nomes[_normNomeProd(String(i.nome || ''))]) qtdGrupo += (i.qtd || 0); });
+    carrinho.forEach(i => {
+      if (!g.nomes[_normNomeProd(String(i.nome || ''))]) return;
+      const q = g.agrupado ? qtdGrupo : (i.qtd || 0);
+      i.preco = (q >= g.n) ? g.precoN : g.base;
+    });
+  });
+}
 async function validarCupom(codigo, subtotalProdutos) {
   try {
     const cod = (codigo || '').trim().toUpperCase();
@@ -2185,7 +2248,11 @@ async function incrementarUsoCupom(docId) {
 async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const carrinho = session.carrinho || [];
   const frete = session.freteSelecionado || {};
+  const _promoP = await lerPromoPrecos();          // promoções de preço por quantidade (ativas)
+  aplicarPromoPreco(carrinho, _promoP);            // sobrescreve o preço dos itens de promo (base/precoN)
+  if (_promoP) session.totalProd = carrinho.reduce((s,i)=>s+(i.preco||0)*(i.qtd||0),0);
   const totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
+  const _semDesc = await lerSemDescontoNomes();   // produtos GLOBALMENTE sem desconto (lista única)
 
   // ── DESCONTO (Option B: cada produto leva UM desconto — o MAIOR; nunca soma) ──
   // Candidatos por produto: promo Dia dos Pais (10% se comprado em 2+), cupom, e o benefício
@@ -2203,6 +2270,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   let baseFora = 0;         // subtotal dos itens FORA da promo (base p/ cupom fixo)
   carrinho.forEach(i => {
     const linha = (i.preco || 0) * (i.qtd || 0);
+    if (produtoBloqueado(i.nome, _semDesc) || grupoPromoDoItem(i.nome, _promoP)) return;   // sem desconto OU preço de promo: não leva 3%/cupom
     const ehPromo = _promoAtiva && i && i.qtd >= PROMO_DOBRO.qtdMin;
     if (!ehPromo) baseFora += linha;
     const pPromo = ehPromo ? PROMO_DOBRO.pct : 0;                 // 10 ou 0
@@ -2987,8 +3055,12 @@ exports.handler = async (event) => {
         const carrinho = pend.carrinho || [];
         const frete = pend.freteSelecionado || {};
         const totalProd = carrinho.reduce((s,i)=>s + i.preco*i.qtd, 0);
-        if (totalProd > 0) {
-          const novoDesc = totalProd * (NEGOCIACAO_PCT_TOTAL/100); // 5% sobre o subtotal ORIGINAL
+        // 5% só sobre os produtos DESCONTÁVEIS — os que estão na lista "sem desconto" ficam de fora.
+        const _semDescNeg = await lerSemDescontoNomes();
+        const _promoPNeg = await lerPromoPrecos();
+        const baseNeg = carrinho.reduce((s,i)=> s + ((produtoBloqueado(i.nome, _semDescNeg) || grupoPromoDoItem(i.nome, _promoPNeg)) ? 0 : i.preco*i.qtd), 0);
+        if (totalProd > 0 && baseNeg > 0) {
+          const novoDesc = baseNeg * (NEGOCIACAO_PCT_TOTAL/100); // 5% sobre o subtotal descontável (bloqueados fora)
           const novoTotal = totalProd - novoDesc + (frete.valor||0);
           const novoLink = await gerarLinkInfinitePay(carrinho, frete.valor, pend.order_nsu, novoDesc);
           const lbl = `Desconto especial (-${NEGOCIACAO_PCT_TOTAL}%)`;
