@@ -2119,12 +2119,17 @@ async function salvarPendingMerge(pKey, patch) {
 // nem cupom, nem promo). Vale-compras NÃO é bloqueado (é crédito do próprio cliente).
 async function lerSemDescontoNomes() {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/sem_desconto_vitaflow?key=${FIRESTORE_KEY}&pageSize=500`;
+    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=300`;
     const r = await fetch(url);
     const d = await r.json();
     const docs = (d && d.documents) || [];
     const set = {};
-    docs.forEach(doc => { const f = doc.fields || {}; const nm = _normNomeProd(String((f.nome && f.nome.stringValue) || '')); if (nm) set[nm] = true; });
+    docs.forEach(doc => {
+      const f = doc.fields || {};
+      if (!(f._vfTipo && f._vfTipo.stringValue === 'sem_desconto')) return;
+      const nm = _normNomeProd(String((f.nome && f.nome.stringValue) || ''));
+      if (nm) set[nm] = true;
+    });
     return Object.keys(set).length ? set : null;
   } catch { return null; }
 }
@@ -2139,13 +2144,14 @@ function produtoBloqueado(nome, setNomes) {
 // 3%/cupom (é "não acumula"): o preço da faixa É o preço final. Retorna array de grupos ativos.
 async function lerPromoPrecos() {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/promo_precos_vitaflow?key=${FIRESTORE_KEY}&pageSize=200`;
+    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=300`;
     const r = await fetch(url);
     const d = await r.json();
     const docs = (d && d.documents) || [];
     const grupos = [];
     docs.forEach(doc => {
       const f = doc.fields || {};
+      if (!(f._vfTipo && f._vfTipo.stringValue === 'promo_preco')) return;
       if (!(f.ativo && f.ativo.booleanValue)) return;
       const n = f.n ? parseInt(f.n.integerValue || f.n.doubleValue || 0, 10) : 2;
       const base = f.base ? parseInt(f.base.integerValue || f.base.doubleValue || 0, 10) : 0;
