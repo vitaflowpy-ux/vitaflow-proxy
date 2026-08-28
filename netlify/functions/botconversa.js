@@ -2391,8 +2391,23 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const linhaBrinde = session.brinde
     ? `🎁 *Brinde (3º grátis — Gênesis):* ${session.brinde}\n` : '';
 
+  let linhaPromoPreco = '';
+  if (_promoP) {
+    _promoP.forEach(g => {
+      let q = 0;
+      carrinho.forEach(i => { if (g.nomes[_normNomeProd(String(i.nome || ''))]) q += (i.qtd || 0); });
+      if (q <= 0) return;
+      if (q >= g.n) {
+        const eco = (g.base - g.precoN) * q;
+        linhaPromoPreco += `\n\n🎉🔥 *PROMOÇÃO ATIVADA!* 🔥🎉\nVocê levou *${q}* e cada um saiu por *R$ ${g.precoN.toFixed(2).replace('.',',')}* (em vez de R$ ${g.base.toFixed(2).replace('.',',')})!\n💚 *Você economizou R$ ${eco.toFixed(2).replace('.',',')}!*`;
+      } else {
+        const faltam = g.n - q;
+        linhaPromoPreco += `\n\n💡 _Falta pouco! Leve mais *${faltam}* e cada um sai por *R$ ${g.precoN.toFixed(2).replace('.',',')}* (em vez de R$ ${g.base.toFixed(2).replace('.',',')}) — promoção ativa a partir de ${g.n} unidades._`;
+      }
+    });
+  }
   const resumo =
-    `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
+    `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}${linhaPromoPreco}\n\n` +
     `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
     (freteValorFinal > 0
       ? `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${freteValorFinal.toFixed(2).replace('.',',')}\n`
