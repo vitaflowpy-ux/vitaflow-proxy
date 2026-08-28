@@ -41,7 +41,7 @@ async function dispararIA(phone, mensagem, contexto){
   try {
     await fetch(ATHENA_IA_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ phone: phone, mensagem: mensagem, promoContext: contextoPromo(), contexto: contexto || '', assistente: ASSISTENTE_ATUAL })
+      body: JSON.stringify({ phone: phone, mensagem: mensagem, promoContext: await contextoPromo(), contexto: contexto || '', assistente: ASSISTENTE_ATUAL })
     });
   } catch (e) { /* se falhar o disparo, o ack síncrono já foi enviado */ }
 }
@@ -772,9 +772,19 @@ function ehIntencaoSorteio(n){
 
 // Monta o contexto REAL de promoção/desconto pra IA assíncrona (fonte única = este arquivo).
 // A IA só fala de promoção com base no que estiver LIGADO aqui. Nada inventado.
-function contextoPromo(){
+async function contextoPromo(){
   const linhas = [];
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
+  // Promoções de PREÇO POR QUANTIDADE (config em cupons_vitaflow/_vfTipo:promo_preco) — pra a IA DIVULGAR.
+  try {
+    const _gruposPP = await lerPromoPrecos();
+    if (_gruposPP && _gruposPP.length) {
+      _gruposPP.forEach(g => {
+        const prods = (g.nomesOrig && g.nomesOrig.length) ? g.nomesOrig.join(', ') : '';
+        linhas.push(`PROMOÇÃO DE PREÇO ATIVA AGORA: ${g.titulo || 'Promoção'} — cada um sai por R$ ${reais(g.base)} na unidade, e por R$ ${reais(g.precoN)} CADA levando ${g.n} ou mais (pode MISTURAR os produtos do grupo — conta a SOMA das unidades). Produtos incluídos: ${prods}. O preço da promo já é o FINAL: NÃO acumula com os ${DESCONTO_ATHENA_PCT}% da Athena nem com cupom. SEMPRE que o cliente perguntar de promoção/desconto OU demonstrar interesse em algum desses produtos, DIVULGUE esta promoção e incentive levar ${g.n}+ pra pagar R$ ${reais(g.precoN)} cada (o desconto é automático no carrinho — não precisa cupom).`);
+      });
+    }
+  } catch (e) {}
   if (promoFreteAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — SEMANA DO FRETE GRÁTIS (só até domingo 16/08 à meia-noite): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE a Semana do Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até 16/08). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione o 8.8/PAPAI88 nem "15% OFF" (essa promoção já encerrou).');
   } else if (!PROMO_GENESIS_3x1.ativa) {
@@ -2158,9 +2168,10 @@ async function lerPromoPrecos() {
       const precoN = f.precoN ? parseInt(f.precoN.integerValue || f.precoN.doubleValue || 0, 10) : 0;
       const agrupado = f.agrupado ? !!f.agrupado.booleanValue : true;
       const nomes = {};
+      const nomesOrig = [];
       const arr = (f.pnomes && f.pnomes.arrayValue && f.pnomes.arrayValue.values) ? f.pnomes.arrayValue.values : [];
-      arr.forEach(v => { const nm = _normNomeProd(String(v.stringValue || '')); if (nm) nomes[nm] = true; });
-      if (Object.keys(nomes).length) grupos.push({ n: n || 2, base: base / 100, precoN: precoN / 100, agrupado, nomes });
+      arr.forEach(v => { const orig = String(v.stringValue || ''); const nm = _normNomeProd(orig); if (nm) { nomes[nm] = true; nomesOrig.push(orig); } });
+      if (Object.keys(nomes).length) grupos.push({ n: n || 2, base: base / 100, precoN: precoN / 100, agrupado, nomes, nomesOrig, titulo: (f.nome && f.nome.stringValue) || 'Promoção' });
     });
     return grupos.length ? grupos : null;
   } catch { return null; }
@@ -3157,7 +3168,7 @@ exports.handler = async (event) => {
       }
       if (/^(tabelas|listar|lista)$/.test(low)) return respond(await msgAdmTabelas());
       if (/^promo$/.test(low)) {
-        return respond(`🔎 *O QUE EU SEI DE PROMOÇÃO AGORA*\n_(é exatamente isto que vai pra IA)_\n\n` + contextoPromo());
+        return respond(`🔎 *O QUE EU SEI DE PROMOÇÃO AGORA*\n_(é exatamente isto que vai pra IA)_\n\n` + (await contextoPromo()));
       }
       let m = raw.match(/^tabela\s+(.+)$/i);
       if (m) return respond(await msgAdmTabela(m[1]));
