@@ -2119,11 +2119,12 @@ async function salvarPendingMerge(pKey, patch) {
 // nem cupom, nem promo). Vale-compras NÃO é bloqueado (é crédito do próprio cliente).
 async function lerSemDescontoNomes() {
   try {
-    const r = await fetch(fbUrl('/vitaflow_sem_desconto/produtos.json'));
+    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/sem_desconto_vitaflow?key=${FIRESTORE_KEY}&pageSize=500`;
+    const r = await fetch(url);
     const d = await r.json();
-    if (!d || typeof d !== 'object') return null;
+    const docs = (d && d.documents) || [];
     const set = {};
-    Object.keys(d).forEach(k => { const nm = _normNomeProd(String(d[k] || '')); if (nm) set[nm] = true; });
+    docs.forEach(doc => { const f = doc.fields || {}; const nm = _normNomeProd(String((f.nome && f.nome.stringValue) || '')); if (nm) set[nm] = true; });
     return Object.keys(set).length ? set : null;
   } catch { return null; }
 }
@@ -2138,16 +2139,22 @@ function produtoBloqueado(nome, setNomes) {
 // 3%/cupom (é "não acumula"): o preço da faixa É o preço final. Retorna array de grupos ativos.
 async function lerPromoPrecos() {
   try {
-    const r = await fetch(fbUrl('/vitaflow_promo_precos.json'));
+    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/promo_precos_vitaflow?key=${FIRESTORE_KEY}&pageSize=200`;
+    const r = await fetch(url);
     const d = await r.json();
-    if (!d || typeof d !== 'object') return null;
+    const docs = (d && d.documents) || [];
     const grupos = [];
-    Object.keys(d).forEach(k => {
-      const g = d[k];
-      if (!g || !g.ativo || !g.produtos) return;
+    docs.forEach(doc => {
+      const f = doc.fields || {};
+      if (!(f.ativo && f.ativo.booleanValue)) return;
+      const n = f.n ? parseInt(f.n.integerValue || f.n.doubleValue || 0, 10) : 2;
+      const base = f.base ? parseInt(f.base.integerValue || f.base.doubleValue || 0, 10) : 0;
+      const precoN = f.precoN ? parseInt(f.precoN.integerValue || f.precoN.doubleValue || 0, 10) : 0;
+      const agrupado = f.agrupado ? !!f.agrupado.booleanValue : true;
       const nomes = {};
-      Object.keys(g.produtos).forEach(id => { const nm = _normNomeProd(String(g.produtos[id] || '')); if (nm) nomes[nm] = true; });
-      if (Object.keys(nomes).length) grupos.push({ n: Number(g.n) || 2, base: (Number(g.base) || 0) / 100, precoN: (Number(g.precoN) || 0) / 100, agrupado: g.agrupado !== false, nomes });
+      const arr = (f.pnomes && f.pnomes.arrayValue && f.pnomes.arrayValue.values) ? f.pnomes.arrayValue.values : [];
+      arr.forEach(v => { const nm = _normNomeProd(String(v.stringValue || '')); if (nm) nomes[nm] = true; });
+      if (Object.keys(nomes).length) grupos.push({ n: n || 2, base: base / 100, precoN: precoN / 100, agrupado, nomes });
     });
     return grupos.length ? grupos : null;
   } catch { return null; }
