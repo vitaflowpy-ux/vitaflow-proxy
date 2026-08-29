@@ -44,8 +44,10 @@ async function pegarAccessToken(saEmail, saKey){
   });
   const d = await r.json();
   if (!r.ok || !d.access_token) {
+    console.log('[PUBLICAR] token Google FALHOU:', r.status, JSON.stringify(d).slice(0,300));
     throw new Error('token Google falhou: ' + r.status + ' ' + JSON.stringify(d).slice(0,200));
   }
+  console.log('[PUBLICAR] token Google OK');
   return d.access_token;
 }
 
@@ -58,6 +60,7 @@ exports.handler = async (event) => {
     const SECRET = process.env.PUBLICAR_SECRET || '';
     const enviado = (event.headers['x-publicar-secret'] || event.headers['X-Publicar-Secret'] || '');
     if (!SECRET || enviado !== SECRET) {
+      console.log('[PUBLICAR] 401 secret: envSet=' + (!!SECRET) + ' recebido=' + (enviado ? 'sim' : 'nao'));
       return { statusCode: 401, headers, body: JSON.stringify({ error:'não autorizado' }) };
     }
 
@@ -68,7 +71,9 @@ exports.handler = async (event) => {
     const saEmail = process.env.GDRIVE_SA_EMAIL;
     const saKey   = process.env.GDRIVE_SA_KEY;
     const fileId  = process.env.GDRIVE_FILE_ID || DEFAULT_FILE_ID;
-    if (!saEmail || !saKey) return { statusCode: 500, headers, body: JSON.stringify({ error:'faltam GDRIVE_SA_EMAIL/GDRIVE_SA_KEY no Netlify' }) };
+    if (!saEmail || !saKey) { console.log('[PUBLICAR] faltam envs SA'); return { statusCode: 500, headers, body: JSON.stringify({ error:'faltam GDRIVE_SA_EMAIL/GDRIVE_SA_KEY no Netlify' }) }; }
+    // diagnóstico do formato da chave (sem vazar a chave): a private_key TEM que ter as marcas PEM
+    console.log('[PUBLICAR] saEmail set=' + (!!saEmail) + ' | keyLen=' + saKey.length + ' | temBEGIN=' + /BEGIN PRIVATE KEY/.test(saKey) + ' | temQuebraLiteral=' + /\\n/.test(saKey) + ' | temQuebraReal=' + /\n/.test(saKey) + ' | fileId=' + fileId);
 
     const token = await pegarAccessToken(saEmail, saKey);
 
@@ -81,11 +86,14 @@ exports.handler = async (event) => {
     });
     const upTxt = await up.text();
     if (!up.ok) {
+      console.log('[PUBLICAR] Drive update FALHOU:', up.status, upTxt.slice(0,400));
       return { statusCode: 502, headers, body: JSON.stringify({ error:'Drive update falhou', status:up.status, detalhe: upTxt.slice(0,300) }) };
     }
 
+    console.log('[PUBLICAR] OK — Drive atualizado, bytes=' + bytes.length + ' fileId=' + fileId);
     return { statusCode: 200, headers, body: JSON.stringify({ ok:true, fileId, bytes: bytes.length, link:'https://drive.google.com/file/d/'+fileId+'/view' }) };
   } catch (e) {
+    console.log('[PUBLICAR] EXCEÇÃO:', e.message);
     return { statusCode: 500, headers, body: JSON.stringify({ error: e.message }) };
   }
 };
