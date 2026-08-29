@@ -19,6 +19,23 @@ function b64url(buf){
   return Buffer.from(buf).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
 
+// Reconstrói uma private_key PEM válida NÃO importa como o Netlify guardou as quebras de linha
+// (o erro 1E08010C:DECODER acontece quando os \n viram espaço/somem). Estratégia à prova de falha:
+// tira aspas, converte \n literais, e RECONSTRÓI o corpo base64 em linhas de 64 chars com o
+// cabeçalho/rodapé corretos. Assim, desde que os caracteres base64 estejam intactos, funciona.
+function normalizarPem(key){
+  var k = String(key || '').replace(/\\r/g,'').replace(/\\n/g,'\n').trim();
+  k = k.replace(/^["']+/, '').replace(/["']+$/, '').trim(); // remove aspas acidentais
+  var mB = k.match(/-----BEGIN [^-]+-----/);
+  var mE = k.match(/-----END [^-]+-----/);
+  if (!mB || !mE) return k; // sem marcas PEM: devolve como está (vai falhar e logar)
+  var header = mB[0], footer = mE[0];
+  var meio = k.substring(k.indexOf(header) + header.length, k.indexOf(footer));
+  var corpo = meio.replace(/[^A-Za-z0-9+/=]/g, ''); // só o base64, tira TODA quebra/espaço
+  var linhas = corpo.match(/.{1,64}/g) || [corpo];
+  return header + '\n' + linhas.join('\n') + '\n' + footer + '\n';
+}
+
 // Monta e assina o JWT da conta de serviço (RS256) e troca por um access_token do Google.
 async function pegarAccessToken(saEmail, saKey){
   const crypto = require('crypto');
@@ -32,8 +49,8 @@ async function pegarAccessToken(saEmail, saKey){
     exp: agora + 3600
   };
   const base = b64url(JSON.stringify(header)) + '.' + b64url(JSON.stringify(claims));
-  // a private_key às vezes chega com \n literais (env) — normaliza pra quebras reais
-  const pem = String(saKey || '').replace(/\\n/g, '\n');
+  // Reconstrói a PEM de forma robusta (resolve o erro 1E08010C:DECODER por quebra de linha perdida).
+  const pem = normalizarPem(saKey);
   const assinatura = crypto.createSign('RSA-SHA256').update(base).sign(pem);
   const jwt = base + '.' + b64url(assinatura);
 
