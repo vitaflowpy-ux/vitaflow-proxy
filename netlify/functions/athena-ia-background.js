@@ -290,8 +290,13 @@ QUEM FECHA O PEDIDO É O SISTEMA, NÃO VOCÊ — e é AQUI no WhatsApp (NUNCA no
 ATACADO (modalidade à parte — quem CONDUZ é o SISTEMA, não você):
 - Existe a venda no ATACADO, com tabela e PREÇOS PRÓPRIOS, diferentes do catálogo acima (o catálogo acima é VAREJO). Regras do atacado: *pedido mínimo de R$ 3.000*, *FRETE GRÁTIS*, *NÃO* tem os 3%, *NÃO* aceita cupom, e *NÃO* pode misturar produtos de varejo e atacado no mesmo pedido.
 - Você NÃO tem os preços do atacado (o catálogo acima é varejo). Então NUNCA invente preço de atacado, NUNCA diga que algum preço acima "é o de atacado" e NUNCA monte um pedido de atacado na prosa.
-- Se o cliente quiser ATACADO (falar "atacado", "revenda", "por atacado", "pedido grande", "quero comprar em grande quantidade"), NÃO use [[LISTA:]] (a lista é do varejo). Apenas oriente em UMA linha: "É só digitar *atacado* que eu abro a tabela de atacado pra você 👇" — o SISTEMA assume dali (mostra os produtos do atacado, monta o pedido com o mínimo de R$ 3.000 e frete grátis).
+- Se o cliente quiser ATACADO (falar "atacado", "por atacado", "pedido grande", "quero comprar em grande quantidade"), NÃO use [[LISTA:]] (a lista é do varejo). Apenas oriente em UMA linha: "É só digitar *atacado* que eu abro a tabela de atacado pra você 👇" — o SISTEMA assume dali (mostra os produtos do atacado, monta o pedido com o mínimo de R$ 3.000 e frete grátis).
 - Diferença rápida que você PODE explicar: no *varejo* comigo tem *3% de desconto*; no *atacado* o *frete é grátis* (pedido mínimo de R$ 3.000).
+
+PROGRAMA DE REVENDEDORES (é DIFERENTE de atacado — NUNCA confunda os dois):
+- A VitaFlow tem um PROGRAMA DE REVENDEDORES (revenda), que NÃO é a mesma coisa que atacado. Atacado = compra grande avulsa (pedido mínimo R$ 3.000). Revenda = cadastro de parceiro, com preço de revenda por nível, pra revender pros clientes dele — e *SEM pedido mínimo* (pode pedir qualquer valor).
+- Se o cliente perguntar sobre "ser revendedor", "revender", "programa de revenda", "preço de revenda", "quero revender": responda CURTO e mande se cadastrar. Regras REAIS (use SOMENTE isto, não invente): (1) *não tem pedido mínimo* pra revendedor; (2) primeiro faz o *cadastro* em *revendedores.vitaflowoficial.com/seja-revendedor*; (3) depois do cadastro *aprovado*, é só enviar os pedidos normalmente.
+- NÃO invente comissão, percentual de lucro, níveis específicos, exigências nem prazo de aprovação. Se perguntarem um detalhe que você NÃO tem, oriente a se cadastrar que a equipe passa os detalhes. NUNCA trate "revenda" como se fosse "atacado".
 
 COMO LEVAR O CLIENTE AO PRODUTO (sem pedir pra ele digitar o nome):
 - Quando o cliente demonstrar intenção de VER ou COMPRAR ("quero ver", "qual o preço", "quanto custa", "quero comprar", "vou querer a tirzepatida"), ou depois que VOCÊ recomendou e ele topou, NÃO peça pra ele digitar o nome. Em vez disso, TERMINE sua mensagem com um marcador que o sistema usa pra abrir a lista real (com preços e botão de compra):
@@ -514,6 +519,87 @@ async function gerarProtocoloPosVenda(body){
   }
 }
 
+// ── VISÃO: cliente enviou uma IMAGEM (encaminhada pelo botconversa.js via body.imagemUrl) ──
+// A Athena roda em Claude, que ENXERGA imagem. Baixamos a imagem, mandamos pro modelo (visão)
+// e devolvemos a resposta pela API do BotConversa. Se não der pra baixar/entender, cai num
+// fallback educado (nunca ignora, como acontecia antes — a mídia caía na saudação genérica).
+async function _baixarImagem(url){
+  try {
+    if (!url) return null;
+    const r = await fetch(url);
+    if (!r.ok) { console.log('[IA] _baixarImagem status', r.status); return null; }
+    const ct = (r.headers.get('content-type') || 'image/jpeg').split(';')[0].trim().toLowerCase();
+    const ab = await r.arrayBuffer();
+    const b64 = Buffer.from(ab).toString('base64');
+    if (!b64) return null;
+    if (b64.length > 4800000) { console.log('[IA] imagem grande demais:', b64.length); return null; } // ~3.5MB de imagem
+    const okTypes = ['image/jpeg','image/png','image/gif','image/webp'];
+    const media = okTypes.indexOf(ct) >= 0 ? ct : 'image/jpeg';
+    return { b64: b64, media: media };
+  } catch (e) { console.log('[IA] _baixarImagem erro:', e.message); return null; }
+}
+
+const VISAO_SYSTEM = `Você é a Athena, consultora da VitaFlow (peptídeos, hormônios, emagrecedores, GH) no WhatsApp. O cliente ENVIOU UMA IMAGEM. Olhe a imagem e responda em português do Brasil, tom caloroso e humano, de 2 a 5 linhas, usando *negrito* (um asterisco de cada lado). NUNCA use # ## ###.
+Casos comuns e como agir:
+- Etiqueta/pacote/print de rastreio: diga o que dá pra ver (ex.: transportadora, código) e oriente rastrear em vitaflowoficial.com/pages/rastrear-pedido (com CPF, número do pedido ou e-mail). Se for problema na entrega, indique a logística: wa.me/447537155718.
+- Print de produto/tabela/anúncio: ajude a identificar o produto e ofereça mostrar as opções ("quer que eu te mostre as opções? é só me dizer o nome 😊"). NUNCA invente preço.
+- Comprovante/print de pagamento: agradeça e explique que a confirmação é AUTOMÁTICA — assim que o pagamento cair, você avisa aqui e segue com o envio. NUNCA confirme o pagamento por conta da imagem.
+- Exame/documento de saúde: dê um panorama geral e reforce acompanhamento profissional; NÃO faça diagnóstico.
+Regras de ouro: NUNCA invente dados (preço, código de rastreio, nome/estoque de produto). Se a imagem estiver ilegível ou você não entender, peça com gentileza pra descrever por texto.`;
+
+async function chamarModeloVisao(modelo, sys, userContent, maxTokens){
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: modelo, max_tokens: maxTokens || 500, system: sys, messages: [{ role: 'user', content: userContent }] })
+    });
+    const d = await r.json();
+    if (r.status === 200 && d && d.content && d.content[0] && d.content[0].text) return d.content[0].text.trim();
+    console.log('[IA] visao modelo', modelo, '-> status', r.status, '| erro:', d && d.error ? JSON.stringify(d.error).slice(0,160) : 'nenhum');
+  } catch (e) { console.log('[IA] EXCEÇÃO visao', modelo, ':', e.message); }
+  return null;
+}
+
+// Mesma descoberta de modelos do texto — todos os Claude 3/3.5 têm visão.
+async function pensarComClaudeVisao(sys, userContent){
+  const forcado = process.env.ATHENA_MODEL;
+  if (forcado) { const t = await chamarModeloVisao(forcado, sys, userContent, 500); if (t) return { texto: t, modelo: forcado }; }
+  const disponiveis = await modelosDisponiveis();
+  const lista = montarCandidatos(disponiveis).filter(m => m !== forcado);
+  for (const modelo of lista){ const t = await chamarModeloVisao(modelo, sys, userContent, 500); if (t) return { texto: t, modelo }; }
+  return { texto: '', modelo: '' };
+}
+
+async function verImagem(body){
+  try {
+    const phone = body.phone;
+    const assistente = (body.assistente || 'Athena');
+    const apiKey = keyDoAssistente(assistente);
+    if (!phone) return { statusCode: 200, body: 'no-op' };
+    const legenda = (body.mensagem || '').toString().trim();
+    console.log('[IA] VISÃO | phone:', phone, '| url:', String(body.imagemUrl || '').slice(0, 120), '| legenda:', legenda.slice(0, 80));
+    const img = await _baixarImagem(body.imagemUrl);
+    if (!img) {
+      const msg = 'Recebi sua imagem, mas não consegui abrir ela aqui. 😕 Me conta *por texto* o que você precisa — e, se for sobre um pedido, me manda seu *CPF* ou o *número do pedido* que eu já te ajudo! 😊';
+      await enviarBotConversa(phone, aplicarNomeAssistente(msg, assistente), apiKey);
+      return { statusCode: 200, body: 'img-fail' };
+    }
+    const userContent = [
+      { type: 'image', source: { type: 'base64', media_type: img.media, data: img.b64 } },
+      { type: 'text', text: legenda ? ('Legenda que o cliente mandou junto: "' + legenda + '"') : 'O cliente enviou esta imagem, sem legenda. Ajude conforme o que você vê.' }
+    ];
+    const pensado = await pensarComClaudeVisao(VISAO_SYSTEM, userContent);
+    const txt = pensado.texto || 'Recebi sua imagem! 😊 Me conta *por texto* como posso te ajudar que eu resolvo aqui mesmo.';
+    const envio = await enviarLongo(phone, aplicarNomeAssistente(txt, assistente), apiKey);
+    console.log('[IA] VISÃO enviada | modelo:', pensado.modelo || 'NENHUM', '| envio:', JSON.stringify(envio));
+    return { statusCode: 200, body: 'ok-visao' };
+  } catch (e) {
+    console.log('[IA] EXCEÇÃO verImagem:', e.message);
+    return { statusCode: 200, body: 'err:' + e.message };
+  }
+}
+
 exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || '{}');
@@ -522,6 +608,8 @@ exports.handler = async (event) => {
     const apiKey = keyDoAssistente(assistente);          // key da companhia certa
     // Modo PROTOCOLO pós-venda: gera e envia o protocolo completo dos produtos comprados.
     if ((body.tipo || '') === 'protocolo') return await gerarProtocoloPosVenda(body);
+    // Modo VISÃO: cliente enviou imagem (o botconversa.js manda a URL em body.imagemUrl).
+    if (body.imagemUrl) return await verImagem(body);
     const mensagem = (body.mensagem || '').toString().trim();
     const promoContext = (body.promoContext || '').toString().trim(); // regras REAIS de promoção/desconto (vêm do botconversa.js)
     const contexto = (body.contexto || '').toString().trim(); // o que o cliente está VENDO agora (lista aberta)
