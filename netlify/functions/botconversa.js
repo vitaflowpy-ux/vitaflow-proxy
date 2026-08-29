@@ -37,11 +37,11 @@ const ATHENA_IA_URL = process.env.ATHENA_IA_URL || 'https://vitaflow-proxy.netli
 // cada invocação roda isolada, então esta variável de módulo é segura (não há concorrência
 // dentro do mesmo container). A IA assíncrona usa isso pra responder pela companhia certa.
 let ASSISTENTE_ATUAL = 'Athena';
-async function dispararIA(phone, mensagem, contexto){
+async function dispararIA(phone, mensagem, contexto, imagemUrl){
   try {
     await fetch(ATHENA_IA_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ phone: phone, mensagem: mensagem, promoContext: await contextoPromo(), contexto: contexto || '', assistente: ASSISTENTE_ATUAL })
+      body: JSON.stringify({ phone: phone, mensagem: mensagem, promoContext: await contextoPromo(), contexto: contexto || '', assistente: ASSISTENTE_ATUAL, imagemUrl: imagemUrl || '' })
     });
   } catch (e) { /* se falhar o disparo, o ack síncrono já foi enviado */ }
 }
@@ -900,6 +900,28 @@ const TABELA_ATACADO_URL = 'https://drive.google.com/file/d/1olhYj0OW1cL0Wk0kk6-
 const WHATSAPP_ATACADO_1 = 'wa.me/5521998367319';
 const WHATSAPP_ATACADO_2 = 'wa.me/447537155723';
 
+// Respostas padrão pra mídia que a Athena ainda não processa (áudio/vídeo/documento).
+// Imagem tem tratamento próprio (a IA "vê" via Claude visão) — ver handler.
+const RESP_AUDIO_PADRAO = `Oi! 🎧 Recebi seu áudio, mas por aqui eu ainda *não consigo ouvir áudios*. 🙏
+
+Me manda *por texto* o que você precisa (um produto, uma dúvida, ou seu pedido) que eu já te ajudo na hora! 😊`;
+
+const RESP_MIDIA_PADRAO = `Recebi seu arquivo! 📎 Por aqui eu consigo te ajudar melhor *por texto*.
+
+Me conta o que você precisa — um produto, uma dúvida ou algo sobre seu pedido — que eu resolvo com você agora mesmo! 😊`;
+
+const MSG_REVENDEDORES = `*🤝 PROGRAMA DE REVENDEDORES VitaFlow*
+
+Revenda é diferente do atacado! 😉 No programa de revendedores você tem *preço de revenda* pra revender pros seus clientes — e o melhor: *não tem pedido mínimo*, pode pedir qualquer valor.
+
+*Como começar:*
+1️⃣ Faça seu cadastro em: revendedores.vitaflowoficial.com/seja-revendedor
+2️⃣ Assim que o cadastro for *aprovado*, é só enviar seus pedidos normalmente. 🚀
+
+Qualquer dúvida sobre a revenda, é só me chamar!
+
+_Digite *menu* pra voltar ao início._`;
+
 const MSG_ATACADO = `*🏭 ATACADO VitaFlow* — pedido mínimo *R$ 3.000* e *FRETE GRÁTIS!* 🚚
 
 Aqui é simples: você monta seu pedido do jeito que quiser comigo. 😊
@@ -1318,7 +1340,7 @@ const DICT_PRODUTOS = [
   { label:'Undecanoato', tipo:'ester', ester:'undecanoato', colecao:'hormonios', filtro:[], canonico:['undecanoato'], apelidos:[] },
   { label:'Decanoato', tipo:'ester', ester:'decanoato', colecao:'hormonios', filtro:[], canonico:['decanoato'], apelidos:[] },
   { label:'Trembolona', tipo:'lista', colecao:'hormonios', filtro:['trembolona'], canonico:['trembolona','parabolan'], apelidos:['trembo','tren'] },
-  { label:'Nandrolona (Deca)', tipo:'lista', colecao:'hormonios', filtro:['nandrolona'], canonico:['nandrolona','deca-durabolin','deca durabolin','durabolin'], apelidos:['deca'] },
+  { label:'Nandrolona (Deca)', tipo:'lista', colecao:'hormonios', filtro:['nandrolona'], canonico:['nandrolona','deca-durabolin','deca durabolin','durabolin','decanoato de nandrolona','nandrolona decanoato'], apelidos:['deca'], excluir:['fenilpropionato','npp'] },
   { label:'NPP', tipo:'lista', colecao:'hormonios', filtro:['npp','fenilpropionato'], canonico:['npp'], apelidos:[] },
   { label:'Stanozolol', tipo:'lista', colecao:'hormonios', filtro:['stanozolol'], canonico:['stanozolol','winstrol'], apelidos:['stano','wins','estano'] },
   { label:'Oxandrolona', tipo:'lista', colecao:'hormonios', filtro:['oxandrolona'], canonico:['oxandrolona','anavar'], apelidos:['oxa','oxan'] },
@@ -1375,6 +1397,32 @@ function termoBate(termo, nMsg) {
     if (tCompacto.length >= 6 && palavrasCompactas.some(p => _diff1(p, tCompacto))) return true;
   }
   return false;
+}
+
+// Termos de BUSCA da categoria = filtro + sinônimos formais (canonico), sem duplicar.
+// Assim a lista de uma categoria acha também os produtos com nome alternativo
+// (ex.: Deca via "durabolin"/"decanoato", Stanozolol via "winstrol", Oxandrolona via "anavar").
+// NÃO usamos os apelidos curtos (ex.: "deca","bold") no filtro da LISTA pra evitar casar como
+// substring dentro de outro produto — apelido serve só pra RECONHECER o que o cliente digitou.
+function termosCategoria(e){
+  var base = (e && Array.isArray(e.filtro)) ? e.filtro.slice() : [];
+  if (e && Array.isArray(e.canonico)) base = base.concat(e.canonico);
+  var vistos = {}, out = [];
+  for (var i = 0; i < base.length; i++){
+    var termo = base[i];
+    var k = norm(termo);
+    if (k && !vistos[k]) { vistos[k] = 1; out.push(termo); }
+  }
+  return out.length ? out : ((e && e.filtro) || []);
+}
+// Remove da lista os itens cujo nome contém algum termo de exclusão (ex.: tira NPP/Fenilpropionato
+// da categoria Deca). Recebe linhas "nome|preco".
+function aplicarExclusao(linhas, excluir){
+  if (!excluir || !excluir.length) return linhas;
+  return (linhas || []).filter(function(l){
+    var nl = norm(l);
+    return !excluir.some(function(x){ return nl.includes(norm(x)); });
+  });
 }
 
 function reconhecerProduto(nMsg) {
@@ -1599,13 +1647,16 @@ async function resolverReconhecido(session, sid, e, respond, marca) {
   if (e.tipo === 'categoria' || !e.filtro || !e.filtro.length) {
     linhas = dados.split('\n').filter(Boolean);
   } else {
-    linhas = filtrarCache(dados, e.filtro);
+    const _termos = termosCategoria(e);
+    linhas = filtrarCache(dados, _termos);
     // FALLBACK GLOBAL: não achou na coleção esperada? Procura em TODAS antes de dizer que
     // não tem (produto pode estar catalogado noutra coleção — ex.: Clembuterol/T3 em "outros").
     if (!linhas.length) {
       const tudo = await buscarTodosCache();
-      linhas = filtrarCache(tudo, e.filtro);
+      linhas = filtrarCache(tudo, _termos);
     }
+    // Tira itens que NÃO são desta categoria (ex.: NPP/Fenilpropionato fora do Deca).
+    linhas = aplicarExclusao(linhas, e.excluir);
   }
   let unicas = [...new Set(linhas)];
   if (!unicas.length) {
@@ -2925,6 +2976,23 @@ exports.handler = async (event) => {
     // com o carrinho). Isso corrige o caso "digitei 'frete' no resumo e perdi o pedido".
     const emCheckout = ['CARRINHO','REMOVER_ITEM','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','OBS_PERGUNTA','OBS_TEXTO','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS','ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','ATK_REMOVER','ATK_CONFIRMAR','ATK_BLOQUEIO','VAREJO_BLOQUEIO'].includes(state);
 
+    // ── MÍDIA RECEBIDA (imagem/áudio/vídeo/documento/figurinha) ───────────────
+    // body.type traz o tipo. FORA do checkout/pagamento, a Athena TRATA a mídia (antes ela caía
+    // na saudação genérica ou era ignorada). Imagem → a IA "vê" (Claude visão). Áudio/vídeo/doc →
+    // resposta padrão educada pedindo texto. Em estados de checkout (inclui AGUARDAR_COMPROVANTE),
+    // a mídia segue o fluxo já existente (ex.: cliente mandando o comprovante).
+    if (ehMidia && !emCheckout) {
+      console.log('MIDIA (fora do checkout) | type:', body.type, '| body:', JSON.stringify(body).slice(0, 500));
+      const midiaUrl = body.mediaUrl || body.media_url || body.url || body.fileUrl || body.file || body.arquivo || body.image || body.imageUrl || body.foto || '';
+      if (body.type === 'image' && midiaUrl) {
+        await saveSession(sid, { ...session, errosSeguidos: 0 });
+        await dispararIA(sid, (mensagem || 'imagem'), contextoLista(session), midiaUrl);
+        return respond('Deixa eu ver sua imagem… 👀');
+      }
+      if (body.type === 'audio') return respond(RESP_AUDIO_PADRAO);
+      return respond(RESP_MIDIA_PADRAO);
+    }
+
     // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
     // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
     // REENVIA o mesmo webhook. Sem isto, a mensagem é processada 2x e gera pedido/link
@@ -3193,7 +3261,15 @@ exports.handler = async (event) => {
       return await fazerRastreio(mensagem, respond);
     }
 
-    const ehAtacado = ["atacado","revenda","revender","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
+    // REVENDEDORES (programa de revenda) — DIFERENTE de atacado. Tem que vir ANTES do atacado,
+    // senão "revenda/revender/revendedor" cairia no fluxo de atacado (bug do Charles Moraes).
+    const ehRevenda = ["revenda","revender","revendedor","revendedora","revendedores","seja revendedor","ser revendedor","quero revender","como revender","programa de revenda","preço de revenda","preco de revenda","virar revendedor","quero ser revendedor","como funciona a revenda","como funciona revenda"].some(p => n.includes(p));
+    if (ehRevenda && !emCheckout) {
+      await saveSession(sid, { ...session, state:'MENU', errosSeguidos:0 });
+      return respond(MSG_REVENDEDORES);
+    }
+
+    const ehAtacado = ["atacado","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
     if (ehAtacado && !emCheckout) {
       return await entrarAtacado(session, sid, respond);
     }
@@ -3532,7 +3608,7 @@ exports.handler = async (event) => {
         5:  { termos:['boldenona'],                label:'BOLDENONA' },
         6:  { termos:['stanozolol'],               label:'STANOZOLOL' },
         7:  { termos:['oxandrolona'],              label:'OXANDROLONA' },
-        8:  { termos:['nandrolona'],               label:'NANDROLONA (DECA)' },
+        8:  { termos:['nandrolona','durabolin','deca-durabolin','nandrolona decanoato'], excluir:['fenilpropionato','npp'], label:'NANDROLONA (DECA)' },
         9:  { termos:['masteron','drostanolona'],  label:'MASTERON' },
         10: { termos:['primobolan','metenolona'],  label:'PRIMOBOLAN' },
         11: { termos:['dianabol','metandienona'],  label:'DIANABOL' },
@@ -3545,6 +3621,7 @@ exports.handler = async (event) => {
         const { termos, label } = mapa[num];
         let linhas = await buscarFiltradoGlobal('hormonios', termos);
         if (num === 2) linhas = linhas.filter(l => !norm(l).includes('enantato'));
+        if (mapa[num].excluir) linhas = aplicarExclusao(linhas, mapa[num].excluir);
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_HORMONIOS}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
         return respond(`*${label}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
