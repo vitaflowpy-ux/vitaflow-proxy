@@ -28,9 +28,17 @@ function normalizarPem(key){
   k = k.replace(/^["']+/, '').replace(/["']+$/, '').trim(); // remove aspas acidentais
   var mB = k.match(/-----BEGIN [^-]+-----/);
   var mE = k.match(/-----END [^-]+-----/);
-  if (!mB || !mE) return k; // sem marcas PEM: devolve como está (vai falhar e logar)
-  var header = mB[0], footer = mE[0];
-  var meio = k.substring(k.indexOf(header) + header.length, k.indexOf(footer));
+  var header, footer, meio;
+  if (mB && mE) {
+    header = mB[0]; footer = mE[0];
+    meio = k.substring(k.indexOf(header) + header.length, k.indexOf(footer));
+  } else {
+    // SEM as linhas BEGIN/END (colaram só o miolo base64): assume PKCS#8 (chave de conta de
+    // serviço Google) e envolve o valor inteiro com a armadura correta.
+    header = '-----BEGIN PRIVATE KEY-----';
+    footer = '-----END PRIVATE KEY-----';
+    meio = k;
+  }
   var corpo = meio.replace(/[^A-Za-z0-9+/=]/g, ''); // só o base64, tira TODA quebra/espaço
   var linhas = corpo.match(/.{1,64}/g) || [corpo];
   return header + '\n' + linhas.join('\n') + '\n' + footer + '\n';
