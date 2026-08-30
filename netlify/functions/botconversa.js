@@ -578,15 +578,28 @@ const SORTEIO = {
 };
 
 // Ciclo vigente — MESMA conta do GAS e da página. Nunca precisa trocar data.
+// CORRIGIDO 30/08/2026: a Loteria Federal sorteia SÓ quarta e sábado, às 20h — nunca
+// domingo. O desenho antigo apontava pra um concurso de domingo que não existe, e o
+// concurso do próprio sábado saía 3h59 ANTES do ciclo fechar às 23h59.
+// Agora: 14 dias, abre SÁBADO 00:00, fecha SEXTA 23:59:59, apura SÁBADO seguinte 20h.
+const SORTEIO_C1_INI = new Date(2026, 7, 22, 0, 0, 0);   // sáb 22/08/2026 — abre o C-01
+const SORTEIO_PASSO_MS = 14 * 86400000;
+const DIAS_SEMANA_SORT = ['domingo','segunda-feira','terça-feira','quarta-feira',
+                          'quinta-feira','sexta-feira','sábado'];
 function sorteioCicloAtual(){
-  const C1i = new Date(2026, 7, 22, 0, 0, 0);   // sáb 22/08/2026 — abre o C-01
-  const A   = new Date(2026, 8, 6, 0, 0, 0);    // dom 06/09/2026 — abre o C-02
   const hoje = new Date();
-  if (hoje < A) return { ini: C1i, fim: new Date(2026, 8, 5, 23, 59, 59), sorteio: A };
-  const k = Math.floor((hoje - A) / (14 * 86400000));
-  const ini = new Date(A.getTime() + k * 14 * 86400000);
-  return { ini, fim: new Date(ini.getTime() + 14 * 86400000 - 1000), sorteio: new Date(ini.getTime() + 14 * 86400000) };
+  let k = Math.floor((hoje - SORTEIO_C1_INI) / SORTEIO_PASSO_MS);
+  if (k < 0) k = 0;
+  const ini  = new Date(SORTEIO_C1_INI.getTime() + k * SORTEIO_PASSO_MS);
+  const vira = new Date(ini.getTime() + SORTEIO_PASSO_MS);   // sábado 00:00 seguinte
+  return {
+    ini,
+    fim: new Date(vira.getTime() - 1000),                    // sexta 23:59:59
+    sorteio: new Date(vira.getFullYear(), vira.getMonth(), vira.getDate(), 20, 0, 0)
+  };
 }
+// Dia da semana do sorteio — calculado, nunca escrito na mão.
+function sorteioDiaSemana(c){ return DIAS_SEMANA_SORT[c.sorteio.getDay()]; }
 function sorteioDDMM(d){ const p = n => String(n).padStart(2,'0'); return `${p(d.getDate())}/${p(d.getMonth()+1)}`; }
 function sorteioDiasRestantes(){
   const c = sorteioCicloAtual();
@@ -616,7 +629,7 @@ function msgSorteio(){
     `*vale-compras de ${SORTEIO.premio} na VitaFlow*! 🎁\n\n` +
     `📅 *Ciclo atual:* ${sorteioDDMM(c.ini)} a ${sorteioDDMM(c.fim)}` +
     (dias > 0 ? ` _(fecha em ${dias} ${dias === 1 ? 'dia' : 'dias'})_` : '') + `\n` +
-    `🍀 *Sorteio:* domingo ${sorteioDDMM(c.sorteio)} às 20h, pela *Loteria Federal*\n\n` +
+    `🍀 *Sorteio:* ${sorteioDiaSemana(c)} ${sorteioDDMM(c.sorteio)} às 20h, pela *Loteria Federal*\n\n` +
     `_Vale a soma de todas as suas compras no período — não precisa ser num pedido só._\n\n` +
     `Quer saber quantos números você já tem? Me manda o seu *CPF*. 😉`;
 }
@@ -677,7 +690,7 @@ function blocoSorteioPosVenda(totalPago, freteValor, nomeCliente, acum, numPedid
   }
 
   const c        = sorteioCicloAtual();
-  const quando   = `*domingo, ${sorteioDDMM(c.sorteio)}, às 20h*`;
+  const quando   = `*${sorteioDiaSemana(c)}, ${sorteioDDMM(c.sorteio)}, às 20h*`;
   const nDesta   = Math.floor(baseDesta / SORTEIO.porNumero);
   const nTotal   = Math.floor(baseTotal / SORTEIO.porNumero);
   const sobra    = r2(baseTotal - nTotal * SORTEIO.porNumero);
@@ -734,7 +747,7 @@ function msgMeusNumeros(d){
         `Você já comprou *R$ ${reais(base)}* neste ciclo — faltam só *R$ ${reais(falta)}* pro seu ` +
         `*primeiro número*! 🍀\n\n` +
         `Quer que eu monte um pedidinho pra fechar essa faixa? É só me dizer o produto. 😉\n\n` +
-        `_Ciclo até ${sorteioDDMM(c.fim)} · sorteio domingo ${sorteioDDMM(c.sorteio)} às 20h_`;
+        `_Ciclo até ${sorteioDDMM(c.fim)} · sorteio ${sorteioDiaSemana(c)} ${sorteioDDMM(c.sorteio)} às 20h_`;
     }
     return `🎲 *Seus números da sorte*\n\n` +
       `Ainda não encontrei compras suas neste ciclo (${sorteioDDMM(c.ini)} a ${sorteioDDMM(c.fim)}).\n\n` +
@@ -752,7 +765,7 @@ function msgMeusNumeros(d){
   msg += `💰 Compras no ciclo: *R$ ${reais(base)}*\n`;
   msg += `🎯 Faltam *R$ ${reais(falta)}* pro seu *${nums.length + 1}º número*!\n\n`;
   msg += `📅 Ciclo até *${sorteioDDMM(c.fim)}*` + (dias > 0 ? ` _(${dias} ${dias === 1 ? 'dia' : 'dias'})_` : '') + `\n`;
-  msg += `🍀 Sorteio *domingo ${sorteioDDMM(c.sorteio)} às 20h* pela Loteria Federal\n\n`;
+  msg += `🍀 Sorteio *${sorteioDiaSemana(c)} ${sorteioDDMM(c.sorteio)} às 20h* pela Loteria Federal\n\n`;
   msg += `_Boa sorte!_ 🤞`;
   return msg;
 }
@@ -807,7 +820,7 @@ async function contextoPromo(){
   if (SORTEIO.ativa) {
     const _c = sorteioCicloAtual();
     const _d = sorteioDiasRestantes();
-    linhas.push(`SORTEIO QUINZENAL ATIVO AGORA: a cada R$ ${SORTEIO.porNumero} pagos EM PRODUTOS dentro do ciclo, o cliente ganha 1 NÚMERO DA SORTE e concorre a um VALE-COMPRAS DE ${SORTEIO.premio} na VitaFlow. Ciclo atual: ${sorteioDDMM(_c.ini)} a ${sorteioDDMM(_c.fim)}${_d > 0 ? ' (fecha em ' + _d + ' dia(s))' : ''}. O sorteio é no domingo ${sorteioDDMM(_c.sorteio)} às 20h, pela LOTERIA FEDERAL — a VitaFlow não escolhe o ganhador. Vale a SOMA de todas as compras do cliente no período (não precisa ser num pedido só) e conta o valor PAGO em produtos, já com desconto; FRETE NÃO CONTA para gerar número. Só pedidos com pagamento confirmado. Os números ZERAM a cada ciclo. O prêmio é vale-compras (NÃO é dinheiro) e vale para produtos e frete. O cliente consulta os próprios números pelo CPF — aqui comigo ou em ${SORTEIO.link}. SEMPRE que o cliente perguntar de promoção/desconto/sorteio, DIVULGUE o sorteio. Se ele perguntar quantos números tem, peça o CPF.`);
+    linhas.push(`SORTEIO QUINZENAL ATIVO AGORA: a cada R$ ${SORTEIO.porNumero} pagos EM PRODUTOS dentro do ciclo, o cliente ganha 1 NÚMERO DA SORTE e concorre a um VALE-COMPRAS DE ${SORTEIO.premio} na VitaFlow. Ciclo atual: ${sorteioDDMM(_c.ini)} a ${sorteioDDMM(_c.fim)}${_d > 0 ? ' (fecha em ' + _d + ' dia(s))' : ''}. O sorteio é no ${sorteioDiaSemana(_c)} ${sorteioDDMM(_c.sorteio)} às 20h, pela LOTERIA FEDERAL — a VitaFlow não escolhe o ganhador. Vale a SOMA de todas as compras do cliente no período (não precisa ser num pedido só) e conta o valor PAGO em produtos, já com desconto; FRETE NÃO CONTA para gerar número. Só pedidos com pagamento confirmado. Os números ZERAM a cada ciclo. O prêmio é vale-compras (NÃO é dinheiro) e vale para produtos e frete. O cliente consulta os próprios números pelo CPF — aqui comigo ou em ${SORTEIO.link}. SEMPRE que o cliente perguntar de promoção/desconto/sorteio, DIVULGUE o sorteio. Se ele perguntar quantos números tem, peça o CPF.`);
   }
   if (linhas.length === 1) linhas.push('Não há promoção relâmpago nem lançamento com desconto especial ativos no momento (só o benefício padrão acima). NÃO invente promoções.');
   return linhas.join('\n');
