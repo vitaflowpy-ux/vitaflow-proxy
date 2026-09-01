@@ -473,7 +473,7 @@ const PROMO_ANUNCIO = { ativa: false };
 // ── PROMOÇÃO RELÂMPAGO GÊNESIS (compre 3 peptídeos Gênesis, ganhe 1 GHK-Cu 100mg) — SÓ DIVULGAÇÃO ──
 // A Athena apenas DIVULGA a promo. O brinde (GHK-Cu 100mg) é conferido/aplicado manualmente no fechamento.
 // Pra desligar: ativa:false.
-const PROMO_GENESIS_3x1 = { ativa: true };
+const PROMO_GENESIS_3x1 = { ativa: false };
 const MSG_PROMO_GENESIS_3X1 = `⚡ *PROMOÇÃO RELÂMPAGO — GÊNESIS PEPTÍDEOS!* 🧬
 
 Na compra de *3 peptídeos da marca Gênesis*, você ganha *1 GHK-Cu 100mg GRÁTIS*! 🎁
@@ -799,7 +799,7 @@ async function contextoPromo(){
     }
   } catch (e) {}
   if (promoFreteAtiva()) {
-    linhas.push('PROMOÇÃO ATUAL — SEMANA DO FRETE GRÁTIS (só até domingo 16/08 à meia-noite): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE a Semana do Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até 16/08). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione o 8.8/PAPAI88 nem "15% OFF" (essa promoção já encerrou).');
+    linhas.push('PROMOÇÃO ATUAL — SEMANA DO FRETE GRÁTIS (só até domingo 06/09 à meia-noite): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE a Semana do Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até 06/09). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione o 8.8/PAPAI88 nem "15% OFF" (essa promoção já encerrou).');
   } else if (!PROMO_GENESIS_3x1.ativa) {
     linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
   }
@@ -848,7 +848,7 @@ async function anunciarLancamento(session, sid) {
 const PROMO_GENESIS = { ativa: false };
 // ── SEMANA DO FRETE GRÁTIS: frete grátis acima de R$ 1.000 com o cupom FRETEZERO ──
 // Auto-expira sozinha em .fim. Pra desligar antes: ativa:false. Pra trocar o prazo: edite .fim.
-const PROMO_FRETE = { ativa: false, fim: '2026-08-16T23:59:59-03:00' };
+const PROMO_FRETE = { ativa: true, fim: '2026-09-06T23:59:59-03:00' };
 function promoFreteAtiva(){ return PROMO_FRETE.ativa && Date.now() <= new Date(PROMO_FRETE.fim).getTime(); }
 // Promoção atual (única): SEMANA DO FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
 const MSG_PROMO_FRETE = `🚚 *SEMANA DO FRETE GRÁTIS — PRA TODO O BRASIL!* 🎉
@@ -856,10 +856,10 @@ const MSG_PROMO_FRETE = `🚚 *SEMANA DO FRETE GRÁTIS — PRA TODO O BRASIL!* �
 Em pedidos *acima de R$ 1.000*, o *frete é por nossa conta* pra todo o Brasil! 🇧🇷
 
 🏷️ É só usar o cupom *FRETEZERO* no fechamento (aqui comigo ou no site).
-⏰ *Só até domingo (16/08) à meia-noite!*
+⏰ *Só até domingo (06/09) à meia-noite!*
 
 _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
-// Mensagem da "promoção do momento" (opção 8 / "promoção"). Hoje = Semana do Frete Grátis (FRETEZERO, >R$1.000, até 16/08).
+// Mensagem da "promoção do momento" (opção 8 / "promoção"). Hoje = Semana do Frete Grátis (FRETEZERO, >R$1.000, até 06/09).
 // Divulga a promo enquanto promoFreteAtiva() (auto-expira em PROMO_FRETE.fim); depois disso cai no texto padrão dos 3%.
 function msgPromoAtual(){
   if (PROMO_GENESIS_3x1.ativa) {
