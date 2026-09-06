@@ -578,25 +578,30 @@ const SORTEIO = {
 };
 
 // Ciclo vigente — MESMA conta do GAS e da página. Nunca precisa trocar data.
-// CORRIGIDO 30/08/2026: a Loteria Federal sorteia SÓ quarta e sábado, às 20h — nunca
-// domingo. O desenho antigo apontava pra um concurso de domingo que não existe, e o
-// concurso do próprio sábado saía 3h59 ANTES do ciclo fechar às 23h59.
-// Agora: 14 dias, abre SÁBADO 00:00, fecha SEXTA 23:59:59, apura SÁBADO seguinte 20h.
-const SORTEIO_C1_INI = new Date(2026, 7, 22, 0, 0, 0);   // sáb 22/08/2026 — abre o C-01
-const SORTEIO_PASSO_MS = 14 * 86400000;
+// CALENDÁRIO DA FEDERAL — corrigido em 05/09/2026. A Caixa mudou em julho/2026:
+// os concursos de sábado passaram para DOMINGO. Hoje é quarta 20h e domingo 11h.
+// Ciclo fecha SÁBADO 23:59:59 e apura no DOMINGO seguinte às 11h.
+//   C-01 sáb 22/08 → sex 04/09 · apura dom 06/09 11h   (transição)
+//   C-02 sáb 05/09 → sáb 19/09 · apura dom 20/09 11h   (transição, 15 dias)
+//   C-03+ abre DOMINGO → fecha SÁBADO · apura DOMINGO 11h
+const SORT_C1 = new Date(2026, 7, 22, 0, 0, 0);
+const SORT_C2 = new Date(2026, 8,  5, 0, 0, 0);
+const SORT_C3 = new Date(2026, 8, 20, 0, 0, 0);
+const SORT_HORA = 11;
+const SORT_PASSO = 14 * 86400000;
 const DIAS_SEMANA_SORT = ['domingo','segunda-feira','terça-feira','quarta-feira',
                           'quinta-feira','sexta-feira','sábado'];
 function sorteioCicloAtual(){
   const hoje = new Date();
-  let k = Math.floor((hoje - SORTEIO_C1_INI) / SORTEIO_PASSO_MS);
-  if (k < 0) k = 0;
-  const ini  = new Date(SORTEIO_C1_INI.getTime() + k * SORTEIO_PASSO_MS);
-  const vira = new Date(ini.getTime() + SORTEIO_PASSO_MS);   // sábado 00:00 seguinte
-  return {
-    ini,
-    fim: new Date(vira.getTime() - 1000),                    // sexta 23:59:59
-    sorteio: new Date(vira.getFullYear(), vira.getMonth(), vira.getDate(), 20, 0, 0)
-  };
+  if (hoje < SORT_C2) return { ini: SORT_C1, fim: new Date(SORT_C2.getTime()-1000),
+                               sorteio: new Date(2026, 8, 6, SORT_HORA, 0, 0) };
+  if (hoje < SORT_C3) return { ini: SORT_C2, fim: new Date(SORT_C3.getTime()-1000),
+                               sorteio: new Date(SORT_C3.getFullYear(), SORT_C3.getMonth(), SORT_C3.getDate(), SORT_HORA, 0, 0) };
+  let k = Math.floor((hoje - SORT_C3) / SORT_PASSO); if (k < 0) k = 0;
+  const ini  = new Date(SORT_C3.getTime() + k * SORT_PASSO);
+  const vira = new Date(ini.getTime() + SORT_PASSO);
+  return { ini, fim: new Date(vira.getTime()-1000),
+           sorteio: new Date(vira.getFullYear(), vira.getMonth(), vira.getDate(), SORT_HORA, 0, 0) };
 }
 // Dia da semana do sorteio — calculado, nunca escrito na mão.
 function sorteioDiaSemana(c){ return DIAS_SEMANA_SORT[c.sorteio.getDay()]; }
