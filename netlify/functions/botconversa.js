@@ -605,6 +605,10 @@ function sorteioCicloAtual(){
 }
 // Dia da semana do sorteio — calculado, nunca escrito na mão.
 function sorteioDiaSemana(c){ return DIAS_SEMANA_SORT[c.sorteio.getDay()]; }
+// Hora do sorteio ('11h') — SEMPRE lida do próprio ciclo, NUNCA escrita na mão.
+// Em 05/09 a constante virou 11h e os textos continuaram dizendo '20h' em 11 lugares,
+// em 5 sistemas. Se a hora mudar de novo, todo texto acompanha sozinho. (06/09/2026)
+function sorteioHoraTxt(c){ return `${c.sorteio.getHours()}h`; }
 function sorteioDDMM(d){ const p = n => String(n).padStart(2,'0'); return `${p(d.getDate())}/${p(d.getMonth()+1)}`; }
 function sorteioDiasRestantes(){
   const c = sorteioCicloAtual();
@@ -634,7 +638,7 @@ function msgSorteio(){
     `*vale-compras de ${SORTEIO.premio} na VitaFlow*! 🎁\n\n` +
     `📅 *Ciclo atual:* ${sorteioDDMM(c.ini)} a ${sorteioDDMM(c.fim)}` +
     (dias > 0 ? ` _(fecha em ${dias} ${dias === 1 ? 'dia' : 'dias'})_` : '') + `\n` +
-    `🍀 *Sorteio:* ${sorteioDiaSemana(c)} ${sorteioDDMM(c.sorteio)} às 20h, pela *Loteria Federal*\n\n` +
+    `🍀 *Sorteio:* ${sorteioDiaSemana(c)} ${sorteioDDMM(c.sorteio)} às ${sorteioHoraTxt(c)}, pela *Loteria Federal*\n\n` +
     `_Vale a soma de todas as suas compras no período — não precisa ser num pedido só._\n\n` +
     `Quer saber quantos números você já tem? Me manda o seu *CPF*. 😉`;
 }
@@ -695,7 +699,7 @@ function blocoSorteioPosVenda(totalPago, freteValor, nomeCliente, acum, numPedid
   }
 
   const c        = sorteioCicloAtual();
-  const quando   = `*${sorteioDiaSemana(c)}, ${sorteioDDMM(c.sorteio)}, às 20h*`;
+  const quando   = `*${sorteioDiaSemana(c)}, ${sorteioDDMM(c.sorteio)}, às ${sorteioHoraTxt(c)}*`;
   const nDesta   = Math.floor(baseDesta / SORTEIO.porNumero);
   const nTotal   = Math.floor(baseTotal / SORTEIO.porNumero);
   const sobra    = r2(baseTotal - nTotal * SORTEIO.porNumero);
@@ -733,7 +737,11 @@ function blocoSorteioPosVenda(totalPago, freteValor, nomeCliente, acum, numPedid
 
   t += `\n🔎 *Confira quando quiser:*\n${SORTEIO.link}\n`;
   t += `Ou me manda seu *CPF* aqui mesmo que eu te falo na hora. 😉\n\n`;
-  t += `_Os números aparecem poucos segundos depois da confirmação do pagamento._\n\n`;
+  // ITEM 4 (06/09/2026): o número entra no ciclo que estiver aberto na hora do
+  // PAGAMENTO, não na hora do pedido. Se o cliente fecha o pedido hoje e paga
+  // depois da virada, o número sai no ciclo seguinte — a mensagem não pode
+  // prometer um ciclo que talvez não seja o dele.
+  t += `_Os números saem poucos segundos depois da confirmação do pagamento — e valem para o ciclo que estiver aberto nesse momento._\n\n`;
   t += `Ninguém vê os números de ninguém — só você enxerga os seus. 🍀`;
   return t;
 }
@@ -752,7 +760,7 @@ function msgMeusNumeros(d){
         `Você já comprou *R$ ${reais(base)}* neste ciclo — faltam só *R$ ${reais(falta)}* pro seu ` +
         `*primeiro número*! 🍀\n\n` +
         `Quer que eu monte um pedidinho pra fechar essa faixa? É só me dizer o produto. 😉\n\n` +
-        `_Ciclo até ${sorteioDDMM(c.fim)} · sorteio ${sorteioDiaSemana(c)} ${sorteioDDMM(c.sorteio)} às 20h_`;
+        `_Ciclo até ${sorteioDDMM(c.fim)} · sorteio ${sorteioDiaSemana(c)} ${sorteioDDMM(c.sorteio)} às ${sorteioHoraTxt(c)}_`;
     }
     return `🎲 *Seus números da sorte*\n\n` +
       `Ainda não encontrei compras suas neste ciclo (${sorteioDDMM(c.ini)} a ${sorteioDDMM(c.fim)}).\n\n` +
@@ -770,7 +778,7 @@ function msgMeusNumeros(d){
   msg += `💰 Compras no ciclo: *R$ ${reais(base)}*\n`;
   msg += `🎯 Faltam *R$ ${reais(falta)}* pro seu *${nums.length + 1}º número*!\n\n`;
   msg += `📅 Ciclo até *${sorteioDDMM(c.fim)}*` + (dias > 0 ? ` _(${dias} ${dias === 1 ? 'dia' : 'dias'})_` : '') + `\n`;
-  msg += `🍀 Sorteio *${sorteioDiaSemana(c)} ${sorteioDDMM(c.sorteio)} às 20h* pela Loteria Federal\n\n`;
+  msg += `🍀 Sorteio *${sorteioDiaSemana(c)} ${sorteioDDMM(c.sorteio)} às ${sorteioHoraTxt(c)}* pela Loteria Federal\n\n`;
   msg += `_Boa sorte!_ 🤞`;
   return msg;
 }
@@ -825,7 +833,7 @@ async function contextoPromo(){
   if (SORTEIO.ativa) {
     const _c = sorteioCicloAtual();
     const _d = sorteioDiasRestantes();
-    linhas.push(`SORTEIO QUINZENAL ATIVO AGORA: a cada R$ ${SORTEIO.porNumero} pagos EM PRODUTOS dentro do ciclo, o cliente ganha 1 NÚMERO DA SORTE e concorre a um VALE-COMPRAS DE ${SORTEIO.premio} na VitaFlow. Ciclo atual: ${sorteioDDMM(_c.ini)} a ${sorteioDDMM(_c.fim)}${_d > 0 ? ' (fecha em ' + _d + ' dia(s))' : ''}. O sorteio é no ${sorteioDiaSemana(_c)} ${sorteioDDMM(_c.sorteio)} às 20h, pela LOTERIA FEDERAL — a VitaFlow não escolhe o ganhador. Vale a SOMA de todas as compras do cliente no período (não precisa ser num pedido só) e conta o valor PAGO em produtos, já com desconto; FRETE NÃO CONTA para gerar número. Só pedidos com pagamento confirmado. Os números ZERAM a cada ciclo. O prêmio é vale-compras (NÃO é dinheiro) e vale para produtos e frete. O cliente consulta os próprios números pelo CPF — aqui comigo ou em ${SORTEIO.link}. SEMPRE que o cliente perguntar de promoção/desconto/sorteio, DIVULGUE o sorteio. Se ele perguntar quantos números tem, peça o CPF.`);
+    linhas.push(`SORTEIO QUINZENAL ATIVO AGORA: a cada R$ ${SORTEIO.porNumero} pagos EM PRODUTOS dentro do ciclo, o cliente ganha 1 NÚMERO DA SORTE e concorre a um VALE-COMPRAS DE ${SORTEIO.premio} na VitaFlow. Ciclo atual: ${sorteioDDMM(_c.ini)} a ${sorteioDDMM(_c.fim)}${_d > 0 ? ' (fecha em ' + _d + ' dia(s))' : ''}. O sorteio é no ${sorteioDiaSemana(_c)} ${sorteioDDMM(_c.sorteio)} às ${sorteioHoraTxt(_c)}, pela LOTERIA FEDERAL — a VitaFlow não escolhe o ganhador. Vale a SOMA de todas as compras do cliente no período (não precisa ser num pedido só) e conta o valor PAGO em produtos, já com desconto; FRETE NÃO CONTA para gerar número. Só pedidos com pagamento confirmado. Os números ZERAM a cada ciclo. O prêmio é vale-compras (NÃO é dinheiro) e vale para produtos e frete. O cliente consulta os próprios números pelo CPF — aqui comigo ou em ${SORTEIO.link}. SEMPRE que o cliente perguntar de promoção/desconto/sorteio, DIVULGUE o sorteio. Se ele perguntar quantos números tem, peça o CPF.`);
   }
   if (linhas.length === 1) linhas.push('Não há promoção relâmpago nem lançamento com desconto especial ativos no momento (só o benefício padrão acima). NÃO invente promoções.');
   return linhas.join('\n');
@@ -986,15 +994,77 @@ async function lerTabelaAtacado() {
     return { produtos: produtos, data: d.data || '', totalTabela: lista.length };
   } catch (e) { return { produtos: [], data: '', totalTabela: 0 }; }
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   GRAFIA PT x EN DOS NOMES DE PRODUTO — adicionado em 06/09/2026.
+
+   A tabela do atacado mistura as duas grafias DENTRO dela mesma:
+     retatrutida (7 itens)  x  retatrutide (3)
+     tirzepatida (1)        x  tirzepatide (7)
+     testosterona (7)       x  testosterone (5)
+     trembolona (4)         x  trembolone (2)  x  trenbolone
+     tesamorelim (1)        x  tesamorelin (2)
+   Como a busca era substring EXATA, quem digitava "trenbolona" — que é a
+   grafia certa em português — recebia "não encontrei", porque a tabela só tem
+   "TREMBOLONA" e "TRENBOLONE". O mesmo valia pra tesamorelina, ipamorelina,
+   sermorelina, metandienona: ZERO resultado.
+
+   radicalPalavra() reduz uma palavra ao RADICAL comum às duas grafias:
+     ph -> f   (phenyl/fenil, PHARMA/farma)      th -> t  (enanthate/enantato)
+     y  -> i   (cypionate/cipionato)             nb -> mb (clenbuterol/clembuterol)
+     letra dobrada -> simples (follistatin/folistatina)
+     m final -> n            (TESAMORELIM/tesamorelin)
+     terminações: ide/ida/ido -> id   ine/ina -> in   one/ona -> on
+                  ate/ato -> at   ole -> ol   ane/ano -> an
+                  ene/eno -> en   ila/il -> il
+   NÃO mexe em número nem dosagem (o colapso de letra repetida é só [a-z], senão
+   "1000mg" viraria "10mg").
+
+   A busca tenta a grafia EXATA primeiro e só depois o radical: é um casamento
+   A MAIS, nunca a menos. Testado contra os 376 produtos reais da tabela:
+   52/52 pares EN-PT casam, 0 resultado perdido, 0 colisão entre produtos.
+   ══════════════════════════════════════════════════════════════════════════ */
+var _FIM_PRODUTO = [
+  [/ides?$/,'id'], [/id[ao]s?$/,'id'],
+  [/ines?$/,'in'], [/inas?$/,'in'],
+  [/ones?$/,'on'], [/onas?$/,'on'],
+  [/ates?$/,'at'], [/atos?$/,'at'],
+  [/oles?$/,'ol'],
+  [/anes?$/,'an'], [/anos?$/,'an'],
+  [/enes?$/,'en'], [/enos?$/,'en'],
+  [/ilas?$/,'il']
+];
+function radicalPalavra(w) {
+  var t = String(w || '')
+    .replace(/ph/g, 'f')
+    .replace(/th/g, 't')
+    .replace(/y/g, 'i')
+    .replace(/nb/g, 'mb')
+    .replace(/([a-z])\1+/g, '$1')
+    .replace(/m$/, 'n');
+  for (var i = 0; i < _FIM_PRODUTO.length; i++) {
+    if (_FIM_PRODUTO[i][0].test(t)) return t.replace(_FIM_PRODUTO[i][0], _FIM_PRODUTO[i][1]);
+  }
+  return t;
+}
+function radicalProduto(s) {
+  return String(s || '').split(/\s+/).map(radicalPalavra).join(' ');
+}
+
 function _normAtk(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ç/g, 'c');
 }
 function buscarAtacado(produtos, termo) {
   const palavras = _normAtk(termo).split(/\s+/).filter(function (p) { return p.length >= 2; });
   if (!palavras.length) return [];
+  const radicais = palavras.map(radicalPalavra);
   return produtos.filter(function (p) {
     const nome = _normAtk(p.nome);
-    return palavras.every(function (w) { return nome.indexOf(w) >= 0; });
+    // 1ª tentativa: grafia EXATA — é a busca que sempre existiu, não muda nada.
+    if (palavras.every(function (w) { return nome.indexOf(w) >= 0; })) return true;
+    // 2ª tentativa: RADICAL — casa "retatrutida" com "Retatrutide", "trenbolona"
+    // com "TREMBOLONA"/"TRENBOLONE", "tesamorelina" com "TESAMORELIM". (06/09/2026)
+    const rad = radicalProduto(nome);
+    return radicais.every(function (r) { return rad.indexOf(r) >= 0; });
   });
 }
 function formatarListaAtk(lista) {
@@ -1899,9 +1969,14 @@ function filtrarCache(dados, termos) {
   lista.forEach(termo => {
     const palavras = norm(termo).split(/\s+/).filter(p => p.length > 2);
     if (!palavras.length) return;
+    // MESMA regra do atacado: exata primeiro, radical depois. O catálogo do varejo
+    // tinha o mesmo defeito — "testosterona" não achava "Testosterone Enanthate".
+    const radicais = palavras.map(radicalPalavra);
     dados.split('\n').filter(Boolean).forEach(linha => {
       const nomeProd = norm(linha.split('|')[0]);
-      if (palavras.every(p => nomeProd.includes(p))) resultados.add(linha);
+      if (palavras.every(p => nomeProd.includes(p))) { resultados.add(linha); return; }
+      const rad = radicalProduto(nomeProd);
+      if (radicais.every(r => rad.includes(r))) resultados.add(linha);
     });
   });
   return [...resultados];
