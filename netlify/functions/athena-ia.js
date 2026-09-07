@@ -151,13 +151,23 @@ async function buscarTodosCache(){
 
 // Catálogo REAL pra ancorar a IA. Teto MENOR que o da versão assíncrona (12k contra 20k):
 // aqui a resposta tem que caber na janela do webhook, e prompt menor = resposta mais rápida.
+//
+// CACHE NO CONTAINER: montar o catálogo custa 9 leituras no Firebase e era o maior peso
+// depois da própria Claude. O Lambda reaproveita o container entre chamadas, então guardamos
+// o texto pronto por CAT_TTL_MS. Em conversa movimentada (que é quando importa) a segunda
+// mensagem em diante já pega o catálogo pronto — sobra tempo pra resposta caber na janela.
+// TTL curto de propósito: o cache das coleções é atualizado no Firebase e não pode envelhecer.
+const CAT_TTL_MS = 3 * 60 * 1000;
+let _catTxt = '', _catTs = 0;
 async function catalogoResumo(){
+  if (_catTxt && (Date.now() - _catTs) < CAT_TTL_MS) return _catTxt;
   const parts = await Promise.all(COLECOES.map(async function(c){
     const d = await buscarCache(c);
     return d ? ('## ' + c + '\n' + d) : '';
   }));
   let txt = parts.filter(Boolean).join('\n\n');
   if (txt.length > 12000) txt = txt.slice(0, 12000) + '\n…(catálogo truncado — pode haver MAIS produtos; confirme abrindo a lista real com o marcador)';
+  if (txt) { _catTxt = txt; _catTs = Date.now(); }
   return txt;
 }
 
