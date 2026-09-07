@@ -811,7 +811,9 @@ async function contextoPromo(){
       });
     }
   } catch (e) {}
-  if (promoFreteAtiva()) {
+  if (promoIndepAtiva()) {
+    linhas.push('PROMOÇÃO ATUAL — INDEPENDÊNCIA 9.9 (07 a 09/09): 15% OFF em TODO o site (varejo) com o cupom INDEPENDENCIA99, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo, qualquer quantidade. NÃO vale no atacado. NÃO acumula com outros cupons ou promoções nem com o benefício de 3% da Athena — vale sempre o MAIOR (os 15% do cupom vencem os 3%). SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE a Independência 9.9 e diga pra usar o cupom INDEPENDENCIA99 no fechamento. ALGUNS produtos já estão com PREÇO ESPECIAL de 9.9 e por isso NÃO aceitam o cupom (o desconto já está no preço) — se o cliente disser que o cupom não pegou num produto, explique que esse item já está com preço promocional especial. NÃO fale de frete grátis/FRETEZERO nem "Compre 2 Leve 3" (não estão ativos).');
+  } else if (promoFreteAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — SEMANA DO FRETE GRÁTIS (só até domingo 06/09 à meia-noite): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE a Semana do Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até 06/09). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione o 8.8/PAPAI88 nem "15% OFF" (essa promoção já encerrou).');
   } else if (!PROMO_GENESIS_3x1.ativa) {
     linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
@@ -872,9 +874,26 @@ Em pedidos *acima de R$ 1.000*, o *frete é por nossa conta* pra todo o Brasil! 
 ⏰ *Só até domingo (06/09) à meia-noite!*
 
 _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
+// ── INDEPENDÊNCIA 9.9: 15% OFF em todo o site (varejo) com o cupom INDEPENDENCIA99 ──
+// Janela 07 a 09/09. Auto-LIGA na virada da meia-noite do dia 07 (exatamente quando o
+// FRETEZERO acima expira, 06/09 23:59:59) e auto-DESLIGA depois do dia 09. Ninguém precisa
+// mexer na virada. Pra desligar antes: ativa:false. Cupom validado pelo Firestore (validarCupom).
+const PROMO_INDEP = { ativa: true, ini: '2026-09-07T00:00:00-03:00', fim: '2026-09-09T23:59:59-03:00' };
+function promoIndepAtiva(){ return PROMO_INDEP.ativa && Date.now() >= new Date(PROMO_INDEP.ini).getTime() && Date.now() <= new Date(PROMO_INDEP.fim).getTime(); }
+const MSG_PROMO_INDEP = `🇧🇷 *INDEPENDÊNCIA 9.9 — 15% OFF EM TODO O SITE!* 🎉
+
+O *9.9* é a maior data de ofertas do e-commerce — e a VitaFlow juntou ela com o feriado da *Independência* pra você economizar! 💚
+
+🏷️ É só usar o cupom *INDEPENDENCIA99* no fechamento (aqui comigo ou no site) e ganhar *15% OFF* em qualquer produto.
+⏰ *Só de 07 a 09 de setembro (segunda a quarta)!*
+
+_Alguns produtos já saem com preço especial de 9.9 — nesses, o cupom não é necessário. Válido pros produtos do varejo; não acumula com outros cupons ou promoções (vale sempre o MAIOR desconto pra você). 😉_`;
 // Mensagem da "promoção do momento" (opção 8 / "promoção"). Hoje = Semana do Frete Grátis (FRETEZERO, >R$1.000, até 06/09).
 // Divulga a promo enquanto promoFreteAtiva() (auto-expira em PROMO_FRETE.fim); depois disso cai no texto padrão dos 3%.
 function msgPromoAtual(){
+  if (promoIndepAtiva()) {
+    return MSG_PROMO_INDEP;
+  }
   if (PROMO_GENESIS_3x1.ativa) {
     return MSG_PROMO_GENESIS_3X1;
   }
