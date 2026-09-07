@@ -214,11 +214,25 @@ function normalizarPhone(raw){
   return d;
 }
 
+// ── Negrito do WhatsApp ───────────────────────────────────────────────────────
+// O WhatsApp usa UM asterisco pra negrito (*assim*). O modelo às vezes escreve no padrão
+// Markdown (**assim**) e o cliente vê os asteriscos literais na tela — já vazou pra cliente
+// ("**MUITO!** A ZPHC é referência MÁXIMA…"). Normaliza no ÚNICO ponto por onde passa toda
+// mensagem que esta function envia. Idêntica à do botconversa.js (mexeu num, mexe no outro).
+function normalizarMarkdownWhats(t){
+  if (!t) return t;
+  return String(t)
+    .replace(/\*\*\*([^*\n]+?)\*\*\*/g, '*$1*')   // ***x*** -> *x*
+    .replace(/\*\*([^*\n]+?)\*\*/g, '*$1*')         // **x**   -> *x*
+    .replace(/^\s{0,3}#{1,6}\s*(.+?)\s*$/gm, '*$1*'); // ## Titulo -> *Titulo*
+}
+
 // Empurra a mensagem pro cliente pela API do BotConversa (mesmo padrão do send-whatsapp.js).
 // Retorna { ok, etapa, status, detalhe } pra gente saber EXATAMENTE onde travou.
 // apiKey: key da companhia certa (Athena ou Stella). Sem ela, cai na key padrão (Athena).
 async function enviarBotConversa(phone, message, apiKey){
   const KEY = apiKey || BOTCONVERSA_KEY;
+  message = normalizarMarkdownWhats(message);   // **negrito** do Markdown -> *negrito* do WhatsApp
   const phoneNorm = normalizarPhone(phone);
   console.log('[IA] enviarBotConversa -> phone bruto:', phone, '| normalizado:', phoneNorm);
   try {
