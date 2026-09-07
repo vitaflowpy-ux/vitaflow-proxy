@@ -67,6 +67,59 @@ function contextoLista(session){
   return partes.join('\n');
 }
 
+// ── IA SÍNCRONA (contorno do bloqueio da API do BotConversa na Stella) ─────────
+// PROBLEMA (diagnosticado em 07/09/2026): a IA assíncrona (athena-ia-background.js)
+// entrega a resposta EMPURRANDO pela API do BotConversa. Na companhia da Stella
+// (VitaMK 211520) essa API está bloqueada — qualquer chave, inclusive recém-gerada,
+// volta HTTP 403 "Api key is not valid" (comprovado no Swagger deles; na companhia da
+// Athena a mesma chamada volta 200). Efeito: a Stella mandava "Deixa eu ver isso… 👀"
+// e NUNCA mais falava — 0 respostas de IA em 225 conversas, contra 84 da Athena.
+//
+// CONTORNO: a resposta SÍNCRONA do webhook chega normalmente na Stella (é por ela que
+// chegam menu, tabela de preços e o próprio 👀). Então, quando o assistente NÃO é a
+// Athena, a gente chama a versão síncrona do cérebro (/athena-ia), que DEVOLVE o texto,
+// e responde na hora — sem 👀 e sem depender da API.
+//
+// A ATHENA NÃO MUDA: continua no caminho assíncrono, que funciona pra ela.
+// Quando o BotConversa liberar a API da VitaMK, basta trocar IA_SYNC_ATIVA pra false.
+const IA_SYNC_URL   = process.env.ATHENA_IA_SYNC_URL || 'https://vitaflow-proxy.netlify.app/.netlify/functions/athena-ia';
+const IA_SYNC_ATIVA = process.env.IA_SYNC_ATIVA !== 'false';
+// Teto de espera. A function do Netlify corta em 10s e o BotConversa ainda precisa
+// receber a resposta — 7,5s deixa folga. Estourou: cai no comportamento antigo.
+const IA_SYNC_TIMEOUT_MS = parseInt(process.env.IA_SYNC_TIMEOUT_MS || '7500', 10);
+
+// Chama o cérebro síncrono. Devolve o texto pronto, ou '' se não deu tempo/falhou.
+async function iaSincrona(phone, mensagem, contexto){
+  try {
+    const r = await fetchT(IA_SYNC_URL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        phone: phone, mensagem: mensagem, contexto: contexto || '',
+        promoContext: await contextoPromo(),
+        prazoMs: IA_SYNC_TIMEOUT_MS - 1000
+      })
+    }, IA_SYNC_TIMEOUT_MS);
+    if (!r.ok) { console.log('[IA-SYNC] HTTP', r.status); return ''; }
+    const d = await r.json();
+    return (d && d.resposta) ? String(d.resposta) : '';
+  } catch (e) { console.log('[IA-SYNC] falhou:', e.message); return ''; }
+}
+
+// PONTO ÚNICO de "manda pra IA". Todo lugar que antes fazia
+//   await dispararIA(...); return respond('Deixa eu ver isso pra você… 👀');
+// agora chama esta função.
+//  - Athena  → caminho assíncrono de sempre (👀 + resposta empurrada pela API).
+//  - Stella  → tenta responder na hora; se não der, cai no caminho antigo.
+async function responderComIA(sid, mensagem, contexto, respond){
+  if (IA_SYNC_ATIVA && ASSISTENTE_ATUAL !== 'Athena') {
+    const texto = await iaSincrona(sid, mensagem, contexto);
+    if (texto && texto.trim()) return respond(texto);
+    console.log('[IA-SYNC] sem texto a tempo — caindo no caminho assíncrono.');
+  }
+  await dispararIA(sid, mensagem, contexto);   // AGUARDA o disparo sair (Background Function responde 202 na hora); sem o await o Lambda congela no return e o POST nunca chega
+  return respond('Deixa eu ver isso pra você… 👀');
+}
+
 // Dispara a IA pra montar e ENVIAR o PROTOCOLO COMPLETO pós-venda dos produtos comprados.
 // Chamado quando o pedido é concluído (após a coleta de dados). Fire-and-forget.
 async function dispararIAProtocolo(phone, produtos, tabelas){
@@ -1828,8 +1881,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // produto. Só abre a lista quando é intenção de ver/comprar, não quando é pergunta.
   if (ehDuvida(nMsg)) {
     await saveSession(sid, { ...session, errosSeguidos: 0 });
-    await dispararIA(sid, nMsg, contextoLista(session));
-    return respond('Deixa eu ver isso pra você… 👀');
+    return await responderComIA(sid, nMsg, contextoLista(session), respond);
   }
   // Combo/stack (2+ produtos juntos, ex.: "testo e deca"): conduz UM de cada vez, deixando
   // claro que entendeu TODOS e encadeando o próximo — nenhum produto fica pendente.
@@ -1884,8 +1936,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // Não reconheceu como produto → em vez do "não entendi" robótico, deixa a IA responder
   // de forma inteligente e assíncrona (sem timeout). Mantém o contexto/estado atual.
   await saveSession(sid, { ...session, errosSeguidos: (session.errosSeguidos || 0) + 1 });
-  await dispararIA(sid, nMsg, contextoLista(session));   // AGUARDA o disparo sair (Background Function responde 202 na hora); sem o await o Lambda congela no return e o POST nunca chega
-  return respond('Deixa eu ver isso pra você… 👀');
+  return await responderComIA(sid, nMsg, contextoLista(session), respond);
 }
 
 // ── System prompt exclusivo para protocolos ───────────────────────────────────
@@ -4407,8 +4458,7 @@ exports.handler = async (event) => {
       }
       // Qualquer dúvida/protocolo → IA ASSÍNCRONA (inteligente e SEM timeout).
       // Aposentada a IA síncrona antiga (era ela que dava timeout no galho de Protocolo).
-      await dispararIA(sid, mensagem, contextoLista(session));
-      return respond('Deixa eu ver isso pra você… 👀');
+      return await responderComIA(sid, mensagem, contextoLista(session), respond);
     }
 
     // Fallback (preserva o carrinho — só esvazia após compra confirmada)
