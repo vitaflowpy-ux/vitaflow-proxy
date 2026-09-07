@@ -67,6 +67,20 @@ function contextoLista(session){
   return partes.join('\n');
 }
 
+// ── Negrito do WhatsApp ───────────────────────────────────────────────────────
+// O WhatsApp usa UM asterisco pra negrito (*assim*). O modelo às vezes escreve no
+// padrão Markdown (**assim**) e o cliente vê os asteriscos literais na tela
+// ("**BPC-157** é um peptídeo..."). Isso já vazou pra cliente. Converte na saída,
+// no ÚNICO ponto por onde passa tudo que a Athena/Stella responde pelo webhook.
+// Também converte ## que escapou do prompt. NÃO mexe em *negrito simples* já correto.
+function normalizarMarkdownWhats(t){
+  if (!t) return t;
+  return String(t)
+    .replace(/\*\*\*([^*\n]+?)\*\*\*/g, '*$1*')   // ***x*** -> *x*
+    .replace(/\*\*([^*\n]+?)\*\*/g, '*$1*')         // **x**   -> *x*
+    .replace(/^\s{0,3}#{1,6}\s*(.+?)\s*$/gm, '*$1*'); // ## Titulo -> *Titulo*
+}
+
 // ── IA SÍNCRONA (contorno do bloqueio da API do BotConversa na Stella) ─────────
 // PROBLEMA (diagnosticado em 07/09/2026): a IA assíncrona (athena-ia-background.js)
 // entrega a resposta EMPURRANDO pela API do BotConversa. Na companhia da Stella
@@ -84,9 +98,12 @@ function contextoLista(session){
 // Quando o BotConversa liberar a API da VitaMK, basta trocar IA_SYNC_ATIVA pra false.
 const IA_SYNC_URL   = process.env.ATHENA_IA_SYNC_URL || 'https://vitaflow-proxy.netlify.app/.netlify/functions/athena-ia';
 const IA_SYNC_ATIVA = process.env.IA_SYNC_ATIVA !== 'false';
-// Teto de espera. A function do Netlify corta em 10s e o BotConversa ainda precisa
-// receber a resposta — 7,5s deixa folga. Estourou: cai no comportamento antigo.
-const IA_SYNC_TIMEOUT_MS = parseInt(process.env.IA_SYNC_TIMEOUT_MS || '7500', 10);
+// Teto de espera. A function do Netlify corta em 10s e o botconversa ainda gasta ~1,5s
+// com sessão/cache antes e depois — então 8,2s é o máximo seguro. Medido em produção:
+// a IA responde em 4,4s a 7,3s (mais lenta no primeiro tiro depois de ociosa), e com o teto
+// antigo de 7,5s (6,5s de prazo interno) as mais lentas caíam no 👀 sem necessidade.
+// Estourou mesmo assim: cai no comportamento antigo, sem prejuízo.
+const IA_SYNC_TIMEOUT_MS = parseInt(process.env.IA_SYNC_TIMEOUT_MS || '8200', 10);
 
 // Chama o cérebro síncrono. Devolve o texto pronto, ou '' se não deu tempo/falhou.
 async function iaSincrona(phone, mensagem, contexto){
@@ -96,7 +113,7 @@ async function iaSincrona(phone, mensagem, contexto){
       body: JSON.stringify({
         phone: phone, mensagem: mensagem, contexto: contexto || '',
         promoContext: await contextoPromo(),
-        prazoMs: IA_SYNC_TIMEOUT_MS - 1000
+        prazoMs: IA_SYNC_TIMEOUT_MS - 700
       })
     }, IA_SYNC_TIMEOUT_MS);
     if (!r.ok) { console.log('[IA-SYNC] HTTP', r.status); return ''; }
@@ -3089,9 +3106,10 @@ exports.handler = async (event) => {
         ? p[2] + '\n\n_Tem mais produtos aqui! Se não achar, me manda o *nome* do que procura que eu filtro pra você. 😊_'
         : (p[2] || '');
     }
-    return { statusCode:200, headers, body: JSON.stringify({ resposta:aplicarNome(r), resposta2:aplicarNome(r2), resposta3:aplicarNome(r3), transferir:false }) };
+    const _fmt = (x) => normalizarMarkdownWhats(aplicarNome(x));
+    return { statusCode:200, headers, body: JSON.stringify({ resposta:_fmt(r), resposta2:_fmt(r2), resposta3:_fmt(r3), transferir:false }) };
   };
-  const transferir = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:aplicarNome(r), resposta2:'', resposta3:'', transferir:true }) });
+  const transferir = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:normalizarMarkdownWhats(aplicarNome(r)), resposta2:'', resposta3:'', transferir:true }) });
 
   try {
     const body = JSON.parse(event.body || '{}');
