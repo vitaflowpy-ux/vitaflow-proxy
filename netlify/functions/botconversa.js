@@ -3273,7 +3273,13 @@ exports.handler = async (event) => {
         : (p[2] || '');
     }
     const _fmt = (x) => normalizarMarkdownWhats(aplicarNome(x));
-    return { statusCode:200, headers, body: JSON.stringify({ resposta:_fmt(r), resposta2:_fmt(r2), resposta3:_fmt(r3), transferir:false, sinal: SINAL_LISTA ? 'lista' : '' }) };
+    // Convite de retomada: vai PRONTO pro fluxo, na variável {athena_abandono}.
+    // Só é preenchido quando ESTA resposta abriu uma lista de produtos E o assistente
+    // não é a Athena. Como o webhook roda a cada mensagem, a variável é sobrescrita
+    // sempre — ou seja, só continua cheia se a ÚLTIMA coisa que o lead fez foi olhar
+    // produto e sumir. É esse o gatilho do follow-up de 3h no fluxo do BotConversa.
+    const _abandono = (SINAL_LISTA && nomeAssistente !== 'Athena') ? _fmt(MSG_STELLA_ABANDONO) : '';
+    return { statusCode:200, headers, body: JSON.stringify({ resposta:_fmt(r), resposta2:_fmt(r2), resposta3:_fmt(r3), transferir:false, sinal: SINAL_LISTA ? 'lista' : '', abandono: _abandono }) };
   };
   const transferir = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:normalizarMarkdownWhats(aplicarNome(r)), resposta2:'', resposta3:'', transferir:true }) });
 
