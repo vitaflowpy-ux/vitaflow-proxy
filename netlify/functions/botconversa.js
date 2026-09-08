@@ -2693,6 +2693,24 @@ async function salvarPendingMerge(pKey, patch) {
   } catch {}
 }
 
+// ── CACHE DAS LEITURAS DA COLEÇÃO DE CUPONS (08/09/2026) ──────────────────────
+// lerPromoPrecos() e lerSemDescontoNomes() liam a COLEÇÃO INTEIRA a cada chamada — e o
+// contextoPromo() chama lerPromoPrecos() em TODA mensagem que vai pra IA (dispararIA e
+// iaSincrona). Com ~250 documentos na coleção, ~200 mensagens de IA no dia já estouravam
+// as 50.000 leituras/dia do Firestore. Estourou de verdade em 08/09: a partir daí TODA
+// consulta voltava HTTP 429 e o cliente ouvia "Não reconheci INDEPENDENCIA99 como cupom"
+// no meio da promoção. O gatilho foi a Stella passar a responder pela IA síncrona (07/09)
+// logo depois dos disparos pros leads importados.
+// O cache vive no container do Netlify (mesma ideia do catálogo no athena-ia.js): enquanto
+// o container estiver quente é UMA leitura a cada 5 min, não uma por mensagem. TTL curto
+// pra mudança feita no painel de cupons refletir rápido.
+// Em caso de erro (inclusive 429) devolve o último valor bom em vez de null — assim uma
+// falha momentânea não faz a Athena esquecer a promoção nem liberar desconto indevido.
+const FS_CACHE_TTL_MS = 5 * 60 * 1000;
+let _fsPromoPVal = null,  _fsPromoPTs = 0;
+let _fsSemDescVal = null, _fsSemDescTs = 0;
+function _fsCacheVale(ts){ return ts > 0 && (Date.now() - ts) < FS_CACHE_TTL_MS; }
+
 // ── PRODUTOS SEM DESCONTO (bloqueio GLOBAL) ───────────────────────────────────
 // Lista única no RTDB: vitaflow_sem_desconto = { produtos:{id:nome}, colecoes:{handle:true} }.
 // A Athena casa por NOME (o catálogo dela é "nome|preço" — não tem product_id). As coleções
@@ -2700,9 +2718,11 @@ async function salvarPendingMerge(pKey, patch) {
 // basta casar o NOME contra produtos{}. Produto na lista = NENHUM desconto (nem 3% Athena,
 // nem cupom, nem promo). Vale-compras NÃO é bloqueado (é crédito do próprio cliente).
 async function lerSemDescontoNomes() {
+  if (_fsCacheVale(_fsSemDescTs)) return _fsSemDescVal;
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=300`;
     const r = await fetch(url);
+    if (!r.ok) { console.log('[FS] sem_desconto HTTP', r.status, '— usando cache anterior'); return _fsSemDescVal; }
     const d = await r.json();
     const docs = (d && d.documents) || [];
     const set = {};
@@ -2712,8 +2732,10 @@ async function lerSemDescontoNomes() {
       const nm = _normNomeProd(String((f.nome && f.nome.stringValue) || ''));
       if (nm) set[nm] = true;
     });
-    return Object.keys(set).length ? set : null;
-  } catch { return null; }
+    _fsSemDescVal = Object.keys(set).length ? set : null;
+    _fsSemDescTs = Date.now();
+    return _fsSemDescVal;
+  } catch { return _fsSemDescVal; }
 }
 function produtoBloqueado(nome, setNomes) {
   if (!setNomes) return false;
@@ -2725,9 +2747,11 @@ function produtoBloqueado(nome, setNomes) {
 // precoN(cent), produtos:{id:nome} } }. A Athena casa por NOME. Produto de promo NÃO recebe
 // 3%/cupom (é "não acumula"): o preço da faixa É o preço final. Retorna array de grupos ativos.
 async function lerPromoPrecos() {
+  if (_fsCacheVale(_fsPromoPTs)) return _fsPromoPVal;
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=300`;
     const r = await fetch(url);
+    if (!r.ok) { console.log('[FS] promo_preco HTTP', r.status, '— usando cache anterior'); return _fsPromoPVal; }
     const d = await r.json();
     const docs = (d && d.documents) || [];
     const grupos = [];
@@ -2745,8 +2769,10 @@ async function lerPromoPrecos() {
       arr.forEach(v => { const orig = String(v.stringValue || ''); const nm = _normNomeProd(orig); if (nm) { nomes[nm] = true; nomesOrig.push(orig); } });
       if (Object.keys(nomes).length) grupos.push({ n: n || 2, base: base / 100, precoN: precoN / 100, agrupado, nomes, nomesOrig, titulo: (f.nome && f.nome.stringValue) || 'Promoção' });
     });
-    return grupos.length ? grupos : null;
-  } catch { return null; }
+    _fsPromoPVal = grupos.length ? grupos : null;
+    _fsPromoPTs = Date.now();
+    return _fsPromoPVal;
+  } catch { return _fsPromoPVal; }
 }
 // A qual grupo de promo o item pertence (ou null).
 function grupoPromoDoItem(nome, promoP) {
@@ -2769,20 +2795,58 @@ function aplicarPromoPreco(carrinho, promoP) {
     });
   });
 }
+// Busca UM cupom pelo código, sem varrer a coleção (08/09/2026).
+// Antes, cada tentativa de cupom lia a coleção inteira (pageSize=200) — 200 leituras do
+// Firestore por cliente que digitasse um código. Agora é um runQuery com filtro: UMA
+// leitura. Se o runQuery não achar nada, cai no método antigo — porque o campo `codigo`
+// pode estar gravado com outra caixa em algum documento antigo, e a comparação do
+// runQuery é sensível a maiúscula/minúscula. Assim a economia é total no caso normal e
+// nenhum cupom que funcionava para de funcionar.
+// Devolve: {doc} achou | null não existe | 'erro' falha técnica (rede/cota).
+async function _buscarCupomDoc(cod) {
+  const base = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents`;
+  try {
+    const body = { structuredQuery: {
+      from: [{ collectionId: 'cupons_vitaflow' }],
+      where: { fieldFilter: { field: { fieldPath: 'codigo' }, op: 'EQUAL', value: { stringValue: cod } } },
+      limit: 1
+    } };
+    const r = await fetch(`${base}:runQuery?key=${FIRESTORE_KEY}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!r.ok) { console.log('[FS] runQuery cupom HTTP', r.status); return 'erro'; }
+    const arr = await r.json();
+    if (Array.isArray(arr)) {
+      for (const linha of arr) {
+        if (linha && linha.document && linha.document.name) {
+          return { id: linha.document.name.split('/').pop(), fields: linha.document.fields || {} };
+        }
+      }
+    }
+  } catch (e) { console.log('[FS] runQuery cupom erro:', e.message); return 'erro'; }
+  // Não achou pelo filtro exato → varredura antiga (cobre caixa diferente no banco).
+  try {
+    const resp = await fetch(`${base}/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=300`);
+    if (!resp.ok) { console.log('[FS] varredura cupom HTTP', resp.status); return 'erro'; }
+    const data = await resp.json();
+    const docs = data.documents || [];
+    for (const doc of docs) {
+      const f = doc.fields || {};
+      if ((f.codigo && f.codigo.stringValue || '').toUpperCase() === cod) {
+        return { id: doc.name.split('/').pop(), fields: f };
+      }
+    }
+  } catch (e) { console.log('[FS] varredura cupom erro:', e.message); return 'erro'; }
+  return null;
+}
 async function validarCupom(codigo, subtotalProdutos) {
   try {
     const cod = (codigo || '').trim().toUpperCase();
     if (!cod) return { ok:false, motivo:'Código vazio.' };
-    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=200`;
-    const resp = await fetch(url);
-    if (!resp.ok) return { ok:false, motivo:'Erro ao consultar cupom.' };
-    const data = await resp.json();
-    const docs = data.documents || [];
-    let found = null;
-    for (const doc of docs) {
-      const f = doc.fields || {};
-      if ((f.codigo && f.codigo.stringValue || '').toUpperCase() === cod) { found = { id: doc.name.split('/').pop(), fields: f }; break; }
-    }
+    const found = await _buscarCupomDoc(cod);
+    // Falha técnica (rede, cota do Firestore estourada) NÃO é "cupom inválido". Marcado
+    // separado pra Athena poder falar a verdade pro cliente em vez de "não reconheci".
+    if (found === 'erro') return { ok:false, erroTecnico:true, motivo:'Erro ao consultar cupom.' };
     if (!found) return { ok:false, motivo:'Cupom inválido ou não encontrado.' };
     const f = found.fields;
     const ativo = f.ativo ? f.ativo.booleanValue : true;
@@ -2864,9 +2928,14 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   let descCupomAcc = 0;     // soma dos itens em que o CUPOM % venceu
   let descAthenaAcc = 0;    // soma dos itens em que os 3% Athena venceram
   let baseFora = 0;         // subtotal dos itens FORA da promo (base p/ cupom fixo)
+  // Nomes dos itens que ficam de fora do desconto — pra Athena EXPLICAR ao cliente em vez
+  // de ele achar que o cupom falhou. (Pedido do Thiago, 08/09.)
+  const _nomesPromoPreco = [];   // já estão com preço promocional
+  const _nomesSemDesc = [];      // na lista global de "sem desconto"
   carrinho.forEach(i => {
     const linha = (i.preco || 0) * (i.qtd || 0);
-    if (produtoBloqueado(i.nome, _semDesc) || grupoPromoDoItem(i.nome, _promoP)) return;   // sem desconto OU preço de promo: não leva 3%/cupom
+    if (produtoBloqueado(i.nome, _semDesc)) { _nomesSemDesc.push(i.nome); return; }        // sem desconto: não leva 3%/cupom
+    if (grupoPromoDoItem(i.nome, _promoP))  { _nomesPromoPreco.push(i.nome); return; }     // preço de promo: idem
     const ehPromo = _promoAtiva && i && i.qtd >= PROMO_DOBRO.qtdMin;
     if (!ehPromo) baseFora += linha;
     const pPromo = ehPromo ? PROMO_DOBRO.pct : 0;                 // 10 ou 0
@@ -2966,8 +3035,31 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   if (descPromo > 0) {
     linhasDesc += `🎁 Promo Dia dos Pais (compre 2): -R$ ${descPromo.toFixed(2).replace('.',',')}\n`;
   }
-  const linhaCupomInfo = (_cupomPct > 0 && descCupomAcc === 0)
+  const linhaCupomInfo = (_cupomPct > 0 && descCupomAcc === 0 && !_nomesPromoPreco.length && !_nomesSemDesc.length)
     ? `\n_(Seu cupom não superou o desconto que já apliquei — usei sempre o melhor pra você 😉)_` : '';
+  // Explica, com o NOME do produto, por que o cupom não entrou nele. Só aparece quando o
+  // cliente realmente informou um cupom — senão viraria ruído no resumo de quem nem usou.
+  let linhaCupomNaoPega = '';
+  if (_cupomOk && (_nomesPromoPreco.length || _nomesSemDesc.length)) {
+    const _lista = (arr) => arr.map(x => `*${x}*`).join(', ');
+    if (_nomesPromoPreco.length) {
+      linhaCupomNaoPega += _nomesPromoPreco.length === 1
+        ? `\n\n🏷️ _O ${_lista(_nomesPromoPreco)} já está com o *preço promocional* — nele o cupom não é necessário, o desconto já está no preço._`
+        : `\n\n🏷️ _Os itens ${_lista(_nomesPromoPreco)} já estão com o *preço promocional* — neles o cupom não é necessário, o desconto já está no preço._`;
+    }
+    if (_nomesSemDesc.length) {
+      linhaCupomNaoPega += _nomesSemDesc.length === 1
+        ? `\n\n🏷️ _O ${_lista(_nomesSemDesc)} é um item que *não aceita desconto* — o cupom não entra nele._`
+        : `\n\n🏷️ _Os itens ${_lista(_nomesSemDesc)} *não aceitam desconto* — o cupom não entra neles._`;
+    }
+    // Só promete "nos outros itens" se REALMENTE existir outro item no carrinho.
+    const _sobraram = carrinho.length - _nomesPromoPreco.length - _nomesSemDesc.length;
+    if (_sobraram > 0) {
+      linhaCupomNaoPega += _sobraram === 1
+        ? `\n_No outro item do seu pedido o desconto foi aplicado normalmente._`
+        : `\n_Nos outros itens do seu pedido o desconto foi aplicado normalmente._`;
+    }
+  }
   const linhaConviteCupom = (!cupomDocId && totalProd > 0)
     ? `\n\n🏷️ *TEM UM CUPOM DE DESCONTO?*\nÉ *AGORA*: digite o *código do cupom* antes de confirmar. 👇` : '';
   // Promo Gênesis: mostra o brinde (3º grátis) já escolhido no resumo
@@ -2997,7 +3089,8 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
       : `🚚 Frete *${frete.label}* — ${session.estadoCliente}: ~~R$ ${(frete.valor||0).toFixed(2).replace('.',',')}~~ *GRÁTIS* 🎉\n`) +
     linhaFreteGratis + linhaBrinde +
     linhasDesc + linhaCupomInfo +
-    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._` +
+    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*` + linhaCupomNaoPega +
+    `\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._` +
     linhaConviteCupom;
   const freteParaSalvar = { ...frete, valor: freteValorFinal };
   await saveSession(sid, {
@@ -4430,6 +4523,10 @@ exports.handler = async (event) => {
       const carrinho = session.carrinho || [];
       const totalProd = session.totalProd || totalCarrinho(carrinho);
       const resultado = await validarCupom(mensagem, totalProd);
+      if (!resultado.ok && resultado.erroTecnico) {
+        await enviarTelegram(`⚠️ *CUPOM: falha técnica na consulta*\n🏷️ ${(mensagem||'').trim()}\n📱 ${sid}\nO cliente digitou um cupom e o Firestore não respondeu (cota/rede).`);
+        return respond(`Tive um problema pra consultar esse cupom agora. 😕 *Não é você* — é do nosso lado.\n\nTenta de novo em uns minutinhos, ou digite *2* pra seguir sem cupom (seu desconto de ${DESCONTO_ATHENA_PCT}% continua valendo). Se for cupom de promoção, me chama que eu resolvo. 💚`);
+      }
       if (!resultado.ok) return respond(`❌ ${resultado.motivo}\n\nDigite outro código ou *menu* para recomeçar.\n_Ou digite *2* para seguir sem cupom._`);
       return await fecharResumoNormal(session, sid, resultado, respond);
     }
@@ -4628,6 +4725,12 @@ exports.handler = async (event) => {
           // Reprocessa com o cupom — se ele não vencer em nenhum item, o total fica igual e o cupom
           // não é aplicado (o cliente nunca fica pior); a nota de "não superou" aparece no resumo.
           return await fecharResumoNormal({ ...session, cupomDocId:null, cupomCodigo:null }, sid, resultado, respond);
+        }
+        // Falha técnica (cota do Firestore, rede) NÃO pode virar "não reconheci" — o cupom
+        // pode estar certíssimo. Aconteceu em 08/09 com o INDEPENDENCIA99.
+        if (resultado.erroTecnico) {
+          await enviarTelegram(`⚠️ *CUPOM: falha técnica na consulta*\n🏷️ ${_txt}\n📱 ${sid}\nO cliente digitou um cupom e o Firestore não respondeu (cota/rede).`);
+          return respond(`Tive um problema pra consultar o cupom *${_txt}* agora. 😕 *Não é você* — é do nosso lado.\n\nTenta de novo em uns minutinhos, ou digite *1* pra *confirmar a compra* (seu desconto de ${DESCONTO_ATHENA_PCT}% já está aplicado) ou *2* pra voltar ao menu. Se o cupom for de promoção, me chama que eu resolvo. 💚`);
         }
         return respond(`Não reconheci *${_txt}* como cupom. 😊 Mas seu *pedido está pronto*!\n\nDigite *1* para *confirmar a compra* ou *2* para voltar ao menu.`);
       }
