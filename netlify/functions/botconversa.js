@@ -37,6 +37,10 @@ const ATHENA_IA_URL = process.env.ATHENA_IA_URL || 'https://vitaflow-proxy.netli
 // cada invocação roda isolada, então esta variável de módulo é segura (não há concorrência
 // dentro do mesmo container). A IA assíncrona usa isso pra responder pela companhia certa.
 let ASSISTENTE_ATUAL = 'Athena';
+// Sinaliza pro FLUXO do BotConversa que ESTA resposta abriu uma lista de produtos.
+// O fluxo usa isso na saída "Se usuário não responder" pra mandar o convite de retomada
+// SÓ pra quem demonstrou interesse real (abriu lista) e sumiu. Zerado a cada requisição.
+let SINAL_LISTA = false;
 async function dispararIA(phone, mensagem, contexto, imagemUrl){
   try {
     await fetch(ATHENA_IA_URL, {
@@ -118,6 +122,7 @@ async function iaSincrona(phone, mensagem, contexto){
     }, IA_SYNC_TIMEOUT_MS);
     if (!r.ok) { console.log('[IA-SYNC] HTTP', r.status); return ''; }
     const d = await r.json();
+    if (d && d.abriuLista) SINAL_LISTA = true;   // a IA abriu lista de produtos → conta como interesse
     return (d && d.resposta) ? String(d.resposta) : '';
   } catch (e) { console.log('[IA-SYNC] falhou:', e.message); return ''; }
 }
@@ -1330,6 +1335,147 @@ https://vitaflowoficial.com
 
 👉 *Me conta: o que você está buscando hoje?* É só escolher a categoria abaixo 👇`;
 
+// ══════════════════════════════════════════════════════════════════════════════
+// STELLA — ENTRADA PRÓPRIA, CUPOM DE BOAS-VINDAS E SINAL DE ABANDONO (08/09/2026)
+// ══════════════════════════════════════════════════════════════════════════════
+// A Stella tem objetivo DIFERENTE da Athena: a Athena atende quem já é cliente e
+// fecha pedido; a Stella recruta lead frio pro site e pros grupos. Por isso ela
+// ganha uma porta de entrada própria. TUDO aqui só roda quando assistente !== 'Athena'
+// — a Athena continua exatamente como está.
+const CUPOM_BEMVINDO_PCT  = 7;   // 7% (os 3% da Athena são automáticos; cupom NÃO acumula, vale o MAIOR)
+const CUPOM_BEMVINDO_DIAS = 7;   // validade
+const CUPOM_BEMVINDO_PREFIXO = 'BEMVINDO';
+
+const MSG_BOAS_VINDAS_STELLA = `✨ *Oi! Que bom te ver por aqui* 🌿
+
+Eu sou a *Stella*, da *VitaFlow*. São *8 anos de mercado*, mais de *900 itens* em peptídeos, hormônios, emagrecedores, GH, estética e farmácia — com *atendimento humanizado*, *rastreamento do pedido do início ao fim* e entrega pra todo o Brasil 🇧🇷
+
+Por onde você prefere começar?
+
+1️⃣ *Conhecer nosso site* 🛒
+2️⃣ *Entrar nos grupos* 💬
+3️⃣ *Ver produtos e preços* 💊
+4️⃣ *Pegar meu cupom de boas-vindas* 🎁
+
+_Digite o número da opção._`;
+
+const MSG_STELLA_SITE = `🛒 Nosso catálogo completo, com preço atualizado em tempo real:
+*https://vitaflowoficial.com*
+
+E três coisas que a gente deixa de graça no site, mesmo pra quem ainda não comprou:
+
+📘 *Manual Completo de Peptídeos* — e-book gratuito, 60+ páginas
+https://vitaflowoficial.com/pages/ebook
+
+🧮 *Calculadora de peptídeos* — a dosagem certa na hora
+https://vitaflowoficial.com/pages/calculadora-de-peptideos
+
+🔬 *Gerador de protocolos por IA*
+https://vitaflowoficial.com/pages/gerador-de-protocolo
+
+Quer que eu te mostre os produtos por aqui mesmo? Digite *3*. 😉`;
+
+const MSG_STELLA_GRUPOS = `Queria te fazer um convite, sem compromisso nenhum. 😊
+
+A gente mantém uma *comunidade de mais de 1.000 pessoas* nos nossos dois grupos, onde mostra o dia a dia de verdade: o que chega, resultado de quem usa, dúvida respondida na hora e promoção que aparece lá primeiro.
+
+*Não tem obrigação de comprar nada.* Entra, acompanha uns dias e tira sua própria conclusão — sobre o catálogo, sobre o preço e sobre como a gente atende. É o tipo de coisa que não adianta eu falar, você tem que ver.
+
+São *8 anos de mercado* e mais de *900 itens* em peptídeos, hormônios, emagrecedores, GH, estética e farmácia, com *atendimento humanizado* e *rastreamento do início ao fim*.
+
+💬 WhatsApp: ${GRUPO_WHATSAPP}
+✈️ Telegram: ${GRUPO_TELEGRAM}
+
+Entra, acompanha uma semana e me diz o que achou. Te espero lá! 💪
+
+_Quer ver os produtos agora? Digite *3*._`;
+
+// Convite de retomada — usado pelo fluxo do BotConversa quando o lead abre uma lista
+// de produtos e some. Fica aqui pra o texto viver junto do resto (o fluxo copia daqui).
+const MSG_STELLA_ABANDONO = `Oi! 😊 Vi que você deu uma olhada nos produtos e acabou saindo — sem problema nenhum.
+
+Só queria te deixar dois atalhos, porque é por eles que muita gente decide:
+
+💬 Nossa *comunidade de mais de 1.000 pessoas* — resultado real, dúvida respondida na hora e promoção em primeira mão:
+${GRUPO_WHATSAPP}
+
+🛒 O *site*, com o catálogo completo e preço atualizado:
+https://vitaflowoficial.com
+
+E se quiser, eu ainda consigo te liberar um *cupom de boas-vindas de ${CUPOM_BEMVINDO_PCT}%* — é só me pedir aqui. 💪`;
+
+// ── Cupom de boas-vindas ──────────────────────────────────────────────────────
+// Grava direto no Firestore (mesma coleção `cupons_vitaflow` que o site e o
+// fechamento leem) — NÃO passa pela API do BotConversa, então funciona na Stella
+// mesmo com a API da VitaMK bloqueada.
+// Formato: tipo 'pct', tipoVal 'unico_prazo' (uso único + validade) — o validarCupom
+// já entende esse tipo. Produtos "sem desconto" e de promoção por quantidade ficam
+// de fora sozinhos no fechamento; nada a fazer aqui.
+function _codigoCupomAleatorio(){
+  const ALFA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sem I, O, 0, 1 — o cliente digita isso
+  let s = '';
+  for (let i = 0; i < 4; i++) s += ALFA.charAt(Math.floor(Math.random() * ALFA.length));
+  return CUPOM_BEMVINDO_PREFIXO + '-' + s;
+}
+async function criarCupomBoasVindas(sid){
+  try {
+    // tenta até 3 códigos: se por azar já existir, gera outro (não sobrescreve cupom de ninguém)
+    let codigo = null;
+    for (let i = 0; i < 3; i++) {
+      const tentativa = _codigoCupomAleatorio();
+      const jaExiste = await validarCupom(tentativa, 999999);
+      if (!jaExiste || !jaExiste.ok) { codigo = tentativa; break; }
+    }
+    if (!codigo) return null;
+
+    const expira = new Date(Date.now() + CUPOM_BEMVINDO_DIAS * 24 * 60 * 60 * 1000);
+    const docId = 'bemvindo_' + String(sid).replace(/\D/g,'') + '_' + Date.now();
+    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&documentId=${docId}`;
+    const body = { fields: {
+      codigo:     { stringValue: codigo },
+      ativo:      { booleanValue: true },
+      tipo:       { stringValue: 'pct' },
+      valor:      { doubleValue: CUPOM_BEMVINDO_PCT },
+      tipoVal:    { stringValue: 'unico_prazo' },   // uso único E com prazo
+      expira:     { timestampValue: expira.toISOString() },
+      maxUsos:    { integerValue: 1 },
+      usosAtual:  { integerValue: 0 },
+      minPedido:  { doubleValue: 0 },
+      maxDesc:    { doubleValue: 0 },
+      // rastreabilidade — pra você saber de onde veio cada cupom na Gestão de Cupons
+      origem:     { stringValue: 'stella-boas-vindas' },
+      telefone:   { stringValue: String(sid) },
+      criadoEm:   { stringValue: new Date().toISOString() }
+    }};
+    const r = await fetchT(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }, 6000);
+    if (!r.ok) { console.log('[CUPOM] falhou ao criar:', r.status); return null; }
+    console.log('[CUPOM] criado:', codigo, 'para', sid, 'expira', expira.toISOString());
+    return { codigo: codigo, expira: expira };
+  } catch (e) { console.log('[CUPOM] excecao:', e.message); return null; }
+}
+function _dataBR(d){
+  try { return new Intl.DateTimeFormat('pt-BR', { day:'2-digit', month:'2-digit', timeZone:'America/Sao_Paulo' }).format(d); }
+  catch (e) { return ('0'+d.getDate()).slice(-2) + '/' + ('0'+(d.getMonth()+1)).slice(-2); }
+}
+function msgCupomBoasVindas(cupom){
+  const linhas = [];
+  linhas.push(`🎁 Prontinho! Seu cupom de boas-vindas:`);
+  linhas.push('');
+  linhas.push(`🏷️ *${cupom.codigo}*`);
+  linhas.push(`💰 *${CUPOM_BEMVINDO_PCT}% de desconto* · válido até *${_dataBR(cupom.expira)}* · uso único`);
+  linhas.push('');
+  linhas.push(`Vale em *todos os nossos canais de vendas*.`);
+  // Quando há promoção MAIOR no ar, é desonesto deixar o cliente usar o cupom pior.
+  // A gente avisa e transforma isso em motivo pra uma SEGUNDA compra dentro da validade.
+  if (typeof promoIndepAtiva === 'function' && promoIndepAtiva()) {
+    linhas.push('');
+    linhas.push(`💡 *Dica:* a *Independência 9.9* está rolando com *15% OFF* (cupom *INDEPENDENCIA99*) e é melhor que o seu. Aproveita ela agora — e o seu cupom de boas-vindas fica guardado pra uma *segunda compra* dentro da validade. 😉`);
+  }
+  linhas.push('');
+  linhas.push(`Quer ver os produtos? Digite *3*.`);
+  return linhas.join('\n');
+}
+
 
 const MENU_PEPTIDEOS = `*💊 PEPTÍDEOS*
 
@@ -2280,6 +2426,7 @@ async function getSession(sid) {
   } catch { return { state:'MENU' }; }
 }
 async function saveSession(sid, sess) {
+  if (sess && sess.state === 'LISTA_PRODUTOS') SINAL_LISTA = true;   // ver SINAL_LISTA no topo
   try {
     const k = sid.replace(/[^a-zA-Z0-9]/g,'_');
     await fetch(fbUrl(`/vitaflow_sessions/${k}.json`), {
@@ -3107,11 +3254,12 @@ exports.handler = async (event) => {
         : (p[2] || '');
     }
     const _fmt = (x) => normalizarMarkdownWhats(aplicarNome(x));
-    return { statusCode:200, headers, body: JSON.stringify({ resposta:_fmt(r), resposta2:_fmt(r2), resposta3:_fmt(r3), transferir:false }) };
+    return { statusCode:200, headers, body: JSON.stringify({ resposta:_fmt(r), resposta2:_fmt(r2), resposta3:_fmt(r3), transferir:false, sinal: SINAL_LISTA ? 'lista' : '' }) };
   };
   const transferir = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:normalizarMarkdownWhats(aplicarNome(r)), resposta2:'', resposta3:'', transferir:true }) });
 
   try {
+    SINAL_LISTA = false;
     const body = JSON.parse(event.body || '{}');
     nomeAssistente = ((body.assistente || body.nome_assistente || 'Athena') + '').trim() || 'Athena';
     ASSISTENTE_ATUAL = nomeAssistente; // deixa a IA assíncrona responder pela companhia certa
@@ -3219,6 +3367,30 @@ exports.handler = async (event) => {
       return respond('🛒 Seu carrinho está *vazio* por enquanto.\n\n' + buildTriagem());
     }
 
+    // ── MENU DE ENTRADA DA STELLA ─────────────────────────────────────────────
+    // 1 site · 2 grupos · 3 produtos (cai no menu normal) · 4 cupom de boas-vindas.
+    // Qualquer outra coisa que o lead escrever aqui segue o fluxo normal (IA, produto
+    // reconhecido, etc.) — o menu não prende ninguém.
+    if (state === 'MENU_STELLA') {
+      if (n === '1' || n === 'site') {
+        return respond(MSG_STELLA_SITE);
+      }
+      if (n === '2' || n === 'grupo' || n === 'grupos') {
+        return respond(MSG_STELLA_GRUPOS);
+      }
+      if (n === '3' || n === 'produtos' || n === 'ver produtos') {
+        await saveSession(sid, { ...session, state:'MENU' });
+        return respond(buildMenuPrincipal());
+      }
+      if (n === '4' || n.includes('cupom')) {
+        const cupom = await criarCupomBoasVindas(sid);
+        if (cupom) return respond(msgCupomBoasVindas(cupom));
+        // Não conseguiu gravar o cupom: NÃO inventa código. Assume e segue.
+        return respond('Ops, não consegui gerar seu cupom agora. 😕 Me chama daqui a pouco que eu tento de novo — ou digite *3* que eu já te mostro os produtos.');
+      }
+      // não é opção do menu → deixa o fluxo normal cuidar (produto, dúvida, IA…)
+    }
+
     // ── LEAD FRIO: clique no botão "Sim, quero conhecer" do template aprovado pela Meta ──
     // O WhatsApp envia o texto do botão como mensagem. Detecta, apresenta a VitaFlow e abre o menu.
     // Não dispara em estados de pagamento (pra não atrapalhar quem já está comprando).
@@ -3226,6 +3398,12 @@ exports.handler = async (event) => {
       || n === 'quero ver')
       && !emCheckout;
     if (ehLeadConhecer) {
+      // STELLA: porta de entrada própria (site / grupos / produtos / cupom).
+      // A Athena continua caindo direto no menu de compra, como sempre.
+      if (nomeAssistente !== 'Athena') {
+        await saveSession(sid, { ...session, state:'MENU_STELLA' });
+        return respond(MSG_BOAS_VINDAS_STELLA);
+      }
       await saveSession(sid, { ...session, state:'MENU' });
       return respond(MSG_BOAS_VINDAS_LEAD + '\n\n' + buildMenuPrincipal());
     }
