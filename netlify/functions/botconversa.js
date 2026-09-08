@@ -85,10 +85,34 @@ function contextoLista(session){
 // Também converte ## que escapou do prompt. NÃO mexe em *negrito simples* já correto.
 function normalizarMarkdownWhats(t){
   if (!t) return t;
-  return String(t)
+  const base = String(t)
     .replace(/\*\*\*([^*\n]+?)\*\*\*/g, '*$1*')   // ***x*** -> *x*
     .replace(/\*\*([^*\n]+?)\*\*/g, '*$1*')         // **x**   -> *x*
     .replace(/^\s{0,3}#{1,6}\s*(.+?)\s*$/gm, '*$1*'); // ## Titulo -> *Titulo*
+  return _balancearAsteriscos(base);
+}
+// O negrito do WhatsApp NÃO atravessa quebra de linha: um "*" aberto numa linha e fechado
+// na seguinte faz aparecer o asterisco literal e o negrito vazar pro texto errado. Foi o
+// que aconteceu em 08/09 na Stella ("*INDEPENDÊNCIA 9.9 (07 a 09/09):" numa linha e
+// "*15% OFF" na outra). Aqui cada LINHA é fechada em si mesma:
+//   "* item"  no começo da linha  -> vira "• item" (o WhatsApp não faz bullet com *)
+//   linha com nº ÍMPAR de "*" que ABRE negrito -> fecha no fim da linha
+//   sobrou um "*" solto sem abrir nada -> remove
+function _balancearAsteriscos(txt){
+  return String(txt || '').split('\n').map(function(linha){
+    var l = linha.replace(/^(\s*)\*\s+/, '$1• ');          // "* item" -> "• item"
+    var n = (l.match(/\*/g) || []).length;
+    if (n % 2 === 0) return l;                              // já está par: nada a fazer
+    if (/^\s*\*\S/.test(l)) return l.replace(/\s*$/, '') + '*';  // abriu negrito -> fecha
+    // Sobrou um "*" ímpar no meio da linha. Só tira se ele estiver COLADO numa palavra
+    // (aí é marcação quebrada). "R$ 10 * 3 unidades" é multiplicação — fica como está.
+    var ult = l.lastIndexOf('*');
+    if (ult < 0) return l;
+    var antes = ult > 0 ? l.charAt(ult - 1) : ' ';
+    var depois = ult < l.length - 1 ? l.charAt(ult + 1) : ' ';
+    if (/\S/.test(antes) || /\S/.test(depois)) return l.slice(0, ult) + l.slice(ult + 1);
+    return l;
+  }).join('\n');
 }
 
 // ── IA SÍNCRONA (contorno do bloqueio da API do BotConversa na Stella) ─────────
@@ -1553,7 +1577,7 @@ _Quer ver os produtos agora? Digite *3*._
 
 // Convite de retomada — usado pelo fluxo do BotConversa quando o lead abre uma lista
 // de produtos e some. Fica aqui pra o texto viver junto do resto (o fluxo copia daqui).
-const MSG_STELLA_ABANDONO = `Oi! 😊 Vi que você deu uma olhada nos produtos e acabou saindo — sem problema nenhum.
+const MSG_STELLA_ABANDONO = `Oi! 😊 Vi que nossa conversa parou por aqui — sem problema nenhum.
 
 Só queria te deixar dois atalhos, porque é por eles que muita gente decide:
 
@@ -1563,7 +1587,12 @@ ${GRUPO_WHATSAPP}
 🛒 O *site*, com o catálogo completo e preço atualizado:
 https://vitaflowoficial.com
 
-E se quiser, eu ainda consigo te liberar um *cupom de boas-vindas de ${CUPOM_BEMVINDO_PCT}%* — é só me pedir aqui. 💪`;
+Quer que eu siga daqui? É só digitar o número:
+
+1️⃣ *Conhecer nosso site* 🛒
+2️⃣ *Entrar nos grupos* 💬
+3️⃣ *Ver produtos e preços* 💊
+4️⃣ *Pegar meu cupom de boas-vindas de ${CUPOM_BEMVINDO_PCT}%* 🎁`;
 
 // Convite de retomada da ATHENA (08/09/2026). Diferente do da Stella de propósito:
 // quem fala com a Athena em geral JÁ está nos grupos e já é cliente — convidar pro
@@ -2050,6 +2079,13 @@ function ehDuvida(nMsg) {
   return gatilhos.some(x => t.includes(x));
 }
 
+// Pedido EXPLÍCITO do cupom de boas-vindas da Stella. Proposital não casar com "cupom"
+// solto: no fechamento, "tem cupom?" é conversa de checkout, não pedido de cupom novo.
+function ehPedidoCupomBemVindo(nMsg){
+  const t = ' ' + (nMsg || '') + ' ';
+  return /(cupom de boas|cupom boas|cupom de bem|cupom de 7|meu cupom|quero o cupom|quero um cupom|pega[r]? o cupom|pega[r]? meu cupom|libera[r]? o cupom|libera[r]? meu cupom|gera[r]? o cupom|gera[r]? meu cupom|cupom de desconto de boas)/.test(t);
+}
+
 // ── Detecção de intenção de RASTREIO (CPF, nº de pedido, e-mail, palavra) ──────
 // Número de pedido VitaFlow: VF-DDMM-XNNN (ex.: VF-0806-A003). Aceita variações de espaço/traço.
 function ehNumeroPedido(msg) {
@@ -2389,11 +2425,19 @@ function filtrarCache(dados, termos) {
     // MESMA regra do atacado: exata primeiro, radical depois. O catálogo do varejo
     // tinha o mesmo defeito — "testosterona" não achava "Testosterone Enanthate".
     const radicais = palavras.map(radicalPalavra);
+    // O radical PT/EN só vale pra palavra de 4+ letras. Sem isso, "sim" virava radical
+    // "sin" e casava com "SYNedica" (radical "sinedica") — o cliente respondia *Sim* e
+    // recebia uma lista de produtos com o título "SIM". Caso real, 08/09. Palavra curta
+    // (bpc, hcg, gh) continua valendo pelo texto exato, que é como ela é escrita mesmo.
+    const podeRadical = palavras.every(p => p.length >= 4);
     dados.split('\n').filter(Boolean).forEach(linha => {
       const nomeProd = norm(linha.split('|')[0]);
-      if (palavras.every(p => nomeProd.includes(p))) { resultados.add(linha); return; }
+      // _casaTermo: o termo precisa INICIAR uma palavra do nome (mesmo limite que a busca
+      // do atacado passou a usar em 08/09) — não casa mais no meio de outra palavra.
+      if (palavras.every(p => _casaTermo(nomeProd, p))) { resultados.add(linha); return; }
+      if (!podeRadical) return;
       const rad = radicalProduto(nomeProd);
-      if (radicais.every(r => rad.includes(r))) resultados.add(linha);
+      if (radicais.every(r => _casaTermo(rad, r))) resultados.add(linha);
     });
   });
   return [...resultados];
@@ -3602,6 +3646,25 @@ exports.handler = async (event) => {
       }
     } catch (e) {}
 
+    // ── STELLA: LEAD QUE VOLTA DEPOIS DE HORAS CAI NO MENU DELA (08/09/2026) ──
+    // O follow-up de abandono (3h) termina com o MENU NUMERADO da Stella. Só que a resposta
+    // dele chega numa sessão parada, que pode estar em qualquer estado antigo — e aí o "1"
+    // seria lido como "produto 1 da lista de ontem". Passou 2h sem falar, sem carrinho e fora
+    // do checkout: a Stella recomeça do menu dela, que é exatamente o que a mensagem ofereceu.
+    // A Athena não entra nisso (o menu numerado é da Stella).
+    if (nomeAssistente !== 'Athena') {
+      const _paradoMs = session._dedupTs ? (Date.now() - session._dedupTs) : 0;
+      const _semCarrinho = !(Array.isArray(session.carrinho) && session.carrinho.length);
+      const _estadoTravado = ['COLETA_DADOS','AGUARDAR_COMPROVANTE','CONFIRMAR','ESTADO','FRETE',
+        'OBS_PERGUNTA','OBS_TEXTO','INFORMAR_CUPOM','PERGUNTA_CUPOM','ESCOLHER_BRINDE',
+        'PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','PROTO_HUMANO'
+      ].includes(session.state || '');
+      if (_paradoMs > 2 * 3600000 && _semCarrinho && !_estadoTravado && session.state !== 'MENU_STELLA') {
+        console.log('[STELLA-RETOMADA] sessao parada ha', Math.round(_paradoMs/60000), 'min — voltando pro menu da Stella. Estado antigo:', session.state);
+        session.state = 'MENU_STELLA';
+      }
+    }
+
     const state = session.state || 'MENU';
 
     // ── BLINDAGEM DO CHECKOUT ─────────────────────────────────────────────────
@@ -3732,6 +3795,19 @@ exports.handler = async (event) => {
         return respond('Ops, não consegui gerar seu cupom agora. 😕 Me chama daqui a pouco que eu tento de novo — ou digite *3* que eu já te mostro os produtos.');
       }
       // não é opção do menu → deixa o fluxo normal cuidar (produto, dúvida, IA…)
+    }
+
+    // ── CUPOM DE BOAS-VINDAS EM QUALQUER ESTADO (08/09/2026) ─────────────────
+    // O gatilho existia SÓ dentro do MENU_STELLA. Como o follow-up de 3h é enviado pelo
+    // FLUXO do BotConversa (o código nem sabe que ele saiu), o lead voltava com a sessão em
+    // outro estado e o pedido caía na IA — que respondia falando da promoção 9.9 em vez de
+    // gerar o cupom prometido. Caso real, 08/09 ("Quero" e "Cupom" às 05:30).
+    // Exige intenção EXPLÍCITA de cupom de boas-vindas: um "tem cupom?" solto no fechamento
+    // continua sendo assunto do checkout, não gera cupom.
+    if (nomeAssistente !== 'Athena' && !emCheckout && ehPedidoCupomBemVindo(n)) {
+      const _cupomBV = await criarCupomBoasVindas(sid);
+      if (_cupomBV) return respond(msgCupomBoasVindas(_cupomBV));
+      return respond('Ops, não consegui gerar seu cupom agora. 😕 Me chama daqui a pouco que eu tento de novo — ou digite *3* que eu já te mostro os produtos.');
     }
 
     // ── LEAD FRIO: clique no botão "Sim, quero conhecer" do template aprovado pela Meta ──
