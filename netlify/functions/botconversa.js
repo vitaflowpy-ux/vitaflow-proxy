@@ -41,6 +41,12 @@ let ASSISTENTE_ATUAL = 'Athena';
 // O fluxo usa isso na saída "Se usuário não responder" pra mandar o convite de retomada
 // SÓ pra quem demonstrou interesse real (abriu lista) e sumiu. Zerado a cada requisição.
 let SINAL_LISTA = false;
+// Idem, pra ATHENA (08/09/2026). O convite dela só sai quando o cliente demonstrou
+// interesse E ainda NÃO tem link de pagamento gerado — porque a partir do link quem
+// cobra é o GAS (lembrete de 3h, de 20h e o template de 24h). Sem esta trava a mesma
+// pessoa levaria dois lembretes diferentes pela mesma compra.
+let SINAL_CARRINHO = false;   // tem item no carrinho
+let SINAL_FECHANDO = false;   // já tem link/pedido em aberto, ou está informando dados
 async function dispararIA(phone, mensagem, contexto, imagemUrl){
   try {
     await fetch(ATHENA_IA_URL, {
@@ -1148,19 +1154,150 @@ function radicalProduto(s) {
 function _normAtk(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ç/g, 'c');
 }
+
+// ── LIMITE DE PALAVRA NA BUSCA (08/09/2026) ───────────────────────────────────
+// A busca usava `nome.indexOf(w) >= 0` — substring pura. Isso fazia "Nad" casar
+// dentro de "CA-NAD-A" e devolver "CANADA PARABOL 200 (TREMBO ENAN)" pra quem
+// procurava NAD+ (caso real, Charles Moraes 10:56). Agora o termo só casa se
+// começar uma palavra: continua achando por PREFIXO ("reta" acha "RETATRUTIDE",
+// que é como o cliente digita), mas nunca mais no MEIO de outra palavra.
+function _casaTermo(nome, w) {
+  if (!w) return false;
+  var i = 0;
+  while ((i = nome.indexOf(w, i)) >= 0) {
+    var antes = (i === 0) ? ' ' : nome.charAt(i - 1);
+    if (!/[a-z0-9]/.test(antes)) return true;
+    i += 1;
+  }
+  return false;
+}
+// Distância de edição curta — só pra tolerar erro de digitação em palavra longa
+// ("Tizerpartida" → "tirzepatida", caso real). Sai cedo quando a diferença de
+// tamanho já passou do limite, então é barato.
+function _distEdicao(a, b, max) {
+  a = String(a || ''); b = String(b || '');
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  var linha = [], i, j;
+  for (j = 0; j <= b.length; j++) linha[j] = j;
+  for (i = 1; i <= a.length; i++) {
+    var ant = linha[0]; linha[0] = i; var melhor = i;
+    for (j = 1; j <= b.length; j++) {
+      var tmp = linha[j];
+      linha[j] = Math.min(linha[j] + 1, linha[j - 1] + 1, ant + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+      if (linha[j] < melhor) melhor = linha[j];
+      ant = tmp;
+    }
+    if (melhor > max) return max + 1;
+  }
+  return linha[b.length];
+}
+// Quanto do termo do cliente o nome do produto cobre. Pesos:
+//   3 — o termo inicia uma palavra do nome ("reta" acha "RETATRUTIDE"), ou casa
+//       por radical PT/EN ("trenbolona" acha "TREMBOLONA"). Palavra de 3 letras
+//       vale só 1 (senão "dia", de "bom dia", trazia DIANABOL).
+//   2 — o inverso: a palavra do nome inicia o termo ("sustanon" -> "SUSTA").
+//   2 — erro de digitação ("Tizerpartida" -> "TIRZEPATIDA").
+function _pontosTermo(nome, palavras, radicais) {
+  var rad = radicalProduto(nome);
+  var pedacos = nome.split(/[^a-z0-9]+/).filter(function (x) { return x.length >= 3; });
+  var pts = 0;
+  for (var k = 0; k < palavras.length; k++) {
+    var w = palavras[k];
+    // Palavra de 1-2 letras não pontua sozinha: era assim que "de" (de "preciso DE
+    // ajuda") casava com "DECA/DEPOT" e "em" com "ENANTATO", devolvendo meia tabela
+    // pra uma frase de conversa.
+    if (w.length < 3) continue;
+    if (_casaTermo(nome, w) || _casaTermo(rad, radicais[k])) { pts += (w.length >= 4 ? 3 : 1); continue; }
+    if (w.length < 4) continue;
+    var achou = false;
+    for (var q = 0; q < pedacos.length; q++) {
+      // o CONTRÁRIO do prefixo: a palavra da tabela inicia o que o cliente digitou.
+      // É o "sustanon" achando "ACTIZA SUSTA DEPOT" — a tabela abrevia.
+      if (pedacos[q].length >= 4 && w.indexOf(pedacos[q]) === 0) { pts += 2; achou = true; break; }
+    }
+    if (achou) continue;
+    if (w.length >= 6) {
+      var maxD = (w.length >= 10 ? 3 : 2);   // "Tizerpartida" -> "TIRZEPATIDA" são 3 edições
+      for (var z = 0; z < pedacos.length; z++) {
+        if (pedacos[z].length >= 5 && _distEdicao(w, pedacos[z], maxD) <= maxD) { pts += 2; break; }
+      }
+    }
+  }
+  return pts;
+}
 function buscarAtacado(produtos, termo) {
   const palavras = _normAtk(termo).split(/\s+/).filter(function (p) { return p.length >= 2; });
   if (!palavras.length) return [];
   const radicais = palavras.map(radicalPalavra);
-  return produtos.filter(function (p) {
+  const estrito = produtos.filter(function (p) {
     const nome = _normAtk(p.nome);
-    // 1ª tentativa: grafia EXATA — é a busca que sempre existiu, não muda nada.
-    if (palavras.every(function (w) { return nome.indexOf(w) >= 0; })) return true;
+    // 1ª tentativa: grafia EXATA (agora com limite de palavra).
+    if (palavras.every(function (w) { return _casaTermo(nome, w); })) return true;
     // 2ª tentativa: RADICAL — casa "retatrutida" com "Retatrutide", "trenbolona"
     // com "TREMBOLONA"/"TRENBOLONE", "tesamorelina" com "TESAMORELIM". (06/09/2026)
     const rad = radicalProduto(nome);
-    return radicais.every(function (r) { return rad.indexOf(r) >= 0; });
+    return radicais.every(function (r) { return _casaTermo(rad, r); });
   });
+  if (estrito.length) return estrito;
+  // 3ª tentativa (08/09/2026): APELIDO DO DICIONÁRIO. A tabela do atacado vem do
+  // fornecedor com os nomes comerciais e em inglês ("DIANABOL", "SUSTA", "ANAVAR"),
+  // e o cliente digita a gíria ou o nome científico ("dbol", "sustanon",
+  // "equipoise"). O DICT_PRODUTOS já tem esse de-para curado — reaproveita ele em
+  // vez de manter uma segunda lista de sinônimos que ia nascer desatualizada.
+  var alt = _sinonimosAtacado(termo);
+  for (var a = 0; a < alt.length; a++) {
+    var palA = _normAtk(alt[a]).split(/\s+/).filter(function (x) { return x.length >= 2; });
+    if (!palA.length) continue;
+    var radA = palA.map(radicalPalavra);
+    var achA = produtos.filter(function (p) {
+      var nome = _normAtk(p.nome);
+      if (palA.every(function (w) { return _casaTermo(nome, w); })) return true;
+      var r = radicalProduto(nome);
+      return radA.every(function (x) { return _casaTermo(r, x); });
+    });
+    if (achA.length) return achA;
+  }
+  // 4ª tentativa: o cliente mandou o NOME COMPLETO com marca e dose
+  // ("Tirzepatida Tirzec MD 15mg (Bujão) 60mg") ou errou uma letra ("Tizerpartida").
+  // Exigir TODAS as palavras devolvia zero. Aqui pontua por quantas palavras o
+  // produto cobre e devolve os melhores — nunca uma lista genérica nem um vazio.
+  const pontuados = [];
+  // Termo de UMA palavra pode entrar só com o prefixo invertido (2 pts) — é o
+  // "sustanon" achando "SUSTA". Com várias palavras exige-se pelo menos um
+  // casamento forte, senão qualquer frase solta traria meia tabela.
+  const minPts = (palavras.length === 1) ? 2 : 3;
+  for (var i = 0; i < produtos.length; i++) {
+    var pts = _pontosTermo(_normAtk(produtos[i].nome), palavras, radicais);
+    if (pts >= minPts) pontuados.push({ p: produtos[i], pts: pts });
+  }
+  if (!pontuados.length) return [];
+  pontuados.sort(function (a, b) { return b.pts - a.pts; });
+  const teto = pontuados[0].pts;
+  return pontuados.filter(function (o) { return o.pts === teto; }).map(function (o) { return o.p; });
+}
+// Termos alternativos vindos do DICT_PRODUTOS (label + canônicos + filtro) pra um
+// termo que o cliente digitou. Não inventa sinônimo: só devolve o que já está
+// cadastrado no dicionário do varejo.
+function _sinonimosAtacado(termo) {
+  var out = [];
+  try {
+    var rec = reconhecerProduto(_normAtk(termo));
+    if (!rec || !rec.entry) return out;
+    var e = rec.entry;
+    var vistos = {};
+    var junta = function (t) {
+      var v = _normAtk(t || '').trim();
+      if (!v || vistos[v]) return;
+      vistos[v] = 1; out.push(v);
+    };
+    (e.filtro || []).forEach(junta);
+    (e.canonico || []).forEach(junta);
+    junta(e.label);
+    // tira o que o cliente já digitou (não adianta repetir a mesma busca)
+    var digitado = _normAtk(termo).trim();
+    out = out.filter(function (t) { return t !== digitado; });
+  } catch (err) {}
+  return out;
 }
 function formatarListaAtk(lista) {
   return lista.map(function (p, i) {
@@ -1187,7 +1324,17 @@ async function entrarAtacado(session, sid, respond) {
   return respond(MSG_ATACADO);
 }
 // Busca um termo na tabela de atacado e mostra a lista numerada (ou avisa se não achou).
+// Saudação/agradecimento solto dentro do atacado NÃO é busca de produto. Sem isto,
+// "oi" casava com "STANOZOLOL *OI*L" e o cliente recebia uma lista sem pé nem cabeça.
+function _ehConversaSolta(t) {
+  var s = norm(t || '').replace(/[!?.,]/g, ' ').replace(/\s+/g, ' ').trim();
+  return /^(oi|ola|opa|eae|e ai|hey|alo|bom dia|boa tarde|boa noite|tudo bem|tudo bom|blz|beleza|ok|okay|certo|entendi|obrigado|obrigada|valeu|vlw|de nada|show|otimo|otima|perfeito|legal|top|sim|nao|nada|nenhum|nenhuma)$/.test(s);
+}
 async function atkAbrirBusca(session, sid, termo, respond) {
+  if (_ehConversaSolta(termo)) {
+    await saveSession(sid, { ...session, state: 'ATACADO' });
+    return respond(MSG_ATACADO);
+  }
   const tab = await lerTabelaAtacado();
   if (!tab.produtos.length) {
     await saveSession(sid, { ...session, state: 'ATACADO' });
@@ -1195,8 +1342,15 @@ async function atkAbrirBusca(session, sid, termo, respond) {
   }
   const achados = buscarAtacado(tab.produtos, termo);
   if (!achados.length) {
+    // Não é nome de produto, é PERGUNTA ("Protocolo", "como uso isso?"). Antes o cliente
+    // levava "Não encontrei Protocolo na tabela de atacado" e sumia (caso real, 08/09).
+    // A busca continua tendo prioridade — só cai aqui quando ela não achou nada.
+    if (ehDuvida(norm(termo)) || ehPedidoProtocoloCompleto(norm(termo))) {
+      await saveSession(sid, { ...session, state: 'ATACADO' });
+      return await responderComIA(sid, termo, contextoLista(session), respond);
+    }
     await saveSession(sid, { ...session, state: 'ATACADO' });
-    return respond(`Não encontrei *${termo}* na tabela de atacado. 🤔\n\nTenta outro nome, ou baixe a tabela completa em PDF:\n${TABELA_ATACADO_URL}`);
+    return respond(`Não encontrei *${termo}* na tabela de atacado de hoje. 🤔\n\nA tabela do atacado é a do *fornecedor* e muda todo dia — pode ser que esse item não esteja nela agora. Tenta o *nome do princípio ativo* (ex.: *oxandrolona* no lugar de *anavar*) ou baixe a tabela completa em PDF:\n${TABELA_ATACADO_URL}\n\n_Se você quer esse produto no *varejo*, digite *menu* — lá o catálogo é outro._`);
   }
   const lista = achados.slice(0, 30);
   await saveSession(sid, { ...session, state: 'ATK_LISTA', atkLista: lista });
@@ -1410,6 +1564,17 @@ ${GRUPO_WHATSAPP}
 https://vitaflowoficial.com
 
 E se quiser, eu ainda consigo te liberar um *cupom de boas-vindas de ${CUPOM_BEMVINDO_PCT}%* — é só me pedir aqui. 💪`;
+
+// Convite de retomada da ATHENA (08/09/2026). Diferente do da Stella de propósito:
+// quem fala com a Athena em geral JÁ está nos grupos e já é cliente — convidar pro
+// grupo de novo não serve. Aqui o objetivo é destravar a dúvida que fez a pessoa sumir.
+// Vai na variável {athena_abandono} do fluxo, disparada pela saída "Se usuário não
+// responder" depois de 3h.
+const MSG_ATHENA_ABANDONO = `Oi! 😊 Vi que a gente parou no meio da conversa — sem pressa nenhuma.
+
+Se ficou alguma dúvida de *dose, protocolo, prazo de entrega ou preço*, me pergunta aqui que eu te respondo na hora.
+
+E se você já sabe o que quer, é só me mandar o *nome do produto* que eu monto seu pedido e te passo o link em um minuto. 💪`;
 
 // ── Cupom de boas-vindas ──────────────────────────────────────────────────────
 // Grava direto no Firestore (mesma coleção `cupons_vitaflow` que o site e o
@@ -2441,11 +2606,21 @@ async function getSession(sid) {
     const k = sid.replace(/[^a-zA-Z0-9]/g,'_');
     const r = await fetch(fbUrl(`/vitaflow_sessions/${k}.json`));
     const d = await r.json();
+    // O estado que o cliente JÁ tinha também conta pros sinais — senão uma mensagem
+    // que não chama saveSession deixaria SINAL_FECHANDO falso e o convite de retomada
+    // sairia por cima do lembrete de pagamento que o GAS já manda.
+    _marcarSinais(d);
     return d || { state:'MENU' };
   } catch { return { state:'MENU' }; }
 }
+function _marcarSinais(sess) {
+  if (!sess) return;
+  if (sess.state === 'LISTA_PRODUTOS') SINAL_LISTA = true;
+  if (Array.isArray(sess.carrinho) && sess.carrinho.length) SINAL_CARRINHO = true;
+  if (sess.link || sess.orderNsu || sess.state === 'AGUARDAR_COMPROVANTE' || sess.state === 'COLETA_DADOS') SINAL_FECHANDO = true;
+}
 async function saveSession(sid, sess) {
-  if (sess && sess.state === 'LISTA_PRODUTOS') SINAL_LISTA = true;   // ver SINAL_LISTA no topo
+  _marcarSinais(sess);   // ver SINAL_LISTA / SINAL_CARRINHO / SINAL_FECHANDO no topo
   try {
     const k = sid.replace(/[^a-zA-Z0-9]/g,'_');
     await fetch(fbUrl(`/vitaflow_sessions/${k}.json`), {
@@ -3273,18 +3448,31 @@ exports.handler = async (event) => {
         : (p[2] || '');
     }
     const _fmt = (x) => normalizarMarkdownWhats(aplicarNome(x));
-    // Convite de retomada: vai PRONTO pro fluxo, na variável {athena_abandono}.
-    // Só é preenchido quando ESTA resposta abriu uma lista de produtos E o assistente
-    // não é a Athena. Como o webhook roda a cada mensagem, a variável é sobrescrita
-    // sempre — ou seja, só continua cheia se a ÚLTIMA coisa que o lead fez foi olhar
-    // produto e sumir. É esse o gatilho do follow-up de 3h no fluxo do BotConversa.
-    const _abandono = (SINAL_LISTA && nomeAssistente !== 'Athena') ? _fmt(MSG_STELLA_ABANDONO) : '';
+    // Convite de retomada: vai PRONTO pro fluxo, na variável {athena_abandono}, e é a
+    // saída "Se usuário não responder" (3h) que dispara. Como o webhook roda a cada
+    // mensagem, a variável é reescrita sempre — só continua cheia se a ÚLTIMA coisa que
+    // a pessoa fez foi demonstrar interesse e sumir.
+    //   STELLA — hoje o bloco do fluxo dela usa TEXTO FIXO (decisão de 08/09: o convite
+    //     vale pra todo abandono, inclusive quem só recebeu a saudação e nunca passou
+    //     pelo webhook). O campo continua sendo devolvido por compatibilidade.
+    //   ATHENA — condicional de propósito: só quem demonstrou interesse (abriu lista ou
+    //     tem item no carrinho) e AINDA NÃO está fechando. Depois que existe link/pedido
+    //     em aberto quem cobra é o GAS (lembrete 3h, 20h e template de 24h) — mandar os
+    //     dois seria cobrar a mesma pessoa duas vezes pela mesma compra.
+    let _abandono = '';
+    if (nomeAssistente !== 'Athena') {
+      _abandono = SINAL_LISTA ? _fmt(MSG_STELLA_ABANDONO) : '';
+    } else if (!SINAL_FECHANDO && (SINAL_LISTA || SINAL_CARRINHO)) {
+      _abandono = _fmt(MSG_ATHENA_ABANDONO);
+    }
     return { statusCode:200, headers, body: JSON.stringify({ resposta:_fmt(r), resposta2:_fmt(r2), resposta3:_fmt(r3), transferir:false, sinal: SINAL_LISTA ? 'lista' : '', abandono: _abandono }) };
   };
   const transferir = (r) => ({ statusCode:200, headers, body: JSON.stringify({ resposta:normalizarMarkdownWhats(aplicarNome(r)), resposta2:'', resposta3:'', transferir:true }) });
 
   try {
     SINAL_LISTA = false;
+    SINAL_CARRINHO = false;
+    SINAL_FECHANDO = false;
     const body = JSON.parse(event.body || '{}');
     nomeAssistente = ((body.assistente || body.nome_assistente || 'Athena') + '').trim() || 'Athena';
     ASSISTENTE_ATUAL = nomeAssistente; // deixa a IA assíncrona responder pela companhia certa
@@ -3390,6 +3578,40 @@ exports.handler = async (event) => {
       }
       await saveSession(sid, { ...session, state:'TRIAGEM' });
       return respond('🛒 Seu carrinho está *vazio* por enquanto.\n\n' + buildTriagem());
+    }
+
+    // ── PERGUNTA DO CLIENTE FORA DO MENU (08/09/2026) ──────────────────────────
+    // Até aqui, ehDuvida() só era consultada no galho MENU/TRIAGEM. Em QUALQUER outro
+    // estado o handler do estado respondia primeiro e a pergunta nunca chegava na IA.
+    // Casos reais lidos no inbox em 08/09:
+    //   "Quantas UI é 7,5mg?" no PROTO_ESCOLHER      -> relistou os produtos
+    //   "Acompanha água bacteriostática?" no AGUARDAR_COMPROVANTE -> "pedido em aberto"
+    //   "Protocolo" dentro do atacado -> "Não encontrei Protocolo na tabela de atacado"
+    // Em todos, o cliente sumiu logo depois. Agora a IA responde ANTES do handler e o
+    // ESTADO É PRESERVADO — o cliente continua exatamente de onde parou.
+    //
+    // Fora desta regra (de propósito):
+    //   COLETA_DADOS/OBS_TEXTO/INFORMAR_CUPOM -> o cliente está DIGITANDO um dado livre;
+    //   MENU/TRIAGEM/DUVIDAS_LIVRE            -> já tratam dúvida no lugar certo;
+    //   PROTO_CLIENTE/PROTO_IDENTIFICAR/ADM   -> esperam sim/não, CPF ou senha;
+    //   mídia (comprovante), número puro e palavra de navegação -> não são pergunta.
+    // Estes estados JÁ chamam tratarTextoLivre(), que já consulta ehDuvida() e já manda
+    // pedido de protocolo pro fluxo certo — desviar antes deles só atrapalharia.
+    // (Os estados do ATACADO ficam de fora porque lá a BUSCA na tabela vem primeiro —
+    //  "tem klow?" tem que mostrar o preço do atacado, não virar papo. Quando a busca
+    //  não acha nada, é o próprio atkAbrirBusca que manda pra IA.)
+    const _JA_TRATA_DUVIDA = ['MENU','TRIAGEM','PRAZOS_RASTREIO','DUVIDAS','DUVIDAS_LIVRE','SUBMENU_TESTO','ESTER_BASE','PEPTIDEOS','HORMONIOS','FABRICANTES','LISTA_PRODUTOS','QUANTIDADE','STACK_PROXIMO','CARRINHO','REMOVER_ITEM','POS_TABELA_FRAC','ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','ATK_REMOVER','ATK_CONFIRMAR','ATK_BLOQUEIO'];
+    // Nestes o cliente está DIGITANDO um dado livre (endereço, observação, cupom, CPF,
+    // sim/não) — uma frase com "?" ali é parte do dado, não pergunta pra IA.
+    const _DADO_LIVRE = ['COLETA_DADOS','OBS_TEXTO','INFORMAR_CUPOM','ADM','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_HUMANO'];
+    const _ehMidiaMsg = !!(body.type || body.mediaUrl || body.media_url || body.fileUrl || body.url || body.arquivo || body.file || body.caption !== undefined);
+    const _ehNavegacao = /^\s*\d{1,3}\s*$/.test(n) || /^(menu|voltar|volta|sair|cancelar|inicio|come[cç]ar)$/.test(n);
+    if (state && _JA_TRATA_DUVIDA.indexOf(state) < 0 && _DADO_LIVRE.indexOf(state) < 0
+        && !_ehMidiaMsg && !_ehNavegacao
+        && (ehDuvida(n) || ehPedidoProtocoloCompleto(n))) {
+      console.log('[DUVIDA-FORA-DO-MENU] state:', state, '| msg:', String(mensagem).slice(0, 60));
+      await saveSession(sid, { ...session, errosSeguidos: 0 });   // estado PRESERVADO
+      return await responderComIA(sid, mensagem, contextoLista(session), respond);
     }
 
     // ── MENU DE ENTRADA DA STELLA ─────────────────────────────────────────────
