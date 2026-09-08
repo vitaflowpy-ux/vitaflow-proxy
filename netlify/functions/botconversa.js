@@ -1035,12 +1035,13 @@ const MSG_REVENDEDORES = `*🤝 PROGRAMA DE REVENDEDORES VitaFlow*
 Revenda é diferente do atacado! 😉 No programa de revendedores você tem *preço de revenda* pra revender pros seus clientes — e o melhor: *não tem pedido mínimo*, pode pedir qualquer valor.
 
 *Como começar:*
-1️⃣ Faça seu cadastro em: revendedores.vitaflowoficial.com/seja-revendedor
+1️⃣ Faça seu cadastro aqui:
+https://revendedores.vitaflowoficial.com/seja-revendedor
 2️⃣ Assim que o cadastro for *aprovado*, é só enviar seus pedidos normalmente. 🚀
 
 Qualquer dúvida sobre a revenda, é só me chamar!
 
-_Digite *menu* pra voltar ao início._`;
+0️⃣ Voltar ao menu`;
 
 const MSG_ATACADO = `*🏭 ATACADO VitaFlow* — pedido mínimo *R$ 3.000* e *FRETE GRÁTIS!* 🚚
 
@@ -1219,7 +1220,9 @@ _*Esses prazos são estimativas e podem variar conforme distância, condições 
 const MSG_PERGUNTA_TIPO_PRAZO = `📦 *Sobre prazo de entrega* — me diz qual o tipo da sua compra:
 
 1️⃣ Compra normal (varejo)
-2️⃣ Compra no atacado (pedido mínimo R$ 3.000)`;
+2️⃣ Compra no atacado (pedido mínimo R$ 3.000)
+
+0️⃣ Voltar ao menu`;
 
 // ── Tabela de fretes ──────────────────────────────────────────────────────────
 // Tabela IGUAL à do site (main-cart-footer). Valores em reais. Atualizada 14/08/2026.
@@ -1373,7 +1376,9 @@ https://vitaflowoficial.com/pages/calculadora-de-peptideos
 🔬 *Gerador de protocolos por IA*
 https://vitaflowoficial.com/pages/gerador-de-protocolo
 
-Quer que eu te mostre os produtos por aqui mesmo? Digite *3*. 😉`;
+Quer que eu te mostre os produtos por aqui mesmo? Digite *3*.
+
+0️⃣ Voltar ao menu`;
 
 const MSG_STELLA_GRUPOS = `Queria te fazer um convite, sem compromisso nenhum. 😊
 
@@ -1388,7 +1393,9 @@ São *8 anos de mercado* e mais de *900 itens* em peptídeos, hormônios, emagre
 
 Entra, acompanha uma semana e me diz o que achou. Te espero lá! 💪
 
-_Quer ver os produtos agora? Digite *3*._`;
+_Quer ver os produtos agora? Digite *3*._
+
+0️⃣ Voltar ao menu`;
 
 // Convite de retomada — usado pelo fluxo do BotConversa quando o lead abre uma lista
 // de produtos e some. Fica aqui pra o texto viver junto do resto (o fluxo copia daqui).
@@ -1473,6 +1480,8 @@ function msgCupomBoasVindas(cupom){
   }
   linhas.push('');
   linhas.push(`Quer ver os produtos? Digite *3*.`);
+  linhas.push('');
+  linhas.push(`0️⃣ Voltar ao menu`);
   return linhas.join('\n');
 }
 
@@ -1581,6 +1590,16 @@ function fmtProdLista(arr) {
 // Sobe um nível conforme o estado atual (o "menu anterior").
 async function voltarAthena(session, sid, respond) {
   var st = session.state;
+  // STELLA: o topo da árvore dela é o MENU_STELLA (site/grupos/produtos/cupom),
+  // não a triagem da Athena. Sem isso o lead "voltava" pra uma tela que não é dela.
+  var ehStella = (typeof ASSISTENTE_ATUAL !== 'undefined' && ASSISTENTE_ATUAL !== 'Athena');
+  if (ehStella && (st === 'MENU_STELLA' || st === 'MENU' || st === 'PRAZOS_RASTREIO' || st === 'DUVIDAS' || st === 'TRIAGEM')) {
+    await saveSession(sid, { ...session, state: 'MENU_STELLA' });
+    return respond('↩️ *Voltando ao menu*\n\n' + MSG_BOAS_VINDAS_STELLA);
+  }
+  if (st === 'MENU_STELLA') {
+    await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️ *Voltando às categorias*\n\n' + buildMenuPrincipal());
+  }
   if (st === 'MENU' || st === 'PRAZOS_RASTREIO' || st === 'DUVIDAS') {
     await saveSession(sid, { ...session, state: 'TRIAGEM' }); return respond('↩️ *Voltando ao início*\n\n' + buildTriagem());
   }
@@ -3372,6 +3391,9 @@ exports.handler = async (event) => {
     // Qualquer outra coisa que o lead escrever aqui segue o fluxo normal (IA, produto
     // reconhecido, etc.) — o menu não prende ninguém.
     if (state === 'MENU_STELLA') {
+      if (n === '0' || n === 'voltar' || n === 'volta') {
+        return respond('↩️ *Voltando ao menu*\n\n' + MSG_BOAS_VINDAS_STELLA);
+      }
       if (n === '1' || n === 'site') {
         return respond(MSG_STELLA_SITE);
       }
@@ -3469,7 +3491,7 @@ exports.handler = async (event) => {
     const ehSaudacaoOuMenu = n === 'menu' || n === 'inicio' || n === 'voltar' || n === 'start' || saudacoes.some(s => n === s || n.startsWith(s+' ') || n.startsWith(s+'!'));
 
     // ── "0" ou "voltar" = sobe UM nível na árvore (só nos menus navegáveis). "menu" continua indo pro início. ──
-    const NAV_VOLTAR = ['MENU','PEPTIDEOS','HORMONIOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','BUSCA_LIVRE','LISTA_PRODUTOS','QUANTIDADE','PRAZOS_RASTREIO','PRAZO_TIPO','FRETE_AVULSO','RASTREAR','DUVIDAS','DUVIDAS_LIVRE','ATACADO','ATK_LISTA','ATK_QTD'];
+    const NAV_VOLTAR = ['MENU_STELLA','MENU','PEPTIDEOS','HORMONIOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','BUSCA_LIVRE','LISTA_PRODUTOS','QUANTIDADE','PRAZOS_RASTREIO','PRAZO_TIPO','FRETE_AVULSO','RASTREAR','DUVIDAS','DUVIDAS_LIVRE','ATACADO','ATK_LISTA','ATK_QTD'];
     if ((n === '0' || n === 'voltar' || n === 'volta') && NAV_VOLTAR.indexOf(state) >= 0) {
       return await voltarAthena(session, sid, respond);
     }
@@ -3498,6 +3520,15 @@ exports.handler = async (event) => {
       if (num === 1) { await saveSession(sid, { ...session, state:'CARRINHO' }); return respond(`Boa, continuando sua compra! 🛒\n\n${msgCarrinhoMenu(session.carrinho || [])}`); }
       if (num === 2) { await saveSession(sid, { state:'TRIAGEM' }); return respond(`Prontinho, comecei um carrinho novo! 🧹\n\n${buildTriagem()}`); }
       return respond('Digite *1* para continuar sua compra de antes ou *2* para começar do zero:');
+    }
+
+    // REVENDA vem ANTES da transferência pra humano: 'vendedor' (da lista abaixo) é
+    // SUBSTRING de 're-vendedor', então "quero ser revendedor" era transferido pra
+    // atendente em vez de receber o link de cadastro. Detectado em 08/09/2026.
+    const ehRevenda = ["revenda","revender","revendedor","revendedora","revendedores","seja revendedor","ser revendedor","quero revender","como revender","programa de revenda","preço de revenda","preco de revenda","virar revendedor","quero ser revendedor","como funciona a revenda","como funciona revenda"].some(p => n.includes(p));
+    if (ehRevenda && !emCheckout) {
+      await saveSession(sid, { ...session, state:'MENU', errosSeguidos:0 });
+      return respond(MSG_REVENDEDORES);
     }
 
     const palavrasHumano = ['atendente','atendimento','humano','vendedor','pessoa real','falar com alguem','falar com pessoa','falar com atendimento','quero atendimento','suporte','reclamacao','reclamar'];
@@ -3620,13 +3651,8 @@ exports.handler = async (event) => {
       return await fazerRastreio(mensagem, respond);
     }
 
-    // REVENDEDORES (programa de revenda) — DIFERENTE de atacado. Tem que vir ANTES do atacado,
-    // senão "revenda/revender/revendedor" cairia no fluxo de atacado (bug do Charles Moraes).
-    const ehRevenda = ["revenda","revender","revendedor","revendedora","revendedores","seja revendedor","ser revendedor","quero revender","como revender","programa de revenda","preço de revenda","preco de revenda","virar revendedor","quero ser revendedor","como funciona a revenda","como funciona revenda"].some(p => n.includes(p));
-    if (ehRevenda && !emCheckout) {
-      await saveSession(sid, { ...session, state:'MENU', errosSeguidos:0 });
-      return respond(MSG_REVENDEDORES);
-    }
+    // (a detecção de revenda subiu pra antes da transferência pra humano — ver acima.
+    //  Continua valendo a regra de vir ANTES do atacado: "revenda" não é "atacado".)
 
     const ehAtacado = ["atacado","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
     if (ehAtacado && !emCheckout) {
@@ -3636,7 +3662,7 @@ exports.handler = async (event) => {
     const ehTabela = ["tabela","lista de preco","lista de preços","catalogo","catálogo","tabela de preco","tabela de preços","lista completa","ver precos","ver preços"].some(p => n.includes(p));
     if (ehTabela && !ehAtacado && !emCheckout) {
       await saveSession(sid, { ...session, state:'MENU' });
-      return respond('📋 *Tabela de Preços VitaFlow*\n\nVeja nossa lista completa de produtos, preços e disponibilidade em tempo real, sempre atualizada:\n\n👉 vitaflowoficial.com/pages/tabela\n\nVocê também pode comprar direto pelo site ou continuar comigo aqui. 😊\n\n_Digite *menu* para navegar pelas categorias._');
+      return respond('📋 *Tabela de Preços VitaFlow*\n\nVeja nossa lista completa de produtos, preços e disponibilidade em tempo real, sempre atualizada:\n\n👉 vitaflowoficial.com/pages/tabela\n\nVocê também pode comprar direto pelo site ou continuar comigo aqui. 😊\n\n0️⃣ Voltar ao menu');
     }
 
     const ehPerguntaPrazo = ["prazo","quanto tempo","quantos dias","demora","chega em","tempo de entrega","prazo de entrega","prazo de postagem"].some(p => n.includes(p));
