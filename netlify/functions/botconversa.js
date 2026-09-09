@@ -1034,7 +1034,7 @@ async function anunciarGenesis(session, sid, respond, curto) {
 }
 
 // ── Grupo VIP (WhatsApp + Telegram) ───────────────────────────────────────────
-const GRUPO_WHATSAPP = 'https://chat.whatsapp.com/COklmK82NWu9zQkdALjchy';
+const GRUPO_WHATSAPP = 'https://chat.whatsapp.com/BNa4tPKWjaZ1cTP4XwXtgM';
 const GRUPO_TELEGRAM = 'https://t.me/referencias_vitaflow';
 function msgGrupoVip() {
   return `🎉 *GRUPOS VIP VITAFLOW* 🎉\n\n` +
@@ -1511,7 +1511,7 @@ https://vitaflowoficial.com
 🔬 Temos também um *gerador de protocolos de peptídeos por IA, gratuito*, no site para te ajudar.
 
 📲 *Entre em nossos grupos* e acompanhe novidades, lançamentos, cupons e ofertas relâmpago em primeira mão:
-💬 WhatsApp: https://chat.whatsapp.com/COklmK82NWu9zQkdALjchy
+💬 WhatsApp: https://chat.whatsapp.com/BNa4tPKWjaZ1cTP4XwXtgM
 ✈️ Telegram: https://t.me/referencias_vitaflow
 
 👉 *Me conta: o que você está buscando hoje?* É só escolher a categoria abaixo 👇`;
