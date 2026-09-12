@@ -2658,13 +2658,15 @@ async function abrirPromo(session, sid) {
   });
   return listaPromoMsg(promo);
 }
-function gerarLinkRecibo(orderNsu, nome, cpf, email, pagto, carrinho, frete, total) {
+function gerarLinkRecibo(orderNsu, nome, cpf, email, pagto, carrinho, frete, total, endereco, telefone) {
   const hoje = new Date().toLocaleDateString('pt-BR');
   const params = [];
   params.push('pedido=' + encodeURIComponent(orderNsu));
-  if (nome)  params.push('nome='  + encodeURIComponent(nome));
-  if (cpf)   params.push('cpf='   + encodeURIComponent(cpf));
-  if (email) params.push('email=' + encodeURIComponent(email));
+  if (nome)     params.push('nome='  + encodeURIComponent(nome));
+  if (cpf)      params.push('cpf='   + encodeURIComponent(cpf));
+  if (email)    params.push('email=' + encodeURIComponent(email));
+  if (telefone) params.push('tel='   + encodeURIComponent(telefone));
+  if (endereco) params.push('end='   + encodeURIComponent(endereco));
   params.push('data='  + encodeURIComponent(hoje));
   params.push('pagto=' + encodeURIComponent(pagto));
   params.push('total=' + encodeURIComponent(total.toFixed(2)));
@@ -2780,7 +2782,7 @@ async function salvarPendingMerge(pKey, patch) {
 // pra mudança feita no painel de cupons refletir rápido.
 // Em caso de erro (inclusive 429) devolve o último valor bom em vez de null — assim uma
 // falha momentânea não faz a Athena esquecer a promoção nem liberar desconto indevido.
-const FS_CACHE_TTL_MS = 5 * 60 * 1000;
+const FS_CACHE_TTL_MS = 60 * 1000;   // 60s (era 5 min): mudança na lista reflete quase na hora; o fechamento ainda lê fresco (ver lerSemDescontoNomes(true))
 let _fsPromoPVal = null,  _fsPromoPTs = 0;
 let _fsSemDescVal = null, _fsSemDescTs = 0;
 function _fsCacheVale(ts){ return ts > 0 && (Date.now() - ts) < FS_CACHE_TTL_MS; }
@@ -2791,8 +2793,8 @@ function _fsCacheVale(ts){ return ts > 0 && (Date.now() - ts) < FS_CACHE_TTL_MS;
 // marcadas são expandidas para produtos {id,nome} no painel (Gestão de Cupons), então aqui
 // basta casar o NOME contra produtos{}. Produto na lista = NENHUM desconto (nem 3% Athena,
 // nem cupom, nem promo). Vale-compras NÃO é bloqueado (é crédito do próprio cliente).
-async function lerSemDescontoNomes() {
-  if (_fsCacheVale(_fsSemDescTs)) return _fsSemDescVal;
+async function lerSemDescontoNomes(forcar) {
+  if (!forcar && _fsCacheVale(_fsSemDescTs)) return _fsSemDescVal;
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=300`;
     const r = await fetch(url);
@@ -2820,8 +2822,8 @@ function produtoBloqueado(nome, setNomes) {
 // Config: RTDB vitaflow_promo_precos = { <id>: { nome, ativo, agrupado, n, base(cent),
 // precoN(cent), produtos:{id:nome} } }. A Athena casa por NOME. Produto de promo NÃO recebe
 // 3%/cupom (é "não acumula"): o preço da faixa É o preço final. Retorna array de grupos ativos.
-async function lerPromoPrecos() {
-  if (_fsCacheVale(_fsPromoPTs)) return _fsPromoPVal;
+async function lerPromoPrecos(forcar) {
+  if (!forcar && _fsCacheVale(_fsPromoPTs)) return _fsPromoPVal;
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=300`;
     const r = await fetch(url);
@@ -2982,11 +2984,11 @@ async function incrementarUsoCupom(docId) {
 async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const carrinho = session.carrinho || [];
   const frete = session.freteSelecionado || {};
-  const _promoP = await lerPromoPrecos();          // promoções de preço por quantidade (ativas)
+  const _promoP = await lerPromoPrecos(true);      // no FECHAMENTO lê fresco (ignora cache de 60s): mudança na lista vale na hora
   aplicarPromoPreco(carrinho, _promoP);            // sobrescreve o preço dos itens de promo (base/precoN)
   if (_promoP) session.totalProd = carrinho.reduce((s,i)=>s+(i.preco||0)*(i.qtd||0),0);
   const totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
-  const _semDesc = await lerSemDescontoNomes();   // produtos GLOBALMENTE sem desconto (lista única)
+  const _semDesc = await lerSemDescontoNomes(true); // idem: bloqueio SEMPRE atual no checkout (não pesa na cota — fechamento é raro)
 
   // ── DESCONTO (Option B: cada produto leva UM desconto — o MAIOR; nunca soma) ──
   // Candidatos por produto: promo Dia dos Pais (10% se comprado em 2+), cupom, e o benefício
@@ -3123,8 +3125,8 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     }
     if (_nomesSemDesc.length) {
       linhaCupomNaoPega += _nomesSemDesc.length === 1
-        ? `\n\n🏷️ _O ${_lista(_nomesSemDesc)} é um item que *não aceita desconto* — o cupom não entra nele._`
-        : `\n\n🏷️ _Os itens ${_lista(_nomesSemDesc)} *não aceitam desconto* — o cupom não entra neles._`;
+        ? `\n\n🏷️ _O ${_lista(_nomesSemDesc)} já está com o *preço fechado promocional* e não acumula cupom — o melhor valor já está aplicado. 😉_`
+        : `\n\n🏷️ _Os itens ${_lista(_nomesSemDesc)} já estão com o *preço fechado promocional* e não acumulam cupom — o melhor valor já está aplicado. 😉_`;
     }
     // Só promete "nos outros itens" se REALMENTE existir outro item no carrinho.
     const _sobraram = carrinho.length - _nomesPromoPreco.length - _nomesSemDesc.length;
@@ -5011,9 +5013,18 @@ exports.handler = async (event) => {
       const total    = session.total || 0;
       const num_pedido = session.orderNsu || await gerarNumeroPedido();
 
+      // Endereço completo + telefone no recibo, pro cliente CONFERIR e corrigir ANTES do envio.
+      const _cepFmt = String(coleta.cep || '').replace(/\D/g,'').replace(/^(\d{5})(\d{3})$/, '$1-$2') || (coleta.cep || '');
+      const _telD = String(coleta.telefone || '').replace(/\D/g,'');
+      const _telFmt = _telD.length === 11 ? `(${_telD.slice(0,2)}) ${_telD.slice(2,7)}-${_telD.slice(7)}`
+                    : _telD.length === 10 ? `(${_telD.slice(0,2)}) ${_telD.slice(2,6)}-${_telD.slice(6)}`
+                    : (coleta.telefone || '');
+      const _endRua = [coleta.endereco, coleta.complemento].filter(Boolean).join(', ');
+      const _endLoc = [coleta.bairro, (coleta.cidade ? coleta.cidade + (coleta.estado ? '-' + coleta.estado : '') : coleta.estado)].filter(Boolean).join(', ');
+      const _endCompleto = [ [_endRua, _endLoc].filter(Boolean).join(' — '), (_cepFmt ? 'CEP ' + _cepFmt : '') ].filter(Boolean).join(', ');
       const linkRecibo = gerarLinkRecibo(
         num_pedido || 'VF-A', coleta.nome, coleta.cpf, coleta.email || '',
-        'WhatsApp / Athena', carrinho, frete, total
+        'WhatsApp / Athena', carrinho, frete, total, _endCompleto, _telFmt
       );
 
       const primeiroNome = (coleta.nome || '').split(' ')[0];
