@@ -45,7 +45,8 @@ let SINAL_LISTA = false;
 // interesse E ainda NÃO tem link de pagamento gerado — porque a partir do link quem
 // cobra é o GAS (lembrete de 3h, de 20h e o template de 24h). Sem esta trava a mesma
 // pessoa levaria dois lembretes diferentes pela mesma compra.
-let SINAL_CARRINHO = false;   // tem item no carrinho
+let SINAL_CARRINHO = false;   // tem item no carrinho (VAREJO)
+let SINAL_ATACADO  = false;   // tem item no carrinho de ATACADO (carrinhoAtk)
 let SINAL_FECHANDO = false;   // já tem link/pedido em aberto, ou está informando dados
 async function dispararIA(phone, mensagem, contexto, imagemUrl){
   try {
@@ -1605,6 +1606,34 @@ Se ficou alguma dúvida de *dose, protocolo, prazo de entrega ou preço*, me per
 
 E se você já sabe o que quer, é só me mandar o *nome do produto* que eu monto seu pedido e te passo o link em um minuto. 💪`;
 
+// Aviso de escassez do ATACADO. Vai ANTES do link de pagamento (no fechamento) e é o
+// mesmo espírito do MSG_ATACADO_ABANDONO: no atacado o preço acompanha o câmbio e o
+// lote acaba rápido, então o valor que o cliente está vendo é o daquele momento.
+const AVISO_ATACADO_MOMENTO = `⏳ _Lembrando: preço e disponibilidade dos produtos do atacado são *deste momento* — variam com o câmbio e com o lote, além de esgotarem muito rápido._`;
+
+// Convite de retomada de quem montou carrinho de ATACADO e sumiu (3h). Diferente do
+// MSG_ATHENA_ABANDONO de propósito: aqui o gancho é a escassez, não a dúvida.
+const MSG_ATACADO_ABANDONO = `Oi! 😊 Vi que você montou seu pedido de *atacado* e a gente acabou parando por aí.
+
+Só que no atacado tem um detalhe importante:
+
+💱 O preço que eu te passei é o de *hoje* — no atacado o valor acompanha o *câmbio*, e ele muda todos os dias.
+
+📦 E o estoque vira *rápido*. Como sai em *volume grande*, um lote acaba de uma hora pra outra — e o lote seguinte já entra com *outro preço*, às vezes até com outra marca.
+
+⏳ Aquele valor e aquela disponibilidade eram *daquele momento*. Não consigo segurar nenhum dos dois.
+
+É só me responder aqui que eu já te mando o *link de pagamento* pra você garantir o seu agora. 💪`;
+
+// Resposta natural ao convite acima = fechar. Sem isso o cliente que responde "quero"
+// no ATK_CART cairia na BUSCA de produto e nunca receberia o link.
+// Só palavras de intenção: pergunta de verdade ("qual o prazo?") continua sendo pergunta.
+function _ehQueroFechar(t) {
+  const x = (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  if (!x || x.length > 40) return false;
+  return /^(sim|isso|ok|okay|blz|beleza|bora|vamos|vamo|quero|quero sim|pode|pode mandar|pode ser|manda|manda ai|me manda|manda o link|link|o link|fechar|fecha|fechado|finalizar|finaliza|pagar|quero pagar|quero fechar|quero o link|ainda quero|continuar|continua)[!.…]*$/.test(x);
+}
+
 // ── Cupom de boas-vindas ──────────────────────────────────────────────────────
 // Grava direto no Firestore (mesma coleção `cupons_vitaflow` que o site e o
 // fechamento leem) — NÃO passa pela API do BotConversa, então funciona na Stella
@@ -2661,6 +2690,7 @@ function _marcarSinais(sess) {
   if (!sess) return;
   if (sess.state === 'LISTA_PRODUTOS') SINAL_LISTA = true;
   if (Array.isArray(sess.carrinho) && sess.carrinho.length) SINAL_CARRINHO = true;
+  if (Array.isArray(sess.carrinhoAtk) && sess.carrinhoAtk.length) SINAL_ATACADO = true;
   if (sess.link || sess.orderNsu || sess.state === 'AGUARDAR_COMPROVANTE' || sess.state === 'COLETA_DADOS') SINAL_FECHANDO = true;
 }
 async function saveSession(sid, sess) {
@@ -3307,6 +3337,17 @@ async function mostrarResumoAtacado(session, sid, respond) {
   await saveSession(sid, { ...session, state:'ATK_CONFIRMAR' });
   return respond(`*📋 RESUMO DO PEDIDO — ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n🚚 Frete: *GRÁTIS* 🎉\n\n💰 *Total: R$ ${sub.toFixed(2).replace('.', ',')}*\n\n*Confirma?*\n1️⃣ Sim, gerar o link de pagamento\n2️⃣ Não, voltar`);
 }
+// Fecha o pedido de ATACADO direto, sem passar pelo resumo/observação. Usado quando o
+// cliente responde ao convite de 3h com uma palavra de intenção (_ehQueroFechar): ele já
+// viu o carrinho, então pedir pra confirmar de novo só atrasa a venda.
+async function fecharAtacadoDireto(session, sid, respond, assistente) {
+  const cart = session.carrinhoAtk || [];
+  const sub = totalCarrinho(cart);
+  const sessAtk = { ...session, carrinho: cart, freteSelecionado: { label: 'Grátis (atacado)', valor: 0 },
+    estadoCliente: '', descontoReais: 0, descontoLabel: '', descontoTipo: 'atacado', total: sub,
+    cupomDocId: null, cupomCodigo: null, brinde: null, atacado: true, carrinhoAtk: [] };
+  return await gerarLinkPedido(sessAtk, sid, respond, assistente);
+}
 // Depois da observação, volta pro resumo certo (varejo ou atacado) conforme obsReturn.
 async function _seguirAposObs(session, sid, respond) {
   if (session.obsReturn === 'atacado') return await mostrarResumoAtacado(session, sid, respond);
@@ -3378,7 +3419,7 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
   } catch {}
   await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, link: link || '', cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
   return await responderDireto(sid, link
-    ? `✅ *Pedido gerado!*${infoDesconto}\n\n💳 *Link de pagamento:*\n${link}\n\n_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão — é só escolher lá. (Quer ver os valores das parcelas antes? Digite *parcelar*.)_\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
+    ? `✅ *Pedido gerado!*${infoDesconto}${session.atacado ? '\n\n' + AVISO_ATACADO_MOMENTO : ''}\n\n💳 *Link de pagamento:*\n${link}\n\n_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão — é só escolher lá. (Quer ver os valores das parcelas antes? Digite *parcelar*.)_\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
     : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond, assistente);
 }
 // Leitor determinístico de reserva — funciona mesmo se a IA falhar.
@@ -3599,6 +3640,8 @@ exports.handler = async (event) => {
     let _abandono = '';
     if (nomeAssistente !== 'Athena') {
       _abandono = SINAL_LISTA ? _fmt(MSG_STELLA_ABANDONO) : '';
+    } else if (!SINAL_FECHANDO && SINAL_ATACADO) {
+      _abandono = _fmt(MSG_ATACADO_ABANDONO);      // carrinho de atacado vence: gancho é escassez
     } else if (!SINAL_FECHANDO && (SINAL_LISTA || SINAL_CARRINHO)) {
       _abandono = _fmt(MSG_ATHENA_ABANDONO);
     }
@@ -3609,6 +3652,7 @@ exports.handler = async (event) => {
   try {
     SINAL_LISTA = false;
     SINAL_CARRINHO = false;
+    SINAL_ATACADO  = false;
     SINAL_FECHANDO = false;
     const body = JSON.parse(event.body || '{}');
     nomeAssistente = ((body.assistente || body.nome_assistente || 'Athena') + '').trim() || 'Athena';
@@ -4143,6 +4187,13 @@ exports.handler = async (event) => {
         await saveSession(sid, { ...session, state:'ATK_REMOVER' });
         return respond(`*Qual item remover?*\n\n${cart.map(function (i, x) { return emojis(x) + ' *' + i.nome + '* x' + i.qtd; }).join('\n')}\n\n_Digite o número._`);
       }
+      // Resposta ao convite de 3h ("quero", "manda o link"...): fecha direto, sem repetir o resumo.
+      if (_ehQueroFechar(_t)) {
+        if (!cart.length) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Seu pedido de atacado está vazio. Me diga o *nome do produto* que você quer. 😊'); }
+        const _sub = totalCarrinho(cart);
+        if (_sub < ATACADO_MIN) return respond(`Pra fechar, o pedido de atacado precisa chegar em *R$ 3.000* — o seu está em *R$ ${_sub.toFixed(2).replace('.', ',')}* e faltam *R$ ${faltaAtk(_sub).toFixed(2).replace('.', ',')}*.\n\nMe manda o *nome* de outro produto que eu adiciono. 😊`);
+        return await fecharAtacadoDireto(session, sid, respond, nomeAssistente);
+      }
       if (!/^\d/.test(_t) && _t.length >= 2) return await atkAbrirBusca(session, sid, _t, respond); // nome de produto → nova busca
       return respond(msgCarrinhoAtk(cart));
     }
@@ -4167,6 +4218,12 @@ exports.handler = async (event) => {
         // Reutiliza o gerador de link do varejo, com carrinho de ATACADO, frete grátis e SEM desconto/cupom.
         const sessAtk = { ...session, carrinho: cart, freteSelecionado: { label: 'Grátis (atacado)', valor: 0 }, estadoCliente: '', descontoReais: 0, descontoLabel: '', descontoTipo: 'atacado', total: sub, cupomDocId: null, cupomCodigo: null, brinde: null, atacado: true, carrinhoAtk: [] };
         return await gerarLinkPedido(sessAtk, sid, respond, nomeAssistente);
+      }
+      if (_ehQueroFechar((mensagem || '').trim())) {
+        if (!cart.length) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Seu pedido de atacado está vazio. 🛒'); }
+        const _sub = totalCarrinho(cart);
+        if (_sub < ATACADO_MIN) { await saveSession(sid, { ...session, state:'ATK_CART' }); return respond(`O pedido está abaixo de R$ 3.000 (faltam R$ ${faltaAtk(_sub).toFixed(2).replace('.', ',')}). Adicione mais um produto pra fechar. 😊`); }
+        return await fecharAtacadoDireto(session, sid, respond, nomeAssistente);
       }
       return respond('Digite *1* pra gerar o link de pagamento ou *2* pra voltar.');
     }
