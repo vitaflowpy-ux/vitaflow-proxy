@@ -3518,15 +3518,24 @@ function extrairDadosRegex(texto) {
   }
 
   // linhas de texto restantes (sem os números já consumidos)
-  let linhas = resto.split(/\n|,/).map(l => l.replace(/\s+/g,' ').trim()).filter(l => l && l.replace(/\d/g,'').trim().length >= 2);
+  // aceita separadores em linha nova, vírgula E barra "/" (formato que a própria Athena sugere)
+  let linhas = resto.split(/\n|,|\//).map(l => l.replace(/\s+/g,' ').trim()).filter(l => l && l.replace(/\d/g,'').trim().length >= 2);
 
-  // estado: por sigla ou por nome
+  // estado: por sigla (linha inteira), por nome, ou UF colada no fim da linha ("Campinas- SP", "Campinas SP")
   if (!out.estado) {
     for (let i = 0; i < linhas.length; i++) {
       const ln = norm(linhas[i]).replace(/[^a-z ]/g,'').trim();
       if (_UF_NOME[ln]) { out.estado = _UF_NOME[ln]; linhas.splice(i,1); break; }
       const up = linhas[i].toUpperCase().replace(/[^A-Z]/g,'');
       if (up.length === 2 && _UFS.includes(up)) { out.estado = up; linhas.splice(i,1); break; }
+      // UF grudada no fim do endereço: "... Campinas- SP" / "... Campinas SP" — tira só a UF e deixa o resto (cidade) na linha
+      const mFim = linhas[i].match(/[\s\-]([A-Za-z]{2})\s*$/);
+      if (mFim && _UFS.includes(mFim[1].toUpperCase())) {
+        out.estado = mFim[1].toUpperCase();
+        linhas[i] = linhas[i].slice(0, mFim.index).replace(/[\s\-]+$/,'').trim();
+        if (!linhas[i]) linhas.splice(i,1);
+        break;
+      }
     }
   }
 
@@ -3542,13 +3551,12 @@ function extrairDadosRegex(texto) {
     if (idxComp >= 0) { out.complemento = linhas[idxComp]; linhas.splice(idxComp, 1); }
   }
 
-  // sobra: nome (primeira linha “de gente”), depois bairro, depois cidade
+  // sobra: nome (SÓ se parecer nome de gente: 2+ palavras, sem dígitos; não força o índice 0 como antes, pra não pegar lixo), depois bairro, depois cidade
   const sobra = linhas.filter(Boolean);
   if (sobra.length) {
     if (!out.nome) {
-      let idxNome = sobra.findIndex(l => !/\d/.test(l) && l.trim().split(/\s+/).length >= 2);
-      if (idxNome < 0) idxNome = 0;
-      out.nome = sobra[idxNome]; sobra.splice(idxNome, 1);
+      const idxNome = sobra.findIndex(l => !/\d/.test(l) && l.trim().split(/\s+/).filter(Boolean).length >= 2);
+      if (idxNome >= 0) { out.nome = sobra[idxNome]; sobra.splice(idxNome, 1); }
     }
     if (!out.bairro && sobra[0]) { out.bairro = sobra.shift(); }
     if (!out.cidade && sobra[0]) { out.cidade = sobra.shift(); }
@@ -4104,7 +4112,7 @@ exports.handler = async (event) => {
     const ehTabela = ["tabela","lista de preco","lista de preços","catalogo","catálogo","tabela de preco","tabela de preços","lista completa","ver precos","ver preços"].some(p => n.includes(p));
     if (ehTabela && !ehAtacado && !emCheckout) {
       await saveSession(sid, { ...session, state:'MENU' });
-      return respond('📋 *Tabela de Preços VitaFlow*\n\nVeja nossa lista completa de produtos, preços e disponibilidade em tempo real, sempre atualizada:\n\n👉 vitaflowoficial.com/pages/tabela\n\nVocê também pode comprar direto pelo site ou continuar comigo aqui. 😊\n\n0️⃣ Voltar ao menu');
+      return respond('📋 *Nossa tabela de preços é o nosso site oficial!* 🧡\n\nLá você vê *todos os produtos* com *preços atualizados em tempo real*, fotos, descrição e o que está disponível na hora — sempre em dia, sem tabela desatualizada.\n\n👉 vitaflowoficial.com\n\nÉ só entrar, escolher o que quiser e finalizar por lá — ou continuar comigo aqui que eu te ajudo. 😊\n\n0️⃣ Voltar ao menu');
     }
 
     const ehPerguntaPrazo = ["prazo","quanto tempo","quantos dias","demora","chega em","tempo de entrega","prazo de entrega","prazo de postagem"].some(p => n.includes(p));
@@ -4964,6 +4972,8 @@ exports.handler = async (event) => {
       const dadosNovos = { ...dadosRegex, ...dadosIA }; // IA tem prioridade quando preencheu
       const coleta = { ...(session.coleta||{}) };
       Object.keys(dadosNovos).forEach(k => { const v = dadosNovos[k]; if (v && String(v).trim().length >= 1 && !coleta[k]) coleta[k] = v; });
+      // nome só vale se for nome de gente (2+ palavras, sem dígitos) — evita gravar lixo do endereço e força pedir o nome de verdade
+      if (coleta.nome && (String(coleta.nome).trim().split(/\s+/).filter(Boolean).length < 2 || /\d/.test(coleta.nome))) delete coleta.nome;
       if (coleta.estado) coleta.estado = String(coleta.estado).toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
       if (coleta.cpf) coleta.cpf = formatarCPF(coleta.cpf); // grava o CPF sempre como 000.000.000-00
       const obrigatorios = ['nome','cpf','telefone','endereco','bairro','cidade','estado','cep'];
