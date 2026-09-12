@@ -3402,7 +3402,8 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
         descontoReais: descontoReais, descontoPromo: descontoPromo, descontoLabel: session.descontoLabel || '',
         descontoTipo: session.descontoTipo || '', cupomDocId: session.cupomDocId || null,
         cupomCodigo: session.cupomCodigo || null, link: link || '', brinde: session.brinde || null,
-        observacao: session.obsCliente || ''
+        observacao: session.obsCliente || '',
+        atacado: !!session.atacado   // o GAS usa isso pra escolher o texto do lembrete (3h/20h)
       })
     });
   } catch {}
