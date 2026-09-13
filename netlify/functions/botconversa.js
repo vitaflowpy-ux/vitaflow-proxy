@@ -462,6 +462,28 @@ const DESCONTO_ATHENA_PCT = 3;
 // Pra desligar: ativa:false.
 const PROMO_DOBRO = { ativa: false, pct: 10, qtdMin: 2, fim: '2026-08-09T23:59:59-03:00' };
 function promoDobroAtiva(){ return PROMO_DOBRO.ativa && Date.now() <= new Date(PROMO_DOBRO.fim).getTime(); }
+
+// ── SEMANA DO CLIENTE (desconto por FAIXA do valor de PRODUTOS — varejo, automático) ──────────
+// Não acumula com 3%/cupom/promo: vale sempre o MAIOR. Atacado NÃO entra. Liga/desliga pela data.
+const PROMO_SEMANA_CLIENTE = {
+  ativa: true,
+  ini: '2026-09-13T00:00:00-03:00',
+  fim: '2026-09-19T23:59:59-03:00',
+  faixas: [ { min: 500, desc: 50 }, { min: 1000, desc: 100 }, { min: 1500, desc: 225 }, { min: 2000, desc: 300 } ]  // R$
+};
+function semanaClienteAtiva(){
+  const p = PROMO_SEMANA_CLIENTE;
+  if (!p.ativa) return false;
+  const agora = Date.now();
+  return agora >= new Date(p.ini).getTime() && agora <= new Date(p.fim).getTime();
+}
+// Retorna o R$ de desconto da MAIOR faixa que o valor de produtos alcança (0 se fora da promo/data).
+function descontoSemanaCliente(baseReais){
+  if (!semanaClienteAtiva()) return 0;
+  let d = 0;
+  PROMO_SEMANA_CLIENTE.faixas.forEach(f => { if (baseReais >= f.min && f.desc > d) d = f.desc; });
+  return d;
+}
 // desconto (R$) que a promo dá no carrinho: pct% nas unidades dos produtos com qtd >= qtdMin
 function descPromoDobro(carrinho){
   if (!promoDobroAtiva()) return 0;
@@ -907,6 +929,10 @@ function ehIntencaoSorteio(n){
 async function contextoPromo(){
   const linhas = [];
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
+  if (semanaClienteAtiva()) {
+    const _fx = PROMO_SEMANA_CLIENTE.faixas.map(f => `acima de R$ ${f.min} ganha R$ ${f.desc} OFF`).join('; ');
+    linhas.push(`PROMOÇÃO ATIVA — SEMANA DO CLIENTE VitaFlow (13 a 19/09): desconto AUTOMÁTICO por faixa do valor em PRODUTOS (varejo): ${_fx}. É automático no fechamento — o cliente NÃO digita cupom. NÃO acumula com cupom nem com os ${DESCONTO_ATHENA_PCT}% (vale sempre o MAIOR). NÃO vale no atacado. SEMPRE que o cliente perguntar de promoção/desconto, ou estiver perto de uma faixa, DIVULGUE e incentive completar o valor pra subir de faixa.`);
+  }
   // Promoções de PREÇO POR QUANTIDADE (config em cupons_vitaflow/_vfTipo:promo_preco) — pra a IA DIVULGAR.
   try {
     const _gruposPP = await lerPromoPrecos();
@@ -3004,6 +3030,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   let descCupomAcc = 0;     // soma dos itens em que o CUPOM % venceu
   let descAthenaAcc = 0;    // soma dos itens em que os 3% Athena venceram
   let baseFora = 0;         // subtotal dos itens FORA da promo (base p/ cupom fixo)
+  let baseSemana = 0;       // subtotal ELEGÍVEL (fora sem_desconto/promo_preco) — base da Semana do Cliente
   // Nomes dos itens que ficam de fora do desconto — pra Athena EXPLICAR ao cliente em vez
   // de ele achar que o cupom falhou. (Pedido do Thiago, 08/09.)
   const _nomesPromoPreco = [];   // já estão com preço promocional
@@ -3012,6 +3039,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     const linha = (i.preco || 0) * (i.qtd || 0);
     if (produtoBloqueado(i.nome, _semDesc)) { _nomesSemDesc.push(i.nome); return; }        // sem desconto: não leva 3%/cupom
     if (grupoPromoDoItem(i.nome, _promoP))  { _nomesPromoPreco.push(i.nome); return; }     // preço de promo: idem
+    baseSemana += linha;                                         // elegível p/ Semana do Cliente (varejo, fora bloqueados/promo)
     const ehPromo = _promoAtiva && i && i.qtd >= PROMO_DOBRO.qtdMin;
     if (!ehPromo) baseFora += linha;
     const pPromo = ehPromo ? PROMO_DOBRO.pct : 0;                 // 10 ou 0
@@ -3085,6 +3113,18 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   }
 
   // descPromo já foi calculado acima (parcela dos itens em que a promo Dia dos Pais venceu).
+  // ── SEMANA DO CLIENTE: desconto por FAIXA do valor de produtos (varejo). Não acumula — vale o
+  //    MAIOR entre a faixa e o que já apliquei (3%/cupom/promo). Vale-compras e atacado não entram.
+  let semanaVenceu = false, descSemana = 0;
+  if (_cupomVale === 0) {
+    descSemana = descontoSemanaCliente(baseSemana);
+    if (descSemana > (descNormais + descPromo)) {
+      semanaVenceu = true;
+      descNormais = descSemana; labelNormais = 'Semana do Cliente 🧡';
+      descPromo = 0; descCupomAcc = 0;
+      cupomDocId = null; cupomCodigo = null;   // a faixa venceu: não consome o cupom digitado
+    }
+  }
   const descontoReais = descNormais;
   const totalComDesconto = Math.max(0, totalProd - descontoReais - descPromo + freteValorFinal - valeAbatido);
   // Vale cobre 100% do pedido: o gateway não emite link de R$ 0. O pedido é fechado
@@ -3157,6 +3197,17 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
       }
     });
   }
+  // Empurrãozinho da Semana do Cliente: celebra a faixa ganha ou mostra quanto falta pra próxima.
+  let linhaSemana = '';
+  if (semanaClienteAtiva() && baseSemana > 0) {
+    const _prox = PROMO_SEMANA_CLIENTE.faixas.find(f => f.min > baseSemana && f.desc > descSemana);
+    if (semanaVenceu) {
+      linhaSemana = `\n\n🧡🎉 *SEMANA DO CLIENTE!* Você ganhou *R$ ${descSemana.toFixed(2).replace('.',',')}* de desconto nos produtos!`;
+      if (_prox) linhaSemana += `\n_Falta R$ ${(_prox.min - baseSemana).toFixed(2).replace('.',',')} pra subir pra *R$ ${_prox.desc} OFF*! 😉_`;
+    } else if (_prox) {
+      linhaSemana = `\n\n🧡 _*Semana do Cliente:* falta R$ ${(_prox.min - baseSemana).toFixed(2).replace('.',',')} em produtos pra ganhar *R$ ${_prox.desc} OFF* automático!_`;
+    }
+  }
   const resumo =
     `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}${linhaPromoPreco}\n\n` +
     `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
@@ -3165,7 +3216,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
       : `🚚 Frete *${frete.label}* — ${session.estadoCliente}: ~~R$ ${(frete.valor||0).toFixed(2).replace('.',',')}~~ *GRÁTIS* 🎉\n`) +
     linhaFreteGratis + linhaBrinde +
     linhasDesc + linhaCupomInfo +
-    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*` + linhaCupomNaoPega +
+    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*` + linhaCupomNaoPega + linhaSemana +
     `\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._` +
     linhaConviteCupom;
   const freteParaSalvar = { ...frete, valor: freteValorFinal };
