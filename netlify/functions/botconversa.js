@@ -965,6 +965,7 @@ async function contextoPromo(){
   if (PROMO_GENESIS.ativa) {
     linhas.push('PROMOÇÃO DE LANÇAMENTO ATIVA AGORA: linha *Gênesis Peptídeos* — "COMPRE 2, LEVE 3": na compra de 2 peptídeos da linha Gênesis, o 3º é GRÁTIS (qualquer produto da linha, pode misturar). Frete grátis acima de R$1.000 com o cupom FRETEZERO. O cliente escolhe o brinde no fechamento (o sistema pergunta). Os produtos são da marca *Gênesis Peptídeos* — NÃO confunda com "Biogenesis", que é outra marca. Pra mostrar a linha, abra a lista buscando "genesis peptideos".');
   }
+  if (LANC_DIAMOND.ativa) linhas.push(contextoDiamond());
   if (SORTEIO.ativa) {
     const _c = sorteioCicloAtual();
     const _d = sorteioDiasRestantes();
@@ -1034,6 +1035,9 @@ Uma semana inteira pra retribuir a sua confiança — e *quanto maior o pedido, 
 ⏳ Só de *13 a 19 de setembro!* 🔥
 
 _Desconto nos produtos (varejo), aplicado sozinho no fechamento. Não acumula com outros cupons ou promoções — vale sempre o MAIOR. Não vale no atacado._`;
+// ⚠️ REGRA PERMANENTE (Thiago, 13/09/2026): TODA promoção nova TEM que aparecer AQUI, na parte de
+// "promoções" da Stella/Athena (opção 8 / comando "promo"). NÃO basta pôr só no contextoPromo da IA.
+// Se a promoção tiver data, adicione também o aviso no buildMenuPrincipal(). Isso vale SEMPRE.
 // Mensagem da "promoção do momento" (opção 8 / "promoção").
 // Prioridade: Semana do Cliente (13-19/09) > Independência > Gênesis > Frete > sorteio > padrão 3%.
 function msgPromoAtual(){
@@ -1087,6 +1091,49 @@ function msgGrupoVip() {
     `✈️ *Grupo no Telegram:*\n${GRUPO_TELEGRAM}\n\n` +
     `_Dica: entra nos dois pra não perder nada. 😉_\n\n` +
     `_Digite *menu* para voltar ao início._`;
+}
+
+// ── LANÇAMENTO — LINHA DIAMOND (Landerlan) ── criado 14/09/2026 ───────────────
+// Fases: 'previsto' → 'chegou' → 'esgotou'. Pra desligar tudo: ativa:false.
+// Enquanto a fase for 'previsto', o tempo verbal muda sozinho pela DATA (antes / no dia / depois).
+// Trocar a fase = editar aqui e publicar (decisão do Thiago 14/09: opção A; comando ADM fica pra depois).
+// Vale nos 2 caminhos: resposta fixa (msgDiamond, gatilho no pipeline) + IA (contextoDiamond em contextoPromo).
+const LANC_DIAMOND = { ativa: true, data: '2026-09-14', fase: 'previsto' };
+function _hojeISO_SP(){
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date()); }
+  catch (e) { return new Date().toISOString().slice(0, 10); }
+}
+function _diamondDataBR(){ const p = String(LANC_DIAMOND.data || '').split('-'); return p.length === 3 ? `${p[2]}/${p[1]}` : LANC_DIAMOND.data; }
+// Frase de situação no tempo verbal certo (usada na resposta fixa).
+function diamondSituacao(){
+  const d = _diamondDataBR();
+  if (LANC_DIAMOND.fase === 'chegou') return `*chegou!* Lote limitado — apenas *3.000 unidades para toda Ciudad del Este* — e deve esgotar rápido.`;
+  if (LANC_DIAMOND.fase === 'esgotou') return `teve o *primeiro lote esgotado*. Nova reposição ainda sem data; quando voltar, o aviso sai primeiro no Grupo VIP.`;
+  const hoje = _hojeISO_SP();
+  if (hoje < LANC_DIAMOND.data) return `tem chegada prevista pra *${d}*, com apenas *3.000 unidades para toda Ciudad del Este* — deve esgotar no mesmo dia.`;
+  if (hoje === LANC_DIAMOND.data) return `tem chegada prevista pra *hoje (${d})*, com apenas *3.000 unidades para toda Ciudad del Este* — deve esgotar no mesmo dia.`;
+  return `estava prevista pra *${d}* e ainda não tivemos a confirmação da chegada — assim que entrar, o aviso sai primeiro no Grupo VIP. São apenas *3.000 unidades para toda Ciudad del Este*.`;
+}
+function msgDiamond(){
+  return `💎 *LINHA DIAMOND — LANDERLAN*\n\n` +
+    `A linha Diamond Premium Series ${diamondSituacao()}\n\n` +
+    `📦 Por enquanto a Diamond sai *somente no atacado*. Depois que o abastecimento normalizar, entra no site pro varejo.\n\n` +
+    `🔔 Avisos de chegada e reposição saem primeiro no nosso Grupo VIP:\n${GRUPO_WHATSAPP}\n\n` +
+    `_Digite *menu* para voltar ao início._`;
+}
+// Linha que vai pra IA (contextoPromo). Mesma regra de tempo verbal.
+function contextoDiamond(){
+  if (!LANC_DIAMOND.ativa) return '';
+  const d = _diamondDataBR();
+  const hoje = _hojeISO_SP();
+  const lote = 'lote de apenas 3.000 unidades para toda Ciudad del Este, deve esgotar no mesmo dia';
+  let sit;
+  if (LANC_DIAMOND.fase === 'chegou') sit = `JÁ CHEGOU (${lote})`;
+  else if (LANC_DIAMOND.fase === 'esgotou') sit = `o PRIMEIRO LOTE ESGOTOU; nova reposição ainda sem data definida`;
+  else if (hoje < LANC_DIAMOND.data) sit = `chegada PREVISTA para ${d} (ainda NÃO chegou); ${lote}`;
+  else if (hoje === LANC_DIAMOND.data) sit = `chegada PREVISTA para HOJE (${d}), ainda NÃO confirmada — NÃO diga que chegou; ${lote}`;
+  else sit = `estava prevista para ${d} e a chegada AINDA NÃO FOI CONFIRMADA — NÃO diga que chegou; ${lote}`;
+  return `LANÇAMENTO — LINHA DIAMOND DA LANDERLAN (Diamond Premium Series): ${sit}. Neste primeiro momento a linha Diamond é vendida SOMENTE no ATACADO; NÃO está no site nem no varejo ainda — entra no varejo depois que o abastecimento normalizar, sem data definida. Se o cliente perguntar sobre a Diamond ("chegou?", preço, quais produtos, reserva, quando no varejo): passe exatamente essas informações e nada mais. NÃO invente produtos da linha, preço, quantidade por cliente, reserva nem data de varejo. NÃO confundir com produtos que têm "Diamond" no nome de outras marcas, como a Retatrutida Veltrane Diamond — esses são produtos normais do varejo, disponíveis já.`;
 }
 
 // ── Atacado ───────────────────────────────────────────────────────────────────
@@ -4102,6 +4149,18 @@ exports.handler = async (event) => {
         }
       }
       // sem pedido elegível (cupom maior, promoção, ou já negociado) → segue o fluxo normal
+    }
+
+    // ── LANÇAMENTO DIAMOND (Landerlan) ── só "diamond" + termo de linha/marca/chegada. Produto SEMPRE ganha
+    // ("retatrutida veltrane diamond" é produto normal do varejo). "diamond" solto NÃO dispara (segue pra IA, que tem contextoDiamond).
+    const ehDiamond = LANC_DIAMOND.ativa && !emCheckout && state !== 'ADM'
+      && !['AGUARDAR_COMPROVANTE','COLETA_DADOS','PROTOCOLO'].includes(state)
+      && n.includes('diamond')
+      && /landerlan|linha diamond|diamond premium|lancamento|cheg(ou|a|aram|ando)/.test(n)
+      && !/veltrane|retatrutida|\breta\b/.test(n)
+      && !reconhecerProduto(n);
+    if (ehDiamond) {
+      return respond(msgDiamond());
     }
 
     // ── Grupo VIP (WhatsApp/Telegram) ── reconhece pergunta sobre grupo/comunidade ──
