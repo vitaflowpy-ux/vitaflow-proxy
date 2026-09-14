@@ -436,7 +436,7 @@ function simularParcelas(valor){
   if (V <= 0) return null;
   let txt = `💳 *SIMULAÇÃO DE PAGAMENTO — R$ ${_rBRL(V)}*\n\n✅ *À vista no Pix:* R$ ${_rBRL(V)} _(sem juros!)_\n\n*No cartão* (parcelado, taxas da InfinitePay):\n`;
   for (let nP = 1; nP <= 12; nP++){ txt += `${nP}x de R$ ${_rBRL(V * FATOR_PARCELAS[nP] / nP)}\n`; }
-  txt += `\n_No próprio *link de pagamento* você escolhe em quantas vezes quer pagar (até 12x). Pode variar 1 centavo conforme a operadora._`;
+  txt += `\n_No próprio *link de pagamento* você escolhe em quantas vezes quer pagar (até 12x)._`;
   return txt;
 }
 // Detecta interesse em PARCELAR. (não confunde com rastreio/cupom)
