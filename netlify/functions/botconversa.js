@@ -4277,7 +4277,9 @@ exports.handler = async (event) => {
     }
 
     const ehTabela = ["tabela","lista de preco","lista de preços","catalogo","catálogo","tabela de preco","tabela de preços","lista completa","ver precos","ver preços"].some(p => n.includes(p));
-    if (ehTabela && !ehAtacado && !emCheckout) {
+    // "tabela" casava como substring solta: "tabela de fracionamento" caia AQUI (tabela de
+    // precos) e nunca chegava no fluxo de fracionamento. 16/09/2026 — excecao explicita.
+    if (ehTabela && !ehAtacado && !emCheckout && !ehPedidoFracionamento(n)) {
       await saveSession(sid, { ...session, state:'MENU' });
       return respond('📋 *Nossa tabela de preços é o nosso site oficial!* 🧡\n\nLá você vê *todos os produtos* com *preços atualizados em tempo real*, fotos, descrição e o que está disponível na hora — sempre em dia, sem tabela desatualizada.\n\n👉 vitaflowoficial.com\n\nÉ só entrar, escolher o que quiser e finalizar por lá — ou continuar comigo aqui que eu te ajudo. 😊\n\n0️⃣ Voltar ao menu');
     }
