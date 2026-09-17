@@ -167,11 +167,22 @@ async function responderComIA(sid, mensagem, contexto, respond){
   if (IA_SYNC_ATIVA && ASSISTENTE_ATUAL !== 'Athena') {
     const texto = await iaSincrona(sid, mensagem, contexto);
     if (texto && texto.trim()) return respond(texto);
-    console.log('[IA-SYNC] sem texto a tempo — caindo no caminho assíncrono.');
+    // NUNCA cair no assíncrono quando não é a Athena: a API da VitaMK está bloqueada (403),
+    // a resposta empurrada NUNCA chega e o lead fica no vácuo depois do 👀. Em 16/09/2026,
+    // 11 conversas morreram exatamente assim. Em vez do 👀, devolve o mesmo menu da Athena —
+    // o lead continua tendo pra onde ir e a venda continua possível.
+    console.log('[IA-SYNC] sem texto a tempo — devolvendo o menu em vez do 👀 (Stella).');
+    return respond(MSG_IA_SEM_RESPOSTA + '\n\n' + buildMenuPrincipal());
   }
   await dispararIA(sid, mensagem, contexto);   // AGUARDA o disparo sair (Background Function responde 202 na hora); sem o await o Lambda congela no return e o POST nunca chega
   return respond('Deixa eu ver isso pra você… 👀');
 }
+
+// Fallback quando a IA síncrona não responde a tempo. Vai SEMPRE acompanhado do menu
+// principal (o mesmo da Athena) — o lead nunca fica sem caminho.
+const MSG_IA_SEM_RESPOSTA = `Essa eu preciso de um minutinho pra te responder direito 😅
+
+Mas não quero te deixar esperando: me manda o *nome do produto* que você quer e eu te mostro *preço e disponibilidade* na hora.`;
 
 // Dispara a IA pra montar e ENVIAR o PROTOCOLO COMPLETO pós-venda dos produtos comprados.
 // Chamado quando o pedido é concluído (após a coleta de dados). Fire-and-forget.
@@ -1933,13 +1944,6 @@ function fmtProdLista(arr) {
 // Sobe um nível conforme o estado atual (o "menu anterior").
 async function voltarAthena(session, sid, respond) {
   var st = session.state;
-  // STELLA: o topo da árvore dela é o MENU_STELLA (site/grupos/produtos/cupom),
-  // não a triagem da Athena. Sem isso o lead "voltava" pra uma tela que não é dela.
-  var ehStella = (typeof ASSISTENTE_ATUAL !== 'undefined' && ASSISTENTE_ATUAL !== 'Athena');
-  if (ehStella && (st === 'MENU_STELLA' || st === 'MENU' || st === 'PRAZOS_RASTREIO' || st === 'DUVIDAS' || st === 'TRIAGEM')) {
-    await saveSession(sid, { ...session, state: 'MENU_STELLA' });
-    return respond('↩️ *Voltando ao menu*\n\n' + MSG_BOAS_VINDAS_STELLA);
-  }
   if (st === 'MENU_STELLA') {
     await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️ *Voltando às categorias*\n\n' + buildMenuPrincipal());
   }
@@ -3846,12 +3850,15 @@ exports.handler = async (event) => {
       }
     } catch (e) {}
 
-    // ── STELLA: LEAD QUE VOLTA DEPOIS DE HORAS CAI NO MENU DELA (08/09/2026) ──
-    // O follow-up de abandono (3h) termina com o MENU NUMERADO da Stella. Só que a resposta
-    // dele chega numa sessão parada, que pode estar em qualquer estado antigo — e aí o "1"
-    // seria lido como "produto 1 da lista de ontem". Passou 2h sem falar, sem carrinho e fora
-    // do checkout: a Stella recomeça do menu dela, que é exatamente o que a mensagem ofereceu.
-    // A Athena não entra nisso (o menu numerado é da Stella).
+    // ── STELLA: LEAD QUE VOLTA DEPOIS DE HORAS CAI NO MENU DE COMPRA (08/09/2026) ──
+    // O follow-up de abandono (3h) termina com o MENU NUMERADO DE CATEGORIAS (o mesmo da
+    // Athena). Só que a resposta dele chega numa sessão parada, que pode estar em qualquer
+    // estado antigo — e aí o "1" seria lido como "produto 1 da lista de ontem". Passou 2h sem
+    // falar, sem carrinho e fora do checkout: volta pro MENU, que é exatamente o que a
+    // mensagem ofereceu. A Athena não entra nisso (o follow-up de 3h é só da Stella).
+    // 17/09/2026 — era 'MENU_STELLA' (1 site / 2 grupos / 3 produtos / 4 cupom). Como o texto
+    // do bloco 183491453 do BotConversa passou a terminar com o menu de categorias, o estado
+    // tem que ser 'MENU' — senão o "1" do lead vira "site" em vez de "Emagrecedores".
     if (nomeAssistente !== 'Athena') {
       const _paradoMs = session._dedupTs ? (Date.now() - session._dedupTs) : 0;
       const _semCarrinho = !(Array.isArray(session.carrinho) && session.carrinho.length);
@@ -3859,9 +3866,9 @@ exports.handler = async (event) => {
         'OBS_PERGUNTA','OBS_TEXTO','INFORMAR_CUPOM','PERGUNTA_CUPOM','ESCOLHER_BRINDE',
         'PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','PROTO_HUMANO'
       ].includes(session.state || '');
-      if (_paradoMs > 2 * 3600000 && _semCarrinho && !_estadoTravado && session.state !== 'MENU_STELLA') {
-        console.log('[STELLA-RETOMADA] sessao parada ha', Math.round(_paradoMs/60000), 'min — voltando pro menu da Stella. Estado antigo:', session.state);
-        session.state = 'MENU_STELLA';
+      if (_paradoMs > 2 * 3600000 && _semCarrinho && !_estadoTravado && session.state !== 'MENU') {
+        console.log('[STELLA-RETOMADA] sessao parada ha', Math.round(_paradoMs/60000), 'min — voltando pro menu de categorias. Estado antigo:', session.state);
+        session.state = 'MENU';
       }
     }
 
@@ -3884,6 +3891,11 @@ exports.handler = async (event) => {
       const midiaUrl = body.mediaUrl || body.media_url || body.url || body.fileUrl || body.file || body.arquivo || body.image || body.imageUrl || body.foto || '';
       if (body.type === 'image' && midiaUrl) {
         await saveSession(sid, { ...session, errosSeguidos: 0 });
+        // Só a Athena manda imagem pro caminho assíncrono — na Stella a API está bloqueada
+        // e a leitura da imagem nunca voltaria (mais um beco sem saída). Pra ela, pede o texto.
+        if (nomeAssistente !== 'Athena') {
+          return respond('Recebi sua imagem! 📷 Só que por aqui eu consigo te ajudar muito mais rápido por *texto*.\n\nMe diz o *nome do produto* que aparece nela (ou o que você quer saber) que eu te respondo na hora. 😊');
+        }
         await dispararIA(sid, (mensagem || 'imagem'), contextoLista(session), midiaUrl);
         return respond('Deixa eu ver sua imagem… 👀');
       }
@@ -4017,12 +4029,10 @@ exports.handler = async (event) => {
       || n === 'quero ver')
       && !emCheckout;
     if (ehLeadConhecer) {
-      // STELLA: porta de entrada própria (site / grupos / produtos / cupom).
-      // A Athena continua caindo direto no menu de compra, como sempre.
-      if (nomeAssistente !== 'Athena') {
-        await saveSession(sid, { ...session, state:'MENU_STELLA' });
-        return respond(MSG_BOAS_VINDAS_STELLA);
-      }
+      // 17/09/2026 — decisão do Thiago: a partir do momento que o lead se interessa e pede
+      // o menu, a STELLA age EXATAMENTE IGUAL À ATHENA. A porta de entrada própria dela
+      // (site/grupos/produtos/cupom) mandava o lead pra uma árvore paralela onde a venda
+      // não acontecia. Agora as duas caem no mesmo menu de compra.
       await saveSession(sid, { ...session, state:'MENU' });
       return respond(MSG_BOAS_VINDAS_LEAD + '\n\n' + buildMenuPrincipal());
     }
