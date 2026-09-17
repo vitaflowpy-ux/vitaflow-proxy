@@ -3900,33 +3900,39 @@ exports.handler = async (event) => {
       session.state = 'MENU';
     }
 
-    const state = session.state || 'MENU';
-
     // ── OPÇÃO DE MENU POR TEXTO (17/09/2026) ──────────────────────────────────
-    // O cliente lê "1️⃣ Emagrecedores" e digita "Emagrecedores" (ou "emagrecedor", "peptideos",
-    // "hormonios", "gh", "estetica", "sarms", "farmacia", "promocao", "atacado"). Antes isso
-    // caía em tratarTextoLivre → não é produto → IA, que respondia PROSA em vez de abrir a
-    // categoria (caso real 17/09). Aqui o texto vira o número da opção, e o handler do estado
-    // segue igual. Só nos dois menus numerados de cima (TRIAGEM e MENU); nos outros, nada muda.
-    if (isNaN(num)) {
+    // O cliente lê "1️⃣ Emagrecedores" e digita "Emagrecedores" (ou "peptideos", "hormonios",
+    // "gh", "estetica", "sarms", "farmacia", "promocao", "atacado"). Antes isso caía em
+    // tratarTextoLivre → não é produto → IA, que respondia PROSA em vez de abrir a categoria
+    // (caso real 17/09, duas vezes na mesma noite). Aqui o texto vira o número da opção.
+    // Nome de CATEGORIA vale na TRIAGEM e no MENU (na triagem, pula direto pro MENU com a
+    // categoria — o cliente não precisa digitar "1" antes). Opções da triagem por texto
+    // ("comprar", "prazos", "dúvidas") valem só na TRIAGEM. Nos outros estados nada muda.
+    if (isNaN(num) && (session.state === 'MENU' || session.state === 'TRIAGEM' || !session.state)) {
       const _nt = n.trim();
-      if (state === 'MENU') {
-        if (/^(emagrecedor(es)?|emagrecimento|emagrecer)$/.test(_nt)) num = 1;
-        else if (/^(peptideo(s)?)$/.test(_nt)) num = 2;
-        else if (/^(hormonio(s)?|hormonal|hormonais)$/.test(_nt)) num = 3;
-        else if (/^(gh|hgh|somatropina|hormonio do crescimento)$/.test(_nt)) num = 4;
-        else if (/^(estetica|esteticos?)$/.test(_nt)) num = 5;
-        else if (/^(sarm(s)?)$/.test(_nt)) num = 6;
-        else if (/^(farmacia|farmacos?)$/.test(_nt)) num = 7;
-        else if (/^(promocao|promocoes|promocao do momento|promo do momento|ofertas?)$/.test(_nt)) num = 8;
-        else if (/^(atacado)$/.test(_nt)) num = 9;
-      } else if (state === 'TRIAGEM') {
+      let _cat = NaN;
+      if (/^(emagrecedor(es)?|emagrecimento|emagrecer)$/.test(_nt)) _cat = 1;
+      else if (/^(peptideo(s)?)$/.test(_nt)) _cat = 2;
+      else if (/^(hormonio(s)?|hormonal|hormonais)$/.test(_nt)) _cat = 3;
+      else if (/^(gh|hgh|somatropina|hormonio do crescimento)$/.test(_nt)) _cat = 4;
+      else if (/^(estetica|esteticos?)$/.test(_nt)) _cat = 5;
+      else if (/^(sarm(s)?)$/.test(_nt)) _cat = 6;
+      else if (/^(farmacia|farmacos?)$/.test(_nt)) _cat = 7;
+      else if (/^(promocao|promocoes|promocao do momento|promo do momento|ofertas?)$/.test(_nt)) _cat = 8;
+      else if (/^(atacado)$/.test(_nt)) _cat = 9;
+      if (!isNaN(_cat)) {
+        num = _cat;
+        session.state = 'MENU';   // categoria digitada na triagem = já está escolhendo no MENU
+      } else if (session.state === 'TRIAGEM') {
         if (/^(comprar|comprar produtos|produtos|ver produtos|quero comprar|comprar produto)$/.test(_nt)) num = 1;
         else if (/^(prazos?|fretes?|rastreio|rastrear|prazos, fretes e rastreio|prazo e frete|prazos e fretes)$/.test(_nt)) num = 2;
         else if (/^(duvidas?|protocolos?|tabelas? de fracionamento|fracionamento|duvidas, protocolos e tabelas de fracionamento)$/.test(_nt)) num = 3;
       }
-      if (!isNaN(num)) console.log('[OPCAO-POR-TEXTO] state:', state, '| texto:', _nt, '-> opcao', num);
+      if (!isNaN(num)) console.log('[OPCAO-POR-TEXTO] state:', session.state, '| texto:', _nt, '-> opcao', num);
     }
+
+    const state = session.state || 'MENU';
+
 
     // ── BLINDAGEM DO CHECKOUT ─────────────────────────────────────────────────
     // Quando o cliente já está montando/fechando o pedido, NENHUMA pergunta lateral
