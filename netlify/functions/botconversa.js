@@ -2273,6 +2273,18 @@ function ehIntencaoRastreio(nMsg, msgOriginal) {
   return false;
 }
 
+// Tira de uma frase SÓ o dado que o GAS entende: nº do pedido VF, CPF (11 dígitos) ou e-mail.
+// "VF-1409-S011 sobre esse pedido?" -> "VF-1409-S011". Sem nada disso, devolve a frase inteira.
+function extrairTermoRastreio(msg) {
+  const raw = String(msg || '');
+  const vf = raw.toUpperCase().replace(/\s/g,'').match(/VF-?\d{3,4}-?[A-Z]?\d{2,4}/);
+  if (vf) return vf[0];
+  const em = raw.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+  if (em) return em[0].trim();
+  const dig = raw.replace(/\D/g,'');
+  if (dig.length === 11 && ehCPFsolto(raw)) return dig;
+  return raw.trim();
+}
 // Executa o rastreio direto (mesma lógica do estado RASTREAR), a partir de qualquer estado.
 async function fazerRastreio(termo, respond) {
   const pedidos = await consultarStatusGAS((termo || '').trim());
@@ -3821,7 +3833,7 @@ exports.handler = async (event) => {
     const rawId = body.phone || body.subscriber_id || 'default';
     const sid = rawId.replace(/\D/g,'').replace(/^0+/,'').replace(/^55(\d{10,11})$/,'55$1') || rawId;
     const n = norm(mensagem);
-    const num = parseInt(n);
+    let num = parseInt(n);
     const ehMidia = ['image','video','document','audio','sticker'].includes(body.type);
 
     console.log('MSG:', mensagem, '| SID:', sid, '| TYPE:', body.type, '| BODY_KEYS:', Object.keys(body).join(','));
@@ -3889,6 +3901,32 @@ exports.handler = async (event) => {
     }
 
     const state = session.state || 'MENU';
+
+    // ── OPÇÃO DE MENU POR TEXTO (17/09/2026) ──────────────────────────────────
+    // O cliente lê "1️⃣ Emagrecedores" e digita "Emagrecedores" (ou "emagrecedor", "peptideos",
+    // "hormonios", "gh", "estetica", "sarms", "farmacia", "promocao", "atacado"). Antes isso
+    // caía em tratarTextoLivre → não é produto → IA, que respondia PROSA em vez de abrir a
+    // categoria (caso real 17/09). Aqui o texto vira o número da opção, e o handler do estado
+    // segue igual. Só nos dois menus numerados de cima (TRIAGEM e MENU); nos outros, nada muda.
+    if (isNaN(num)) {
+      const _nt = n.trim();
+      if (state === 'MENU') {
+        if (/^(emagrecedor(es)?|emagrecimento|emagrecer)$/.test(_nt)) num = 1;
+        else if (/^(peptideo(s)?)$/.test(_nt)) num = 2;
+        else if (/^(hormonio(s)?|hormonal|hormonais)$/.test(_nt)) num = 3;
+        else if (/^(gh|hgh|somatropina|hormonio do crescimento)$/.test(_nt)) num = 4;
+        else if (/^(estetica|esteticos?)$/.test(_nt)) num = 5;
+        else if (/^(sarm(s)?)$/.test(_nt)) num = 6;
+        else if (/^(farmacia|farmacos?)$/.test(_nt)) num = 7;
+        else if (/^(promocao|promocoes|promocao do momento|promo do momento|ofertas?)$/.test(_nt)) num = 8;
+        else if (/^(atacado)$/.test(_nt)) num = 9;
+      } else if (state === 'TRIAGEM') {
+        if (/^(comprar|comprar produtos|produtos|ver produtos|quero comprar|comprar produto)$/.test(_nt)) num = 1;
+        else if (/^(prazos?|fretes?|rastreio|rastrear|prazos, fretes e rastreio|prazo e frete|prazos e fretes)$/.test(_nt)) num = 2;
+        else if (/^(duvidas?|protocolos?|tabelas? de fracionamento|fracionamento|duvidas, protocolos e tabelas de fracionamento)$/.test(_nt)) num = 3;
+      }
+      if (!isNaN(num)) console.log('[OPCAO-POR-TEXTO] state:', state, '| texto:', _nt, '-> opcao', num);
+    }
 
     // ── BLINDAGEM DO CHECKOUT ─────────────────────────────────────────────────
     // Quando o cliente já está montando/fechando o pedido, NENHUMA pergunta lateral
@@ -4066,8 +4104,13 @@ exports.handler = async (event) => {
     // ── LEAD FRIO: clique no botão "Sim, quero conhecer" do template aprovado pela Meta ──
     // O WhatsApp envia o texto do botão como mensagem. Detecta, apresenta a VitaFlow e abre o menu.
     // Não dispara em estados de pagamento (pra não atrapalhar quem já está comprando).
+    // 17/09/2026: lead que digita "ver produtos" / "produtos" / "catálogo" quer o MENU, não a IA.
+    // Caso real: lead frio da Athena digitou "Ver produtos" e "Emagrecedores" à mão e recebeu
+    // prosa da IA nas duas — nunca viu o menu numerado.
     const ehLeadConhecer = (n.includes('quero conhecer') || n === 'sim quero conhecer'
-      || n === 'quero ver')
+      || n === 'quero ver'
+      || /^(quero )?(ver|conhecer|mostrar?|me mostra) (os |o |seus |seu )?(produtos|catalogo|precos|valores|tabela de precos)$/.test(n.trim())
+      || /^(produtos|catalogo|ver catalogo|lista de produtos|quais produtos|o que voces vendem|o que voce vende|que produtos voces tem)$/.test(n.trim()))
       && !emCheckout;
     if (ehLeadConhecer) {
       // 17/09/2026 — decisão do Thiago: a partir do momento que o lead se interessa e pede
@@ -4308,7 +4351,28 @@ exports.handler = async (event) => {
         return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido*, seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_Digite *menu* para voltar._`);
       }
       // Já mandou o dado (CPF/pedido/email) → rastreia direto, sem perder o estado de compra.
-      return await fazerRastreio(mensagem, respond);
+      return await fazerRastreio(extrairTermoRastreio(mensagem), respond);
+    }
+    // ── RASTREIO DENTRO DO ATACADO (17/09/2026) ──────────────────────────────
+    // ATACADO/ATK_* contam como checkout (blindagem), então o bloco acima não entra lá. Só que
+    // cliente antigo entra no atacado e pergunta do pedido que já fez: "rastreio" virava busca
+    // na tabela ("Não encontrei rastreio na tabela de atacado") e "VF-1409-S011 sobre esse
+    // pedido?" ia pra IA, que INVENTAVA "vou consultar... o sistema vai buscar" — caso real 17/09
+    // (Lauricio, 6 minutos de vácuo até ele digitar "menu"). Aqui só entra com sinal FORTE
+    // (palavra de rastreio explícita, nº VF, CPF ou e-mail) — "meu pedido" solto NÃO conta, porque
+    // no atacado "fechar meu pedido" é fechamento. E NUNCA muda o estado: o carrinho de atacado
+    // continua exatamente onde estava.
+    const _ehAtkNavegacao = ['ATACADO','ATK_LISTA','ATK_QTD','ATK_CART'].includes(state);
+    if (_ehAtkNavegacao && !ehNumeroSimplesMenu && !_ehMidiaMsg) {
+      const _temDadoRastreio = ehNumeroPedido(mensagem) || ehCPFsolto(mensagem) || /[\w.+-]+@[\w-]+\.[\w.-]+/.test(mensagem);
+      const _pedeRastreio = /(rastre|codigo de rastreio|status do (meu )?pedido|cade meu pedido|onde esta meu pedido|nao chegou|nao recebi)/.test(n);
+      if (_temDadoRastreio) {
+        console.log('[RASTREIO-NO-ATACADO] state:', state, '| termo:', extrairTermoRastreio(mensagem));
+        return await fazerRastreio(extrairTermoRastreio(mensagem), respond);
+      }
+      if (_pedeRastreio) {
+        return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido* (começa com *VF-*), seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_Seu pedido de atacado continua salvo aqui — depois é só seguir de onde parou._`);
+      }
     }
 
     // (a detecção de revenda subiu pra antes da transferência pra humano — ver acima.
@@ -5145,6 +5209,32 @@ exports.handler = async (event) => {
 
       const carrinhoPend = session.carrinho || [];
       const totalPend = session.total || 0;
+
+      // ── LINK NÃO ABRE (17/09/2026) ─────────────────────────────────────────
+      // Caso real: cliente com pedido de R$ 654 gerado disse "Link não abre" e recebeu, DUAS
+      // vezes, o mesmo bloco "você tem um pedido em aberto" com o mesmo link. Venda parada.
+      // Aqui NÃO gera link novo (geraria pedido duplicado): manda o link SOZINHO numa linha (é
+      // o formato que o WhatsApp mais reconhece como clicável), ensina a copiar/colar, e AVISA
+      // A EQUIPE no Telegram pra alguém mandar Pix/link manual. O pedido continua guardado.
+      const _linkNaoAbre = /(link|pagamento|pagina|página)[^a-z]{0,20}(nao|não|n)\s*(abre|abriu|abriu?|funciona|funcionou|carrega|carregou|vai|foi|da certo|deu certo)|(nao|não) (consigo|consegui|to conseguindo|estou conseguindo|da pra|dá pra) (abrir|pagar|acessar|entrar)|deu erro|(esta|está|ta|tá) dando erro|erro no (link|pagamento)|link (quebrado|invalido|inválido|expirou|expirado|vencido|com erro)/.test(n);
+      if (_linkNaoAbre) {
+        const _jaAvisou = session.linkNaoAbreAvisado ? true : false;
+        if (!_jaAvisou) {
+          try {
+            await enviarTelegram(
+              `⚠️ *LINK NÃO ABRE — cliente travado no pagamento*\n` +
+              `📦 ${session.orderNsu || '—'}\n📱 ${sid}\n💰 R$ ${totalPend.toFixed(2).replace('.',',')}\n` +
+              `O cliente diz que o link de pagamento não abre. Mandar Pix/link manual por aqui.`
+            );
+          } catch (e) {}
+        }
+        await saveSession(sid, { ...session, linkNaoAbreAvisado: true });
+        return respond(
+          `Poxa, que chato! 😕 Vamos resolver: *seu pedido está guardado* (R$ ${totalPend.toFixed(2).replace('.',',')}).\n\n` +
+          (session.link ? `Tenta por este link aqui, sozinho — toca nele ou *copia e cola no navegador*:\n\n${session.link}\n\n` : '') +
+          `Se ainda assim não abrir, *já avisei nossa equipe* — em instantes alguém te manda o *Pix* ou um link novo por aqui mesmo. 🧡`
+        );
+      }
 
       if (dizQuePagou) {
         const insist = (session.insistPagou || 0) + 1;
