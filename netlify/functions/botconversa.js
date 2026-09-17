@@ -3872,6 +3872,22 @@ exports.handler = async (event) => {
       }
     }
 
+    // ── ESTADO ÓRFÃO DE VERSÃO ANTIGA → VOLTA PRO MENU (17/09/2026) ───────────
+    // A sessão fica gravada no Firebase e SOBREVIVE a deploy. Quando uma versão antiga
+    // gravou um estado que o código de hoje não grava mais (ex.: 'PROTOCOLO', que mandava
+    // TUDO que o cliente escrevesse direto pra IA), o cliente ficava preso nele pra sempre:
+    // nome de produto não era lido como produto, só saía digitando "menu" — e ninguém sabe
+    // disso. Caso real 17/09: cliente digitou "Retatrutida" e recebeu "👀" em vez da lista
+    // de preços; as 3 mensagens dele naquele dia viraram "👀".
+    // A lista abaixo é TODO estado que o código ATUAL grava, mais os dois que já não são
+    // gravados mas ainda têm handler vivo (FABRICANTES, PERGUNTA_CUPOM). Qualquer outro
+    // volta pro MENU. O CARRINHO É PRESERVADO — só o estado muda.
+    const ESTADOS_VALIDOS = ['ADM','AGUARDAR_COMPROVANTE','ATACADO','ATK_BLOQUEIO','ATK_CART','ATK_CONFIRMAR','ATK_LISTA','ATK_QTD','ATK_REMOVER','BUSCA_LIVRE','CARRINHO','COLETA_DADOS','CONFIRMAR','CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO','DUVIDAS','DUVIDAS_LIVRE','ESCOLHER_BRINDE','ESTADO','ESTER_BASE','FABRICANTES','FRETE','FRETE_AVULSO','HORMONIOS','INFORMAR_CUPOM','LISTA_PRODUTOS','MENU','OBS_PERGUNTA','OBS_TEXTO','PEPTIDEOS','PERGUNTA_CUPOM','POS_TABELA_FRAC','PRAZOS_RASTREIO','PRAZO_TIPO','PROMO_OFERECER','PROTO_CLIENTE','PROTO_ESCOLHER','PROTO_HUMANO','PROTO_IDENTIFICAR','PROTO_TIPO','QUANTIDADE','RASTREAR','REMOVER_ITEM','RETOMAR_CARRINHO','SORTEIO','STACK_PROXIMO','SUBMENU_TESTO','TRIAGEM','VAREJO_BLOQUEIO'];
+    if (session.state && ESTADOS_VALIDOS.indexOf(session.state) < 0) {
+      console.log('[ESTADO-ORFAO] estado desconhecido:', session.state, '— voltando pro MENU (carrinho preservado).');
+      session.state = 'MENU';
+    }
+
     const state = session.state || 'MENU';
 
     // ── BLINDAGEM DO CHECKOUT ─────────────────────────────────────────────────
@@ -3980,6 +3996,31 @@ exports.handler = async (event) => {
       console.log('[DUVIDA-FORA-DO-MENU] state:', state, '| msg:', String(mensagem).slice(0, 60));
       await saveSession(sid, { ...session, errosSeguidos: 0 });   // estado PRESERVADO
       return await responderComIA(sid, mensagem, contextoLista(session), respond);
+    }
+
+    // ── NOME DE PRODUTO VALE EM QUALQUER ESTADO (17/09/2026) ──────────────────
+    // Se o cliente escreve o nome de um produto do catálogo, ele quer VER O PREÇO — não
+    // importa em que ponto da árvore a sessão dele esteja. Antes isso só acontecia nos
+    // estados que chamam tratarTextoLivre(); em RASTREAR, por exemplo, "Retatrutida" virava
+    // "não encontrei nenhum pedido com esse dado" e a venda morria ali.
+    // Só entra quando NÃO atrapalha ninguém:
+    //   emCheckout / _DADO_LIVRE  -> o cliente está fechando pedido ou digitando um dado;
+    //   _JA_TRATA_DUVIDA          -> esses estados JÁ reconhecem produto (seria redundante);
+    //   _ESPERA_RESPOSTA_CURTA    -> esperam 1/2, sim/não, UF ou número — não é nome de produto;
+    //   mídia / número puro / palavra de navegação -> não é nome de produto.
+    // E só no modo 'canonico' (nome cheio e sem ambiguidade). Apelido/gíria continua
+    // passando pelo caminho normal, que pergunta "Você quis dizer X?" antes.
+    const _ESPERA_RESPOSTA_CURTA = ['CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO','PROMO_OFERECER','RETOMAR_CARRINHO','SORTEIO','PRAZO_TIPO','FRETE_AVULSO','BUSCA_LIVRE','PERGUNTA_CUPOM'];
+    if (state && !emCheckout
+        && _JA_TRATA_DUVIDA.indexOf(state) < 0
+        && _DADO_LIVRE.indexOf(state) < 0
+        && _ESPERA_RESPOSTA_CURTA.indexOf(state) < 0
+        && !_ehMidiaMsg && !_ehNavegacao) {
+      const _recGlobal = reconhecerProduto(n);
+      if (_recGlobal && _recGlobal.modo === 'canonico') {
+        console.log('[PRODUTO-EM-QUALQUER-ESTADO] state:', state, '| produto:', _recGlobal.entry && _recGlobal.entry.label);
+        return await tratarTextoLivre(session, sid, n, buildMenuPrincipal(), respond);
+      }
     }
 
     // ── MENU DE ENTRADA DA STELLA ─────────────────────────────────────────────
