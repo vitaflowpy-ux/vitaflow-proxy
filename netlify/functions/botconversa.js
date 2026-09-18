@@ -1088,7 +1088,7 @@ async function anunciarGenesis(session, sid, respond, curto) {
   // escolher, o item entra no carrinho já sinalizado e o brinde dispara com 2+ da linha,
   // sem depender do texto "Gênesis" estar no nome gravado.
   const listaGenesis = parseProdutos(linhas).map(function(p){ p.genesis = true; return p; });
-  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: listaGenesis, promoGenesis: true, errosSeguidos:0 });
+  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: listaGenesis, promoGenesis: true, errosSeguidos:0 });
   return respond(intro + formatarLista(linhas) + `\n\n*Digite o número do produto* (ou *menu* pra ver todas as categorias):`);
 }
 
@@ -1941,6 +1941,18 @@ function fmtProdLista(arr) {
     return emojis(i) + ' *' + p.nome + '*' + (pr > 0 ? (' — R$ ' + pr.toFixed(2).replace('.', ',')) : '');
   }).join('\n');
 }
+// De qual MENU a lista de produtos veio. Sem isso o "0" numa lista voltava sempre pro menu de
+// categorias em vez do menu anterior (ex.: lista de Enantato voltava pro menu principal, não pro
+// menu de Hormônios). Reclamação do VitaFlow em 18/09/2026.
+function origemDaLista(session) {
+  var st = session && session.state;
+  var MENUS = ['HORMONIOS','PEPTIDEOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','ATACADO','MENU'];
+  if (MENUS.indexOf(st) >= 0) return st;
+  // Já estava numa lista (ou escolhendo quantidade): preserva a origem que já tinha.
+  if (st === 'LISTA_PRODUTOS' || st === 'QUANTIDADE') return (session && session.origemLista) || 'MENU';
+  return 'MENU';
+}
+
 // Sobe um nível conforme o estado atual (o "menu anterior").
 async function voltarAthena(session, sid, respond) {
   var st = session.state;
@@ -1950,7 +1962,15 @@ async function voltarAthena(session, sid, respond) {
   if (st === 'MENU' || st === 'PRAZOS_RASTREIO' || st === 'DUVIDAS') {
     await saveSession(sid, { ...session, state: 'TRIAGEM' }); return respond('↩️ *Voltando ao início*\n\n' + buildTriagem());
   }
-  if (st === 'PEPTIDEOS' || st === 'HORMONIOS' || st === 'ATACADO' || st === 'LISTA_PRODUTOS') {
+  if (st === 'LISTA_PRODUTOS') {
+    var org = session.origemLista || 'MENU';
+    if (org === 'HORMONIOS') { await saveSession(sid, { ...session, state: 'HORMONIOS' }); return respond('↩️\n\n' + MENU_HORMONIOS); }
+    if (org === 'PEPTIDEOS') { await saveSession(sid, { ...session, state: 'PEPTIDEOS' }); return respond('↩️\n\n' + MENU_PEPTIDEOS); }
+    if (org === 'SUBMENU_TESTO' || org === 'ESTER_BASE') { await saveSession(sid, { ...session, state: 'SUBMENU_TESTO' }); return respond('↩️\n\n' + MENU_TESTO); }
+    if (org === 'ATACADO') { await saveSession(sid, { ...session, state: 'ATACADO' }); return respond('↩️\n\n' + MSG_ATACADO); }
+    await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️ *Voltando às categorias*\n\n' + buildMenuPrincipal());
+  }
+  if (st === 'PEPTIDEOS' || st === 'HORMONIOS' || st === 'ATACADO') {
     await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️ *Voltando às categorias*\n\n' + buildMenuPrincipal());
   }
   if (st === 'SUBMENU_TESTO' || st === 'FABRICANTES' || st === 'BUSCA_LIVRE') {
@@ -2345,7 +2365,7 @@ async function resolverReconhecido(session, sid, e, respond, marca) {
       await saveSession(sid, { ...session, state:'MENU', errosSeguidos:0, pendenteRec:null });
       return respond('No momento não trabalhamos com *Saxenda*, mas temos ótimas alternativas para emagrecimento! 😊\n\nDigite *menu* e escolha *Emagrecedores* (opção 2).');
     }
-    await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), errosSeguidos:0, pendenteRec:null });
+    await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(unicas), errosSeguidos:0, pendenteRec:null });
     return respond(`Não trabalhamos com *Saxenda*, mas tenho opções ainda mais procuradas para emagrecimento! 🔥\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
   }
   let dados;
@@ -2378,7 +2398,7 @@ async function resolverReconhecido(session, sid, e, respond, marca) {
     const porMarca = unicas.filter(l => norm(l).includes(nm));
     if (porMarca.length) { unicas = porMarca; tituloMarca = ' — ' + marca.toUpperCase(); }
   }
-  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), errosSeguidos:0, pendenteRec:null });
+  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(unicas), errosSeguidos:0, pendenteRec:null });
   return respond(`*${(e.label||'').toUpperCase()}${tituloMarca}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
 }
 
@@ -2477,7 +2497,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
         return respond(`Quer ver *${_labelBusca}*? Seu carrinho fica salvo. 🛒\n\n1️⃣ Sim, ver ${_labelBusca}\n2️⃣ Não, continuar de onde parei`);
       }
       await limparHistoricoIA(sid);
-      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(_achadosCat), errosSeguidos:0, pendenteRec:null });
+      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(_achadosCat), errosSeguidos:0, pendenteRec:null });
       return respond(`*${_labelBusca.toUpperCase()}*\n\n${formatarLista(_achadosCat)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
     }
   } catch (e) {}
@@ -3318,6 +3338,9 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
       linhaSemana = `\n\n🧡 _*Semana do Cliente:* falta R$ ${(_prox.min - baseSemana).toFixed(2).replace('.',',')} em produtos pra ganhar *R$ ${_prox.desc} OFF* automático!_`;
     }
   }
+  // Aviso de prazo internacional — ANTES de pagar, não depois. O cliente precisa saber do prazo
+  // enquanto ainda pode desistir. Sai vazio quando não há item internacional no carrinho.
+  const _intl = await blocoInternacional(carrinho);
   const resumo =
     `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}${linhaPromoPreco}\n\n` +
     `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
@@ -3326,7 +3349,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
       : `🚚 Frete *${frete.label}* — ${session.estadoCliente}: ~~R$ ${(frete.valor||0).toFixed(2).replace('.',',')}~~ *GRÁTIS* 🎉\n`) +
     linhaFreteGratis + linhaBrinde +
     linhasDesc + linhaCupomInfo +
-    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*` + linhaCupomNaoPega + linhaSemana +
+    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*` + linhaCupomNaoPega + linhaSemana + _intl +
     `\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._` +
     linhaConviteCupom;
   const freteParaSalvar = { ...frete, valor: freteValorFinal };
@@ -3517,13 +3540,15 @@ async function mostrarResumoPedido(session, sid, respond) {
     const descPct = session.descontoPromoPct || 0;
     const descValor = totalProd * (descPct / 100);
     const totalComDesconto = totalProd - descValor + frete.valor;
+    const _intlPromo = await blocoInternacional(carrinho);
     const resumo =
       `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
       `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
       `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
       `🔥 *${session.promoTitulo||'Promoção Relâmpago'}* — preços promocionais já aplicados` +
       (descPct ? `\n🏷️ Desconto extra (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') +
-      `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`;
+      `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*` + _intlPromo +
+      `\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`;
     await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo' });
     return respond(resumo);
   }
@@ -3534,7 +3559,8 @@ async function mostrarResumoAtacado(session, sid, respond) {
   const cart = session.carrinhoAtk || [];
   const sub = totalCarrinho(cart);
   await saveSession(sid, { ...session, state:'ATK_CONFIRMAR' });
-  return respond(`*📋 RESUMO DO PEDIDO — ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n🚚 Frete: *GRÁTIS* 🎉\n\n💰 *Total: R$ ${sub.toFixed(2).replace('.', ',')}*\n\n*Confirma?*\n1️⃣ Sim, gerar o link de pagamento\n2️⃣ Não, voltar`);
+  const _intlAtk = await blocoInternacional(cart);
+  return respond(`*📋 RESUMO DO PEDIDO — ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n🚚 Frete: *GRÁTIS* 🎉\n\n💰 *Total: R$ ${sub.toFixed(2).replace('.', ',')}*` + _intlAtk + `\n\n*Confirma?*\n1️⃣ Sim, gerar o link de pagamento\n2️⃣ Não, voltar`);
 }
 // Fecha o pedido de ATACADO direto, sem passar pelo resumo/observação. Usado quando o
 // cliente responde ao convite de 3h com uma palavra de intenção (_ehQueroFechar): ele já
@@ -4612,7 +4638,7 @@ exports.handler = async (event) => {
         const dados = await buscarCache('emagrecedores');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*💊 EMAGRECEDORES*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 2) { await saveSession(sid, { ...session, state:'PEPTIDEOS' }); return respond(MENU_PEPTIDEOS); }
@@ -4621,28 +4647,28 @@ exports.handler = async (event) => {
         const dados = await buscarCache('gh');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*⚡ GH*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 5) {
         const dados = await buscarCache('estetica');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*💅 ESTÉTICA*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 6) {
         const dados = await buscarCache('sarms');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*🧬 SARMS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 7) {
         const dados = await buscarCache('farmacia');
         const linhas = dados.split('\n').filter(Boolean);
         if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*💊 FARMÁCIA*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 8) {
@@ -4719,7 +4745,9 @@ exports.handler = async (event) => {
     if (state === 'SUBMENU_TESTO') {
       const dados = await buscarCache('hormonios');
       let filtro, label;
-      let excluir = ['masteron','drostanolona','trembolona','tren','nandrolona','deca','boldenona','primobolan','metenolona'];
+      // 'deca' saiu daqui pelo mesmo motivo do BASES_NAO_TESTO: comia "un-DECA-noato" e o
+      // Nebido nunca aparecia na opção 4 (Outras Testosteronas). Bug antigo, achado em 18/09/2026.
+      let excluir = ['masteron','drostanolona','trembolona','tren','nandrolona','durabolin','boldenona','primobolan','metenolona'];
       if (num === 1)      { filtro=['enantato'];   label='ENANTATO DE TESTOSTERONA'; }
       else if (num === 2) { filtro=['cipionato'];  label='CIPIONATO DE TESTOSTERONA'; }
       else if (num === 3) { filtro=['durateston']; label='DURATESTON (BLEND)'; excluir=[]; }
@@ -4730,7 +4758,7 @@ exports.handler = async (event) => {
       if (excluir.length) linhas = linhas.filter(l => { const nl = norm(l); return !excluir.some(x => nl.includes(x)); });
       const unicas = [...new Set(linhas)];
       if (!unicas.length) return respond(`Nenhum *${label}* disponível no momento. 😕\n\n${MENU_TESTO}`);
-      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), errosSeguidos:0 });
+      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(unicas), errosSeguidos:0 });
       return respond(`*${label}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
     }
 
@@ -4744,7 +4772,7 @@ exports.handler = async (event) => {
       if (!unicas.length) unicas = filtrarEster(await buscarTodosCache(), ester, base);
       const baseLabel = base.charAt(0).toUpperCase() + base.slice(1);
       if (!unicas.length) return respond(`Não encontrei *${ester} de ${baseLabel}* disponível no momento. 😕\n\nQuer tentar outra base?\n\n${MENU_BASE_ESTER}`);
-      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas), pendenteEster:null, errosSeguidos:0 });
+      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(unicas), pendenteEster:null, errosSeguidos:0 });
       return respond(`*${ester.toUpperCase()} DE ${baseLabel.toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
     }
 
@@ -4759,7 +4787,7 @@ exports.handler = async (event) => {
       if (mapa[num]) {
         const linhas = await buscarFiltradoGlobal('peptideos', mapa[num]);
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_PEPTIDEOS}`);
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*${mapa[num][0].toUpperCase()}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 16) {
@@ -4767,16 +4795,27 @@ exports.handler = async (event) => {
         const todosTermos = Object.values(mapa).flat().concat(['retatrutida','tirzepatida','semaglutida']);
         const linhas = dados.split('\n').filter(Boolean).filter(l => { const nProd = norm(l.split('|')[0]); return !todosTermos.some(t => nProd.includes(norm(t))); });
         if (!linhas.length) return respond(`Nenhum outro peptídeo encontrado.\n\n${MENU_PEPTIDEOS}`);
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*OUTROS PEPTÍDEOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       return await tratarTextoLivre(session, sid, n, MENU_PEPTIDEOS, respond);
     }
 
     if (state === 'HORMONIOS') {
+      // Bases que NÃO são testosterona. Servem pra limpar as listas 1 e 2, que buscam por éster
+      // e acabavam trazendo Trembolona Enantato, Masteron, Nandrolona, CutStack etc.
+      // ⚠️ aplicarExclusao casa SUBSTRING em qualquer posição. Por isso NÃO pode ter 'deca'
+      // (come "un-DECA-noato" e sumia com o Nebido) nem 'ment' (come qualquer "…mento").
+      // 'durabolin' cobre o Deca-Durabolin e 'trestolona' cobre o MENT.
+      const BASES_NAO_TESTO = ['masteron','drostanolona','trembolona','tren','nandrolona','durabolin','npp','boldenona','primobolan','metenolona','cutstack','trestolona'];
       const mapa = {
-        1:  { termos:['enantato','testosterona'], label:'ENANTATO DE TESTOSTERONA' },
-        2:  { termos:['testosterona'],             label:'TESTOSTERONA / DURATESTON' },
+        // ⚠️ filtrarCache trata cada item do array como busca SEPARADA (OU) e junta tudo.
+        // Palavras dentro da MESMA string são exigidas TODAS (E). Por isso 'enantato testosterona'
+        // numa string só — antes eram 2 itens e a lista vinha com Trembolona Enantato, Cipionato,
+        // Testosterona Oral, Propionato e CutStack. Corrigido em 18/09/2026.
+        1:  { termos:['enantato testosterona'], excluir:BASES_NAO_TESTO, label:'ENANTATO DE TESTOSTERONA' },
+        // Durateston e Sustanon NÃO têm a palavra "testosterona" no nome — por isso nunca apareciam.
+        2:  { termos:['testosterona','durateston','sustanon'], excluir:BASES_NAO_TESTO, label:'TESTOSTERONA / DURATESTON' },
         3:  { termos:['npp','fenilpropionato'],    label:'NPP' },
         4:  { termos:['trembolona'],               label:'TREMBOLONA' },
         5:  { termos:['boldenona'],                label:'BOLDENONA' },
@@ -4797,7 +4836,7 @@ exports.handler = async (event) => {
         if (num === 2) linhas = linhas.filter(l => !norm(l).includes('enantato'));
         if (mapa[num].excluir) linhas = aplicarExclusao(linhas, mapa[num].excluir);
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_HORMONIOS}`);
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*${label}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 16) {
@@ -4805,7 +4844,7 @@ exports.handler = async (event) => {
         const todosTermos = Object.values(mapa).flatMap(m => m.termos);
         const linhas = dados.split('\n').filter(Boolean).filter(l => { const nProd = norm(l.split('|')[0]); return !todosTermos.some(t => nProd.includes(norm(t))); });
         if (!linhas.length) return respond(`Nenhum outro hormônio encontrado.\n\n${MENU_HORMONIOS}`);
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(linhas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*OUTROS HORMÔNIOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       return await tratarTextoLivre(session, sid, n, MENU_HORMONIOS, respond);
@@ -4823,7 +4862,7 @@ exports.handler = async (event) => {
         const linhas = filtrarCache(tudo, fabMap[num]);
         const unicas = [...new Set(linhas)];
         if (!unicas.length) return respond(`Nenhum produto de *${fabMap[num]}* disponível.\n\n${MENU_FABRICANTES}`);
-        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas) });
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(unicas) });
         return respond(`*${fabMap[num].toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 17) { await saveSession(sid, { ...session, state:'BUSCA_LIVRE' }); return respond('Digite o nome do fabricante que procura:'); }
@@ -4836,7 +4875,7 @@ exports.handler = async (event) => {
       const linhas = filtrarCache(tudo, mensagem);
       const unicas = [...new Set(linhas)];
       if (!unicas.length) return respond(`Nenhum produto de *${mensagem}* encontrado.\n\n${MENU_FABRICANTES}`);
-      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', produtoLista: parseProdutos(unicas) });
+      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(unicas) });
       return respond(`*${mensagem.toUpperCase()}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
     }
 
