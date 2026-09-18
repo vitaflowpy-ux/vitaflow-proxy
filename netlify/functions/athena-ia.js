@@ -22,6 +22,12 @@ const FIREBASE_URL    = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 const FIREBASE_SECRET = process.env.FIREBASE_SECRET || '';
 const ANTHROPIC_KEY   = process.env.ANTHROPIC_API_KEY;
 
+// ── DESCRIÇÃO DE PRODUTO SOB DEMANDA (igual à athena-ia-background.js) ──
+// Athena/Stella leem a descrição da página só quando o cliente PERGUNTA um detalhe do
+// produto (ex.: "quantos comprimidos vem?"). Usa a Storefront API pública da loja.
+const STOREFRONT_TOKEN = 'b4b46a09460b7277f5d4625b9019daef';
+const SHOP_GRAPHQL     = 'https://vitaflowoficial.com/api/2023-10/graphql.json';
+
 // Memória de conversa: MESMO nó da athena-ia-background.js (vitaflow_ia_hist), pra a
 // Stella e a Athena não terem memórias divergentes do mesmo cliente.
 const HIST_MAX_MSGS = 16;
@@ -147,6 +153,43 @@ async function buscarCache(colecao){
 async function buscarTodosCache(){
   const resultados = await Promise.all(COLECOES.map(function(c){ return buscarCache(c); }));
   return resultados.join('\n');
+}
+
+// Detecta se a mensagem do cliente é uma PERGUNTA sobre DETALHE do produto (o que vem,
+// quantos comprimidos, composição, apresentação...). NÃO conta pergunta de preço.
+function ehPerguntaDetalheProduto(msg){
+  var m = (msg || '').toString().toLowerCase();
+  if (!m) return false;
+  // Só gatilhos de DETALHE do produto. Pergunta só de preço NÃO casa aqui (o catálogo já responde),
+  // porque nenhum dos gatilhos abaixo é sobre preço/valor/custo.
+  return /quant[oa]s?\s+(?:comprimid|c[áa]psul|vem|contem|cont[ée]m|ml|ui|mg|frasco|ampola|vial|caneta|dose|unidade)|\bvem\b|\bcont[ée]m\b|composi[çc]|apresenta[çc]|especifica[çc]|\bvial\b|\bfrasco\b|\bampola\b|\bcomprimid|\bc[áa]psul|\bcaneta\b|do que (?:é|e) (?:feito|composto)|o que (?:vem|tem|é|e) (?:no|nesse|neste|nessa|nesta|dentro)|para que serve|pra que serve|posologi|como (?:usa|usar|aplica|aplicar|toma|tomar)|quantidade|dosagem|concentra[çc]/.test(m);
+}
+
+// Busca a DESCRIÇÃO oficial da página do produto na Storefront API (sob demanda).
+// Retorna blocos "• Título:\ndescrição" só dos produtos QUE TÊM descrição; '' se nenhum.
+async function buscarDescricaoProduto(termo){
+  try {
+    var q = (termo || '').toString().replace(/["\\]/g, ' ').trim();
+    if (!q) return '';
+    var query = 'query($q:String!){ products(first:3, query:$q){ edges{ node{ title description } } } }';
+    var r = await fetch(SHOP_GRAPHQL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN
+      },
+      body: JSON.stringify({ query: query, variables: { q: q } })
+    });
+    var d = await r.json();
+    var edges = (d && d.data && d.data.products && d.data.products.edges) || [];
+    var blocos = [];
+    for (var i = 0; i < edges.length; i++) {
+      var n = edges[i].node || {};
+      var desc = (n.description || '').toString().trim();
+      if (desc) blocos.push('• ' + (n.title || '').trim() + ':\n' + desc);
+    }
+    return blocos.join('\n\n');
+  } catch (e) { return ''; }
 }
 
 // Catálogo REAL pra ancorar a IA. Teto MENOR que o da versão assíncrona (12k contra 20k):
@@ -382,6 +425,21 @@ exports.handler = async (event) => {
     if (contexto) {
       sys += '\n\n=== CONTEXTO ATUAL DO CLIENTE (PRIORIDADE MÁXIMA) ===\n' + contexto
            + '\nResponda com base NESSE contexto atual. Se o histórico falar de outro produto/assunto, IGNORE — o cliente está tratando do que está acima AGORA.';
+    }
+
+    // ── DESCRIÇÃO SOB DEMANDA: só quando o cliente PERGUNTA um detalhe do produto ──
+    // Lê a descrição da página do produto na hora. Se não tiver descrição, a IA responde
+    // HONESTAMENTE que não tem essa info (NÃO promete confirmar, NÃO inventa).
+    if (ehPerguntaDetalheProduto(mensagem)) {
+      const termoBusca = contexto || mensagem;
+      const descProd = await buscarDescricaoProduto(termoBusca);
+      console.log('[IA-SYNC] pergunta de detalhe do produto | descrição encontrada:', descProd ? 'sim' : 'nao');
+      if (descProd) {
+        sys += '\n\n=== DESCRIÇÃO OFICIAL DO PRODUTO (da página da loja — use SÓ isto p/ responder o detalhe perguntado) ===\n' + descProd;
+        sys += '\n\n=== COMO RESPONDER ESTA PERGUNTA DE DETALHE ===\nResponda o que o cliente perguntou USANDO SOMENTE a descrição oficial acima. Se a descrição NÃO trouxer exatamente o dado perguntado, diga com honestidade que não consta essa informação. NUNCA invente quantidade, composição, dosagem ou qualquer dado. NÃO prometa "confirmar depois".';
+      } else {
+        sys += '\n\n=== PERGUNTA DE DETALHE SEM DESCRIÇÃO DISPONÍVEL ===\nO cliente perguntou um detalhe do produto, mas ESTE produto NÃO tem descrição cadastrada. Responda com honestidade que você não tem essa informação disponível. NÃO invente. NÃO prometa "vou confirmar" ou "já te confirmo" — apenas diga, de forma educada, que essa informação não está disponível.';
+      }
     }
 
     const restante = PRAZO_MS - (Date.now() - t0);
