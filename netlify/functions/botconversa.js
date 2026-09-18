@@ -3350,6 +3350,42 @@ async function buscarTodosCache() {
   const resultados = await Promise.all(cols.map(c => buscarCache(c)));
   return resultados.join('\n');
 }
+
+// ── PRODUTOS INTERNACIONAIS (prazo próprio) ───────────────────────────────────
+// Coleção AUTOMÁTICA do Shopify "Internacionais" (regra: Tipo de produto = Importado), gravada
+// pelo cache-colecoes no nó vitaflow_cache/colecoes/internacionais — o mesmo formato nome|preço
+// das outras. São produtos que saem do Paraguai: prazo de ATÉ 10 dias úteis, não os 48h do varejo.
+// O aviso NÃO é da categoria estética — cosmético e perfume também entram quando forem marcados.
+// PROPOSITALMENTE fora da lista `cols` acima: não é categoria de menu, é só marcador. Se entrasse
+// lá, os mesmos produtos apareceriam duplicados na busca global.
+async function nomesInternacionais() {
+  try {
+    const dados = await buscarCache('internacionais');
+    return (dados || '').split('\n').filter(Boolean).map(l => norm(l.split('|')[0]));
+  } catch { return []; }
+}
+function msgInternacional(nomes) {
+  const lista = nomes.length === 1
+    ? `📌 *Item internacional neste pedido:* ${nomes[0]}`
+    : `📌 *Itens internacionais neste pedido:*\n${nomes.map(n => '• ' + n).join('\n')}`;
+  return `🌎 *ENVIO INTERNACIONAL*\n\n${lista}\n\n` +
+    `Produto internacional: sai do Paraguai, entra no Brasil e só então é postado em território nacional.\n\n` +
+    `⏱️ *Prazo máximo:* até *5 dias úteis* pra ser postado + até *5 dias úteis* pra entrega = *até 10 dias úteis*.\n` +
+    `✅ Esse é o *teto*, não a média — normalmente chega bem antes.`;
+}
+// Devolve '' quando não há item internacional no carrinho (aí nada muda na mensagem).
+async function blocoInternacional(carrinho) {
+  const nomes = await nomesInternacionais();
+  if (!nomes.length) return '';
+  const set = new Set(nomes);
+  const achados = [];
+  (carrinho || []).forEach(it => {
+    const n = it && it.nome ? it.nome : '';
+    if (n && set.has(norm(n)) && achados.indexOf(n) === -1) achados.push(n);
+  });
+  if (!achados.length) return '';
+  return '\n\n' + msgInternacional(achados);
+}
 // BUSCA COM FALLBACK GLOBAL: procura os termos na coleção indicada; se não achar NADA
 // (produto catalogado em outra coleção — comum entre os ~800 itens: ex. Clembuterol/T3 ficam
 // em "outros", não em "hormonios"), procura em TODAS as coleções antes de considerar
@@ -5342,6 +5378,8 @@ exports.handler = async (event) => {
       );
 
       const primeiroNome = (coleta.nome || '').split(' ')[0];
+      // Aviso de prazo internacional — só entra se houver item internacional no carrinho.
+      const _blocoIntl = await blocoInternacional(carrinho);
       const msg1 =
         `✅ *Pedido ${num_pedido||''} confirmado!*\n\n` +
         `Olá, *${primeiroNome}*! Obrigada pela confiança na VitaFlow! 🧡\n\n` +
@@ -5357,7 +5395,8 @@ exports.handler = async (event) => {
         `• Nordeste: 5 a 8 dias úteis\n` +
         `• Norte: 7 a 10 dias úteis\n\n` +
         `🏭 *Atacado:* despacho em até *5 dias úteis* após a confirmação do pagamento. Após a postagem, os prazos de entrega por região são os mesmos do varejo (acima).\n` +
-        `_*Estimativas, podem variar conforme distância e condições._\n\n` +
+        `_*Estimativas, podem variar conforme distância e condições._` +
+        _blocoIntl + `\n\n` +
         `🔍 *Rastreie seu pedido em tempo real:*\nvitaflowoficial.com/pages/rastrear-pedido\n` +
         `Use qualquer uma dessas informações para rastrear:\n` +
         `• *Número do pedido:* ${num_pedido||''}\n` +
