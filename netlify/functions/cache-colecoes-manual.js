@@ -28,7 +28,12 @@ const COLECOES = [
   'ganho-de-massa',
   'saude-qualidade-de-vida',
   'energia',
-  'recuperacao'
+  'recuperacao',
+  // Coleção AUTOMÁTICA (Tipo de produto = Importado). Marca os produtos que vêm do Paraguai
+  // e têm prazo próprio (até 10 dias úteis). A Athena lê este nó pra saber se o carrinho tem
+  // item internacional e só então mostrar o aviso de prazo. Adicionada em 18/09/2026.
+  // NÃO entra na lista `cols` do athena_botconversa.js — é só marcador, não categoria de menu.
+  'internacionais'
 ];
 
 const ADMIN_BASE = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01`;
