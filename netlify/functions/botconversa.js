@@ -2601,6 +2601,14 @@ function parseProdutos(linhas) {
     return { nome: nome.trim(), preco: precoNum };
   });
 }
+// Forma COLADA: tira hífen, ponto, barra e espaço. Serve pra "CBL-514" achar "CBL 514" e
+// vice-versa — o VitaFlow cadastrou "CBL 514 50mg" (espaço) e a busca por "CBL-514" dava ZERO,
+// além do produto não entrar na opção 12 do menu de peptídeos. Achado em 18/09/2026.
+function _colado(s) { return norm(s).replace(/[-_.\/\s]+/g, ''); }
+// Só vale pra CÓDIGO de produto (tem hífen, ponto ou dígito) — em palavra comum não se aplica,
+// pra não afrouxar a busca e começar a casar no meio de outra palavra.
+function _ehCodigo(termo) { return /[-.\/\d]/.test(String(termo || '')); }
+
 function filtrarCache(dados, termos) {
   const lista = Array.isArray(termos) ? termos : [termos];
   const resultados = new Set();
@@ -2620,9 +2628,15 @@ function filtrarCache(dados, termos) {
       // _casaTermo: o termo precisa INICIAR uma palavra do nome (mesmo limite que a busca
       // do atacado passou a usar em 08/09) — não casa mais no meio de outra palavra.
       if (palavras.every(p => _casaTermo(nomeProd, p))) { resultados.add(linha); return; }
-      if (!podeRadical) return;
-      const rad = radicalProduto(nomeProd);
-      if (radicais.every(r => _casaTermo(rad, r))) resultados.add(linha);
+      if (podeRadical) {
+        const rad = radicalProduto(nomeProd);
+        if (radicais.every(r => _casaTermo(rad, r))) { resultados.add(linha); return; }
+      }
+      // Passada extra IGNORANDO separador (só pra código): "cbl-514" acha "CBL 514" e o contrário.
+      if (_ehCodigo(termo)) {
+        const nomeColado = _colado(nomeProd);
+        if (palavras.every(pal => nomeColado.includes(_colado(pal)))) resultados.add(linha);
+      }
     });
   });
   return [...resultados];
@@ -4781,7 +4795,7 @@ exports.handler = async (event) => {
         1: ['bpc-157', 'bpc157'], 2: ['tb-500', 'tb500'], 3: ['ghk-cu', 'ghkcu'],
         4: ['klow'], 5: ['glow'], 6: ['ss-31', 'ss31'], 7: ['mots-c', 'motsc'],
         8: ['ipamorelin'], 9: ['cjc-1295', 'cjc1295'], 10: ['pt-141', 'pt141'],
-        11: ['aod-9604', 'aod9604'], 12: ['cbl-514', 'cbl514'], 13: ['epitalon'],
+        11: ['aod-9604', 'aod9604'], 12: ['cbl-514', 'cbl514', 'cbl 514'], 13: ['epitalon'],
         14: ['nad'], 15: ['tesamorelin'],
       };
       if (mapa[num]) {
