@@ -1990,8 +1990,27 @@ async function voltarAthena(session, sid, respond) {
     if (lista.length) { await saveSession(sid, { ...session, state: 'LISTA_PRODUTOS' }); return respond('↩️ *Voltando à lista*\n\n' + fmtProdLista(lista) + '\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_'); }
     await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️\n\n' + buildMenuPrincipal());
   }
-  if (st === 'ATK_LISTA') {
+  if (st === 'ATK_LISTA' || st === 'ATK_CART') {
     await saveSession(sid, { ...session, state: 'ATACADO' }); return respond('↩️\n\n' + MSG_ATACADO);
+  }
+  // ── Grupo A (18/09/2026): menus de navegação que ignoravam o "0" ──
+  if (st === 'CARRINHO') {
+    await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️ *Seu carrinho está guardado!*\n\n' + buildMenuPrincipal());
+  }
+  if (st === 'REMOVER_ITEM') {
+    var _car = session.carrinho || [];
+    if (_car.length) { await saveSession(sid, { ...session, state: 'CARRINHO' }); return respond('↩️\n\n' + msgCarrinhoMenu(_car)); }
+    await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️\n\n' + buildMenuPrincipal());
+  }
+  if (st === 'ATK_REMOVER') {
+    var _atk = session.carrinhoAtk || [];
+    if (_atk.length) { await saveSession(sid, { ...session, state: 'ATK_CART' }); return respond('↩️\n\n' + msgCarrinhoAtk(_atk)); }
+    await saveSession(sid, { ...session, state: 'ATACADO' }); return respond('↩️\n\n' + MSG_ATACADO);
+  }
+  // Gerador de protocolos: o "0" faz o MESMO que a palavra "voltar" já fazia nesses estados
+  // (vai pro menu principal). Mantido igual de propósito, pra não mudar comportamento conhecido.
+  if (st === 'POS_TABELA_FRAC' || st === 'PROTO_TIPO' || st === 'PROTO_ESCOLHER' || st === 'PROTO_IDENTIFICAR' || st === 'PROTO_CLIENTE') {
+    await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️\n\n' + buildMenuPrincipal());
   }
   if (st === 'ATK_QTD') {
     var listaAtk = session.atkLista || [];
@@ -4223,7 +4242,15 @@ exports.handler = async (event) => {
     const ehSaudacaoOuMenu = n === 'menu' || n === 'inicio' || n === 'voltar' || n === 'start' || saudacoes.some(s => n === s || n.startsWith(s+' ') || n.startsWith(s+'!'));
 
     // ── "0" ou "voltar" = sobe UM nível na árvore (só nos menus navegáveis). "menu" continua indo pro início. ──
-    const NAV_VOLTAR = ['MENU_STELLA','MENU','PEPTIDEOS','HORMONIOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','BUSCA_LIVRE','LISTA_PRODUTOS','QUANTIDADE','PRAZOS_RASTREIO','PRAZO_TIPO','FRETE_AVULSO','RASTREAR','DUVIDAS','DUVIDAS_LIVRE','ATACADO','ATK_LISTA','ATK_QTD'];
+    // 18/09/2026 — o VitaFlow pediu que o "0" volte um nível em TODO menu, não só nas listas.
+    // Auditei os 49 estados: só 19 aceitavam. Entraram os 9 menus de NAVEGAÇÃO (grupo A).
+    // NÃO entram, de propósito: COLETA_DADOS e AGUARDAR_COMPROVANTE (pedido JÁ PAGO, tem trava),
+    // o miolo do checkout (ESTADO/FRETE/OBS/CUPOM/CONFIRMAR — o 0 por engano faria o cliente
+    // perder um passo do fechamento), as perguntas de 2 opções (CONFIRMAR_PRODUTO, PROMO_OFERECER,
+    // RETOMAR_CARRINHO, SORTEIO, STACK_PROXIMO, ESCOLHER_BRINDE), TRIAGEM (é o topo) e as telas
+    // de bloqueio/admin.
+    const NAV_VOLTAR = ['MENU_STELLA','MENU','PEPTIDEOS','HORMONIOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','BUSCA_LIVRE','LISTA_PRODUTOS','QUANTIDADE','PRAZOS_RASTREIO','PRAZO_TIPO','FRETE_AVULSO','RASTREAR','DUVIDAS','DUVIDAS_LIVRE','ATACADO','ATK_LISTA','ATK_QTD',
+      'CARRINHO','REMOVER_ITEM','ATK_CART','ATK_REMOVER','POS_TABELA_FRAC','PROTO_TIPO','PROTO_ESCOLHER','PROTO_IDENTIFICAR','PROTO_CLIENTE'];
     if ((n === '0' || n === 'voltar' || n === 'volta') && NAV_VOLTAR.indexOf(state) >= 0) {
       return await voltarAthena(session, sid, respond);
     }
