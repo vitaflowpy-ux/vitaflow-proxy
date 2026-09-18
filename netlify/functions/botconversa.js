@@ -230,6 +230,10 @@ const FRAC_TABELAS = {
     "titulo": "Retatrutida 120mg Liofilizada (Synedica)",
     "texto": "_1 frasco único de 120mg — reconstitua com 7mL de BAC_\n\n▪️ *Diluir em 7 mL de BAC:*\n1 mg → *6 UI*  (120 doses)\n2 mg → *12 UI*  (60 doses)\n4 mg → *23 UI*  (30 doses)\n6 mg → *35 UI*  (20 doses)\n8 mg → *47 UI*  (15 doses)\n10 mg → *58 UI*  (12 doses)\n12 mg → *70 UI*  (10 doses)"
   },
+  "reta_synedica_40_caneta": {
+    "titulo": "Retatrutida Synedica 40mg (Caneta)",
+    "texto": "_Caneta 4 × 10mg = 40mg, já vem pronta (não diluir). A janela marca 0 / 2,5 / 5 / 7,5 / 10 mg e entre os números aparecem só símbolos — é normal. 20 cliques = 2,5mg → 1 clique = 0,125mg. Conte os cliques a partir do 0._\n\n▪️ *Cliques a partir do 0:*\n1 mg → *8 cliques*  (40 doses)\n2 mg → *16 cliques*  (20 doses)\n2,5 mg → *20 cliques*  (16 doses)\n4 mg → *32 cliques*  (10 doses)\n5 mg → *40 cliques*  (8 doses)\n6 mg → *48 cliques*  (6 doses)\n8 mg → *64 cliques*  (5 doses)\n10 mg → *80 cliques*  (4 doses)"
+  },
   "reta_veltrane_diamond_120": {
     "titulo": "Retatrutida 120mg (diluída - Veltrane Diamond)",
     "texto": "_Frasco único 120mg/6mL — injeção, já vem pronta_\n\n▪️ *Já vem pronta (não diluir) — 6 mL:*\n1 mg → *5 UI*  (120 doses)\n2 mg → *10 UI*  (60 doses)\n4 mg → *20 UI*  (30 doses)\n6 mg → *30 UI*  (20 doses)\n8 mg → *40 UI*  (15 doses)\n10 mg → *50 UI*  (12 doses)\n12 mg → *60 UI*  (10 doses)"
@@ -383,7 +387,7 @@ function slugsDoProduto(nome){
   }
   if (t.includes('retatrutida') || t.includes('retatrutide') || /\breta\b/.test(t) || t.includes('retagen')){
     const liof = t.includes('liofil');
-    if (t.includes('synedica')) return ['reta_synedica_120_liof'];
+    if (t.includes('synedica')) return (t.includes('caneta') || mg===40) ? ['reta_synedica_40_caneta'] : ['reta_synedica_120_liof']; // 18/09: caneta 4×10mg (cliques) ≠ frasco 120mg (UI)
     if (t.includes('retagen')) return ['reta_retagen_oxygen_120'];
     if (t.includes('veltrane')){ if (t.includes('diamond')) return ['reta_veltrane_diamond_120']; if (t.includes('gold')) return ['reta_veltrane_gold_90']; return ['reta_veltrane_60']; }
     if (t.includes('oxygen')){ if (mg===160) return ['reta_oxygen_160_aq']; if (mg===60 && liof) return ['reta_oxygen_60_liof']; return ['reta_oxygen_80_aq']; }
