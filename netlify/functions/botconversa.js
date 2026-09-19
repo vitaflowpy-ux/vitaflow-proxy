@@ -3421,9 +3421,14 @@ async function buscarFiltradoGlobal(colecao, termos) {
   }
   return linhas;
 }
+// Token FORA do codigo (19/09/2026): estava escrito aqui. Quando a env TELEGRAM_TOKEN foi
+// preenchida (pro bot do Grupo VIP), o scanner de segredos da Netlify passou a DERRUBAR
+// TODO deploy do vitaflow-proxy — "Exposed secrets detected", commit af74c78. Agora vem da env.
 async function enviarTelegram(texto) {
+  const tk = process.env.TELEGRAM_TOKEN || '';
+  if (!tk) return;                       // env vazia: nao avisa, mas nao quebra o fluxo
   try {
-    await fetchT('https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage', {
+    await fetchT('https://api.telegram.org/bot' + tk + '/sendMessage', {
       method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chat_id:'8660563352', text: texto })
     }, 4000);
   } catch {}
