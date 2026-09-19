@@ -483,7 +483,7 @@ function promoDobroAtiva(){ return PROMO_DOBRO.ativa && Date.now() <= new Date(P
 const PROMO_SEMANA_CLIENTE = {
   ativa: true,
   ini: '2026-09-13T00:00:00-03:00',
-  fim: '2026-09-19T23:59:59-03:00',
+  fim: '2026-09-20T23:59:59-03:00',   // 19/09: estendida até domingo 20/09 (Thiago)
   faixas: [ { min: 500, desc: 50 }, { min: 1000, desc: 100 }, { min: 1500, desc: 225 }, { min: 2000, desc: 300 } ]  // R$
 };
 function semanaClienteAtiva(){
@@ -947,7 +947,7 @@ async function contextoPromo(){
   linhas.push(`DEFINIÇÃO — "VAREJO": são os produtos NORMAIS da VitaFlow (os MESMOS que você oferece fora do modo atacado, iguais aos do site vitaflowoficial.com), vendidos em QUALQUER quantidade. Quando o cliente falar "varejo", é disso que ele fala — é o padrão de compra, NÃO é o atacado (que tem mínimo de R$ 3.000 e frete grátis). Os 3% e as promoções valem no varejo.`);
   if (semanaClienteAtiva()) {
     const _fx = PROMO_SEMANA_CLIENTE.faixas.map(f => `acima de R$ ${f.min} ganha R$ ${f.desc} OFF`).join('; ');
-    linhas.push(`PROMOÇÃO ATIVA — SEMANA DO CLIENTE VitaFlow (13 a 19/09): desconto AUTOMÁTICO por faixa do valor em PRODUTOS (varejo): ${_fx}. É automático no fechamento — o cliente NÃO digita cupom. NÃO acumula com cupom nem com os ${DESCONTO_ATHENA_PCT}% (vale sempre o MAIOR). NÃO vale no atacado. SEMPRE que o cliente perguntar de promoção/desconto, ou estiver perto de uma faixa, DIVULGUE e incentive completar o valor pra subir de faixa.`);
+    linhas.push(`PROMOÇÃO ATIVA — SEMANA DO CLIENTE VitaFlow (13 a 20/09): desconto AUTOMÁTICO por faixa do valor em PRODUTOS (varejo): ${_fx}. É automático no fechamento — o cliente NÃO digita cupom. NÃO acumula com cupom nem com os ${DESCONTO_ATHENA_PCT}% (vale sempre o MAIOR). NÃO vale no atacado. SEMPRE que o cliente perguntar de promoção/desconto, ou estiver perto de uma faixa, DIVULGUE e incentive completar o valor pra subir de faixa.`);
   }
   // Promoções de PREÇO POR QUANTIDADE (config em cupons_vitaflow/_vfTipo:promo_preco) — pra a IA DIVULGAR.
   try {
@@ -1037,7 +1037,7 @@ O *9.9* é a maior data de ofertas do e-commerce — e a VitaFlow juntou ela com
 ⏰ *Só de 07 a 09 de setembro (segunda a quarta)!*
 
 _Alguns produtos já saem com preço especial de 9.9 — nesses, o cupom não é necessário. Válido pros produtos do varejo; não acumula com outros cupons ou promoções (vale sempre o MAIOR desconto pra você). 😉_`;
-// ── SEMANA DO CLIENTE: mensagem da opção "promoções" (auto-liga 13/09, desliga depois de 19/09) ──
+// ── SEMANA DO CLIENTE: mensagem da opção "promoções" (auto-liga 13/09, desliga depois de 20/09) ──
 const MSG_PROMO_SEMANA = `🧡 *SEMANA DO CLIENTE VITAFLOW!* 🧡
 
 Uma semana inteira pra retribuir a sua confiança — e *quanto maior o pedido, maior o presente!* O desconto é *automático no carrinho* (sem cupom, sem complicação):
@@ -1047,14 +1047,14 @@ Uma semana inteira pra retribuir a sua confiança — e *quanto maior o pedido, 
 🛒 Acima de *R$ 1.500* → *R$ 225 OFF*
 🛒 Acima de *R$ 2.000* → *R$ 300 OFF*
 
-⏳ Só de *13 a 19 de setembro!* 🔥
+⏳ Só de *13 a 20 de setembro!* 🔥
 
 _Desconto nos produtos (varejo), aplicado sozinho no fechamento. Não acumula com outros cupons ou promoções — vale sempre o MAIOR. Não vale no atacado._`;
 // ⚠️ REGRA PERMANENTE (Thiago, 13/09/2026): TODA promoção nova TEM que aparecer AQUI, na parte de
 // "promoções" da Stella/Athena (opção 8 / comando "promo"). NÃO basta pôr só no contextoPromo da IA.
 // Se a promoção tiver data, adicione também o aviso no buildMenuPrincipal(). Isso vale SEMPRE.
 // Mensagem da "promoção do momento" (opção 8 / "promoção").
-// Prioridade: Semana do Cliente (13-19/09) > Independência > Gênesis > Frete > sorteio > padrão 3%.
+// Prioridade: Semana do Cliente (13-20/09) > Independência > Gênesis > Frete > sorteio > padrão 3%.
 function msgPromoAtual(){
   if (semanaClienteAtiva()) {
     return MSG_PROMO_SEMANA;
