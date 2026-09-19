@@ -9,8 +9,10 @@
  * disparado pelo cron-job.org, e um lugar so pra olhar quando algo nao rodar.
  *
  * Quem enche a fila: painel_grupo_vip.html (aba Agenda), que grava
- *   agenda/<id> = { texto, quando (ms), fixar: ''|'24_hours'|'7_days'|'30_days',
+ *   agenda/<id> = { texto, imagem, quando (ms), fixar: ''|'24_hours'|'7_days'|'30_days',
  *                   status: 'pendente', criado }
+ *   imagem = URL do CDN do Shopify (opcional). Tendo imagem, o post sai por /send-image
+ *   com o texto como legenda; sem imagem, sai por /send-text.
  *
  * Variaveis de ambiente (projeto Netlify vitaflow-proxy):
  *   ZAPI_INSTANCE, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN, FIREBASE_SECRET, GRUPO_VIP_ID,
@@ -107,6 +109,23 @@ async function enviarTexto(texto) {
   return (corpo && (corpo.messageId || corpo.id)) || '';
 }
 
+/* Post com imagem sai por /send-image, com o texto como LEGENDA. A imagem e uma URL
+   do CDN do Shopify, subida pelo painel via atacado-imagem-upload — no Firebase fica
+   so a URL. Devolve o messageId, igual ao texto, pro pin funcionar do mesmo jeito. */
+async function enviarImagem(urlImagem, legenda) {
+  var r = await fetch(zapiUrl('send-image'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Client-Token': CLIENT_TOKEN },
+    body: JSON.stringify({ phone: GRUPO_VIP_ID, image: urlImagem, caption: legenda || '' })
+  });
+  var corpo = null;
+  try { corpo = await r.json(); } catch (e) { corpo = null; }
+  if (!r.ok) {
+    throw new Error('Z-API send-image HTTP ' + r.status + ' ' + JSON.stringify(corpo));
+  }
+  return (corpo && (corpo.messageId || corpo.id)) || '';
+}
+
 /* Fixar e OPCIONAL: se falhar, o post ja foi e nao vamos reenviar por causa disso.
    Retorna o motivo da falha (string) ou '' se deu certo. */
 async function fixar(messageId, duracao) {
@@ -132,7 +151,8 @@ function triar(agenda, agora) {
   var vencidos = [], expirados = [], ids = Object.keys(agenda || {});
   for (var i = 0; i < ids.length; i++) {
     var id = ids[i], p = agenda[id];
-    if (!p || typeof p !== 'object' || !p.texto) continue;
+    /* Post pode ser so imagem (a legenda fica vazia) ou so texto. Sem nenhum dos dois, ignora. */
+    if (!p || typeof p !== 'object' || (!p.texto && !p.imagem)) continue;
 
     var st = String(p.status || 'pendente');
 
@@ -204,7 +224,9 @@ exports.handler = async function (event) {
     await fbPatch(RAIZ + '/agenda/' + id, { status: 'enviando', lock: Date.now() });
 
     try {
-      var messageId = await enviarTexto(String(post.texto));
+      var messageId = post.imagem
+        ? await enviarImagem(String(post.imagem), String(post.texto || ''))
+        : await enviarTexto(String(post.texto));
       var aviso = '';
       if (post.fixar) {
         var erroPin = await fixar(messageId, String(post.fixar));
