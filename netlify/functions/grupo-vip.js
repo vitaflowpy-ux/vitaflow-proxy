@@ -1,6 +1,6 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v1  ·  19/09/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v2  ·  19/09/2026
    Netlify Function no repo vitaflow-proxy → netlify/functions/grupo-vip.js
    Webhook "Ao receber" da instancia Z-API `grupo-vip` aponta pra ca.
 
@@ -10,7 +10,7 @@
      das regras (1x/30min) e, se tiver cara de golpe, alerta no Telegram.
    - Responde por comando (!) e por palavra-chave: atacado, frete, prazo,
      transportadora, site, sorteio, origem, telegram. 1x por assunto a cada 10min.
-   - Textos ficam no Firebase (vitaflow_grupo_vip/textos) e sao editaveis no
+   - Textos ficam no Firebase (vitaflow_sync/grupo_vip/textos) e sao editaveis no
      painel. Os defaults abaixo so valem enquanto o no nao existir.
 
    VARIAVEIS DE AMBIENTE (Netlify > Site settings > Environment variables)
@@ -25,13 +25,17 @@
      TELEGRAM_CHAT        chat id do Telegram
 
    MODO DESCOBERTA: com GRUPO_VIP_ID vazio o bot NAO responde nada no grupo —
-   so grava em vitaflow_grupo_vip/descoberta o phone/chatName de cada chat que
+   so grava em vitaflow_sync/grupo_vip/descoberta o phone/chatName de cada chat que
    escreveu. Mande "!id" no grupo (de um numero que esteja em GRUPO_VIP_ADMINS)
    que ele responde com o ID. Preencha a env e o bot entra em operacao.
    ============================================================================= */
 
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
-var RAIZ = 'vitaflow_grupo_vip';
+/* RAIZ e FILHO de vitaflow_sync de proposito. No novo de TOPO e negado pelas regras
+   do RTDB (".write": false na raiz) — a funcao passaria, porque usa o FIREBASE_SECRET,
+   mas o painel escreve com o login do admin e seria recusado em silencio.
+   Ver o aprendizado do Compras no projeto. (corrigido em 19/09, antes da v2) */
+var RAIZ = 'vitaflow_sync/grupo_vip';
 
 var ZAPI_INSTANCE = process.env.ZAPI_INSTANCE || '';
 var ZAPI_TOKEN = process.env.ZAPI_TOKEN || '';
@@ -135,7 +139,7 @@ function cicloSorteio(d) {
 }
 
 /* ------------------------------------------------------------------ textos
-   Default no codigo; o que estiver em vitaflow_grupo_vip/textos vence.       */
+   Default no codigo; o que estiver em vitaflow_sync/grupo_vip/textos vence.       */
 var T = {
   regras:
 '⚠️ *Atenção às regras do grupo*\n⠀\n' +
@@ -337,6 +341,18 @@ function ehGolpe(texto) {
 /* ------------------------------------------------------------------ handler */
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
+    /* ?defaults=1 devolve os textos PADRAO (os do codigo, sem o merge do Firebase).
+       Existe pro painel_grupo_vip.html nao precisar ter uma segunda copia dos textos —
+       duas copias e a receita pra um dia ficarem diferentes. Nao tem segredo nenhum
+       aqui: sao os mesmos textos que o bot posta em grupo publico. */
+    var q = event.queryStringParameters || {};
+    if (q.defaults === '1') {
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify(T)
+      };
+    }
     return { statusCode: 200, body: 'grupo-vip ok' };
   }
 
