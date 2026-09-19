@@ -406,6 +406,17 @@ exports.handler = async function (event) {
   // ---- PRIVADO: resposta pronta, 1x a cada 24h por contato
   if (!body.isGroup) {
     if (ehAdmin) return { statusCode: 200, body: 'privado de admin — ignorado' };
+
+    /* LISTA DE EXCECAO (19/09/2026): numeros que NAO recebem a mensagem de
+       direcionamento. Cadastrada no painel, aba Exceções — vale na hora, sem deploy.
+       Os admins ja sairam acima e nao precisam estar na lista.
+       Le SO a chave do numero, nunca o no inteiro: ler no inteiro num laco foi o que
+       estourou a cota do Firebase em 19/09 (claude/firebase_estouro_cota_2026-09-19.md).
+       Vale so pro privado — no grupo esse numero continua usando comando normalmente. */
+    if (autor && await fbGet(RAIZ + '/excecoes/' + autor)) {
+      return { statusCode: 200, body: 'numero na lista de excecao — ignorado' };
+    }
+
     var chavePriv = 'privado_' + autor;
     if (await travaOk(chavePriv, 24 * 60)) {
       await carregarTextos();
