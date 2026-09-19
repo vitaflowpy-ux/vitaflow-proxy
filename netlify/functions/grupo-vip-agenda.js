@@ -10,7 +10,11 @@
  *
  * Quem enche a fila: painel_grupo_vip.html (aba Agenda), que grava
  *   agenda/<id> = { texto, imagem, quando (ms), fixar: ''|'24_hours'|'7_days'|'30_days',
- *                   status: 'pendente', criado }
+ *                   repetir: ''|'horas'|'diario'|'semanal', intervalo (horas),
+ *                   ate (ms, 0 = sem fim), status, criado }
+ *   repetir != '' -> depois de enviar, o post VOLTA pra fila na proxima ocorrencia em vez
+ *   de virar 'enviado'. O campo 'vezes' conta os envios. Para quando passar do 'ate' ou
+ *   quando apagarem no painel; sem 'ate', repete pra sempre.
  *   imagem = URL do CDN do Shopify (opcional). Tendo imagem, o post sai por /send-image
  *   com o texto como legenda; sem imagem, sai por /send-text.
  *
@@ -146,6 +150,25 @@ async function fixar(messageId, duracao) {
   } catch (e) { return e.message; }
 }
 
+/* Proxima ocorrencia de um post que se repete. Devolve 0 quando o post nao se repete.
+   O 'while' e essencial: se o agendador ficou fora do ar, somar UM passo pode cair no
+   passado e o post dispararia varias vezes seguidas pra "recuperar o atraso" — um post de
+   2 em 2h com a funcao 1 dia fora sairia 12 vezes de enfiada no grupo. Avanca ate o futuro. */
+function proximaVez(quando, repetir, intervalo, agora, ate) {
+  var passo = 0;
+  if (repetir === 'horas')        passo = Math.min(168, Math.max(1, Number(intervalo) || 1)) * 3600000;
+  else if (repetir === 'diario')  passo = 24 * 3600000;
+  else if (repetir === 'semanal') passo = 7 * 24 * 3600000;
+  if (!passo) return 0;
+  var prox = Number(quando) + passo;
+  while (prox <= agora) prox += passo;
+  /* 'ate' e o fim da repeticao (23:59:59 do dia escolhido no painel). Passou dele, devolve 0
+     e quem chamou encerra o post como 'enviado' em vez de reagendar. Vazio = pra sempre. */
+  var limite = Number(ate) || 0;
+  if (limite && prox > limite) return 0;
+  return prox;
+}
+
 /* Decide o que fazer com cada post. Separado do envio pra poder ser testado sozinho. */
 function triar(agenda, agora) {
   var vencidos = [], expirados = [], ids = Object.keys(agenda || {});
@@ -199,17 +222,29 @@ exports.handler = async function (event) {
   var agenda = await fbGet(RAIZ + '/agenda');
   var t = triar(agenda, agora);
 
-  /* Expirados primeiro: so marca, nao manda nada. */
+  /* Expirados: nao manda nada. Post que SE REPETE nao morre por causa de uma ocorrencia
+     perdida — pula pra proxima e continua na fila. */
   var i;
   for (i = 0; i < t.expirados.length; i++) {
     var ex = t.expirados[i];
+    var proxEx = proximaVez(ex.p.quando, ex.p.repetir, ex.p.intervalo, agora, ex.p.ate);
+    if (proxEx) {
+      await fbPatch(RAIZ + '/agenda/' + ex.id, {
+        status: 'pendente',
+        quando: proxEx,
+        erro: 'ocorrencia de ' + new Date(Number(ex.p.quando)).toISOString() + ' passou de ' +
+              ATRASO_MAX_MIN + ' min e foi pulada',
+        lock: null
+      });
+      continue;
+    }
     await fbPatch(RAIZ + '/agenda/' + ex.id, {
       status: 'expirado',
       erro: 'passou de ' + ATRASO_MAX_MIN + ' min da hora marcada — nao enviado',
       fechado_em: agora
     });
     await telegram('⏰ Post do Grupo VIP EXPIROU (nao foi enviado)\n\nMarcado para: ' +
-      new Date(Number(ex.p.quando)).toISOString() + '\nTexto: ' + String(ex.p.texto).slice(0, 120));
+      new Date(Number(ex.p.quando)).toISOString() + '\nTexto: ' + String(ex.p.texto || '(so imagem)').slice(0, 120));
   }
 
   var lote = t.vencidos.slice(0, MAX_POR_VOLTA);
@@ -236,15 +271,33 @@ exports.handler = async function (event) {
             '\n(o numero do bot e admin do grupo?)');
         }
       }
-      await fbPatch(RAIZ + '/agenda/' + id, {
-        status: 'enviado',
-        enviado_em: Date.now(),
-        messageId: messageId || '',
-        aviso: aviso,
-        lock: null
-      });
+      var vezes = Number(post.vezes || 0) + 1;
+      var prox = proximaVez(post.quando, post.repetir, post.intervalo, Date.now(), post.ate);
+      if (prox) {
+        /* Volta pra fila na proxima ocorrencia. NAO some da agenda — so para quando o
+           VitaFlow apagar o post no painel. */
+        await fbPatch(RAIZ + '/agenda/' + id, {
+          status: 'pendente',
+          quando: prox,
+          enviado_em: Date.now(),
+          messageId: messageId || '',
+          aviso: aviso,
+          vezes: vezes,
+          erro: '',
+          lock: null
+        });
+      } else {
+        await fbPatch(RAIZ + '/agenda/' + id, {
+          status: 'enviado',
+          enviado_em: Date.now(),
+          messageId: messageId || '',
+          aviso: aviso,
+          vezes: vezes,
+          lock: null
+        });
+      }
       enviados++;
-      detalhes.push({ id: id, ok: true, aviso: aviso });
+      detalhes.push({ id: id, ok: true, aviso: aviso, repete: !!prox, proxima: prox || null });
     } catch (e) {
       var tent = Number(post.tentativas || 0) + 1;
       var desiste = tent >= 3;
@@ -281,3 +334,4 @@ exports.handler = async function (event) {
 
 /* Exportado so pro teste automatizado. Nao usado em producao. */
 exports._triar = triar;
+exports._proximaVez = proximaVez;
