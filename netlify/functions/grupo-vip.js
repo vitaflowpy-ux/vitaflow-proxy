@@ -78,16 +78,34 @@ async function fbPut(caminho, valor) {
   } catch (e) { return false; }
 }
 
+/* Em 19/09 o bot recebeu um !site, roteou certo, gravou a trava... e nao respondeu.
+   O log da Netlify ficou MUDO porque esta funcao engolia o erro e devolvia false.
+   Uma hora de diagnostico que teria sido 10 segundos com uma linha de console.error.
+   Agora toda falha de envio aparece no log da funcao. */
 async function enviar(paraPhone, texto) {
-  if (!ZAPI_INSTANCE || !ZAPI_TOKEN) return false;
+  if (!ZAPI_INSTANCE || !ZAPI_TOKEN) {
+    console.error('[grupo-vip] envio abortado: ZAPI_INSTANCE ou ZAPI_TOKEN vazia');
+    return false;
+  }
   try {
     var r = await fetch(zapiUrl('send-text'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Client-Token': CLIENT_TOKEN },
       body: JSON.stringify({ phone: paraPhone, message: texto })
     });
-    return r.ok;
-  } catch (e) { return false; }
+    if (!r.ok) {
+      var corpo = '';
+      try { corpo = await r.text(); } catch (e2) { corpo = '(sem corpo)'; }
+      console.error('[grupo-vip] send-text HTTP ' + r.status + ' para ' + paraPhone +
+                    ' | Client-Token ' + (CLIENT_TOKEN ? 'presente' : 'AUSENTE') +
+                    ' | resposta: ' + String(corpo).slice(0, 400));
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('[grupo-vip] send-text estourou: ' + e.message);
+    return false;
+  }
 }
 
 async function telegram(texto) {
