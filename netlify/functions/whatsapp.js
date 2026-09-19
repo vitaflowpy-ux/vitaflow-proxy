@@ -125,8 +125,13 @@ async function enviarWhatsApp(to, body) {
   return data;
 }
 
+// Token FORA do codigo (19/09/2026) — mesmo motivo do botconversa.js: a env TELEGRAM_TOKEN
+// preenchida fez o scanner da Netlify derrubar todo deploy do projeto.
 async function enviarTelegram(texto) {
-  await fetch('https://api.telegram.org/bot8689592582:AAEjalaa2hDQxstUVhm45CG4aZd9OiDDRXY/sendMessage', {
+  const tk = process.env.TELEGRAM_TOKEN || '';
+  if (!tk) return;                     // esta funcao NAO tinha try/catch; sem a guarda,
+                                       // env vazia viraria erro no meio do webhook
+  await fetch('https://api.telegram.org/bot' + tk + '/sendMessage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: '8660563352', text: texto })
