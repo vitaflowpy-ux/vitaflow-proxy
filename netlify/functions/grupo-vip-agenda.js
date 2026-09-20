@@ -1,4 +1,4 @@
-/* grupo-vip-agenda.js — Agendador dos posts do Bot do Grupo VIP (19/09/2026)
+/* grupo-vip-agenda.js — Agendador dos posts do Bot do Grupo VIP (19/09/2026) — v6 (20/09/2026)
  *
  * Companheiro do grupo-vip.js. Enquanto o grupo-vip.js RESPONDE (webhook do Z-API),
  * este PUBLICA: de tempos em tempos olha a fila em vitaflow_sync/grupo_vip/agenda,
@@ -18,6 +18,10 @@
  *   quando apagarem no painel; sem 'ate', repete pra sempre.
  *   imagem = URL do CDN do Shopify (opcional). Tendo imagem, o post sai por /send-image
  *   com o texto como legenda; sem imagem, sai por /send-text.
+ *   LIMITES DO WHATSAPP (v6, 20/09/2026): legenda de imagem = 1.024 caracteres, texto = 4.096.
+ *   O que passa disso o WhatsApp CORTA em silencio (aconteceu com o post da VitaBeauty).
+ *   Agora o texto e PARTIDO no fim de um paragrafo: imagem + primeira parte como legenda,
+ *   o resto sai como mensagem(ns) de texto logo em seguida. Texto curto = 1 mensagem, igual antes.
  *
  * Janela de silencio: grupo_vip/config = { silencio: { ativo, de:'23:00', ate:'05:59' } }.
  * Post cuja hora cai dentro da janela so sai quando ela fechar — ver horarioEfetivo().
@@ -59,6 +63,41 @@ var PAUSA_MS = 1500;
 /* Um post que ficou 'enviando' mais que isso e considerado travado (a funcao morreu no
    meio) e volta pra fila. */
 var TRAVA_ENVIANDO_MIN = 15;
+
+/* Limites do WhatsApp com folga (o oficial e 1.024 na legenda e 4.096 no texto; emoji conta
+   2 no .length do JS, entao a folga cobre a diferenca de contagem). MESMOS numeros do painel
+   (painel_grupo_vip.html, contador de caracteres) — mudar aqui, mudar la. */
+var LIMITE_LEGENDA = 1000;
+var LIMITE_TEXTO = 4000;
+
+/* Onde cortar um texto que nao cabe em 'limite' caracteres, sem quebrar frase:
+   1) no fim do ultimo paragrafo que couber (linha em branco ou linha so com o braille ⠀);
+   2) senao, na ultima quebra de linha; 3) senao, no ultimo espaco; 4) senao, no limite seco.
+   Nunca corta antes de 30% do limite, pra nao mandar uma legenda de 2 linhas e o resto solto. */
+function pontoDeCorte(t, limite) {
+  if (t.length <= limite) return t.length;
+  var janela = t.slice(0, limite + 1);
+  var minimo = Math.floor(limite * 0.3);
+  var melhor = -1, m, re = /\n[ \t\u2800]*\n/g;
+  while ((m = re.exec(janela)) !== null) { melhor = m.index; }
+  if (melhor >= minimo) return melhor;
+  var q = janela.lastIndexOf('\n'); if (q >= minimo) return q;
+  var e = janela.lastIndexOf(' '); if (e >= minimo) return e;
+  return limite;
+}
+/* Parte o texto em pedacos de ate 'limite', cada um comecando/terminando limpo. */
+function partirTexto(texto, limite) {
+  var partes = [], resto = String(texto || '');
+  var guarda = 0;
+  while (resto.length && guarda < 50) {
+    guarda++;
+    var idx = pontoDeCorte(resto, limite);
+    var pedaco = resto.slice(0, idx).replace(/[\s\u2800]+$/, '');
+    resto = resto.slice(idx).replace(/^[\s\u2800]+/, '');
+    if (pedaco) partes.push(pedaco);
+  }
+  return partes;
+}
 
 function fbUrl(caminho) {
   return FB_BASE + '/' + caminho + '.json' + (FB_SECRET ? '?auth=' + FB_SECRET : '');
@@ -399,14 +438,33 @@ exports.handler = async function (event) {
     await fbPatch(RAIZ + '/agenda/' + id, { status: 'enviando', lock: Date.now() });
 
     try {
-      var messageId = post.imagem
-        ? await enviarImagem(String(post.imagem), String(post.texto || ''))
-        : await enviarTexto(String(post.texto));
-      var aviso = '';
+      /* v6: respeita os limites do WhatsApp. Com imagem: legenda = 1a parte (ate LIMITE_LEGENDA,
+         cortada no fim de um paragrafo) e o resto vai como texto em seguida. Sem imagem: texto
+         partido em pedacos de ate LIMITE_TEXTO. O messageId (pro pin) e SEMPRE o do 1o envio. */
+      var textoPost = String(post.texto || '');
+      var messageId = '', continuacao = [];
+      if (post.imagem) {
+        var legendaPartes = partirTexto(textoPost, LIMITE_LEGENDA);
+        var legenda = legendaPartes.length ? legendaPartes[0] : '';
+        var sobra = textoPost.slice(textoPost.indexOf(legenda) + legenda.length).replace(/^[\s\u2800]+/, '');
+        messageId = await enviarImagem(String(post.imagem), legenda);
+        if (sobra) continuacao = partirTexto(sobra, LIMITE_TEXTO);
+      } else {
+        var textoPartes = partirTexto(textoPost, LIMITE_TEXTO);
+        messageId = await enviarTexto(textoPartes.length ? textoPartes[0] : textoPost);
+        continuacao = textoPartes.slice(1);
+      }
+      var partes = 1;
+      for (var c = 0; c < continuacao.length; c++) {
+        await dormir(PAUSA_MS);
+        await enviarTexto(continuacao[c]);
+        partes++;
+      }
+      var aviso = partes > 1 ? ('saiu em ' + partes + ' mensagens (limite do WhatsApp)') : '';
       if (post.fixar) {
         var erroPin = await fixar(messageId, String(post.fixar));
         if (erroPin) {
-          aviso = 'enviado, mas nao fixou: ' + erroPin;
+          aviso = (aviso ? aviso + ' · ' : '') + 'enviado, mas nao fixou: ' + erroPin;
           await telegram('📌 Post do Grupo VIP foi enviado mas NAO fixou.\n' + erroPin +
             '\n(o numero do bot e admin do grupo?)');
         }
@@ -422,6 +480,7 @@ exports.handler = async function (event) {
           enviado_em: Date.now(),
           messageId: messageId || '',
           aviso: aviso,
+          partes: partes,
           vezes: vezes,
           erro: '',
           lock: null
@@ -432,12 +491,13 @@ exports.handler = async function (event) {
           enviado_em: Date.now(),
           messageId: messageId || '',
           aviso: aviso,
+          partes: partes,
           vezes: vezes,
           lock: null
         });
       }
       enviados++;
-      detalhes.push({ id: id, ok: true, aviso: aviso, repete: !!prox, proxima: prox || null });
+      detalhes.push({ id: id, ok: true, aviso: aviso, partes: partes, repete: !!prox, proxima: prox || null });
     } catch (e) {
       var tent = Number(post.tentativas || 0) + 1;
       var desiste = tent >= 3;
