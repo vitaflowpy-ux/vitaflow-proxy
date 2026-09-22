@@ -1,4 +1,4 @@
-/* grupo-vip-agenda.js — Agendador dos posts do Bot do Grupo VIP (19/09/2026) — v6 (20/09/2026)
+/* grupo-vip-agenda.js — Agendador dos posts do Bot do Grupo VIP (19/09/2026) — v7 (21/09/2026)
  *
  * Companheiro do grupo-vip.js. Enquanto o grupo-vip.js RESPONDE (webhook do Z-API),
  * este PUBLICA: de tempos em tempos olha a fila em vitaflow_sync/grupo_vip/agenda,
@@ -377,6 +377,22 @@ exports.handler = async function (event) {
 
   var agora = Date.now();
   var cfg = await fbGet(RAIZ + '/config');
+
+  /* ---- INTERRUPTOR DO AGENDADOR (painel > config/agendador_ativo, 21/09/2026)
+     Desligado, esta funcao NAO TOCA EM NADA: nao envia, nao marca expirado, nao
+     mexe em status. Congela a fila inteira, pra religar e achar tudo do jeito que
+     ficou. Default LIGADO — so desliga com false explicito, pra um config ausente
+     ou corrompido nunca calar o agendador sem ninguem entender.
+     E separado do interruptor do bot (config/ativo): desligar as respostas do
+     grupo por uma hora nao pode matar a promo agendada. */
+  if (cfg && cfg.agendador_ativo === false) {
+    return {
+      statusCode: 200, headers,
+      body: JSON.stringify({ ok: true, desligado: true, hora: new Date(agora).toISOString(),
+                             obs: 'agendador desligado no painel — nada foi enviado nem expirado' })
+    };
+  }
+
   var agenda = await fbGet(RAIZ + '/agenda');
   var t = triar(agenda, agora, cfg);
 
