@@ -1,6 +1,14 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
 const INFINITEPAY_TAG = 'vitafuel'; // 18/09/2026: conta PF (bloqueio judicial na PJ 'vitafueloficial')
+// v71 (22/09/2026): aviso do recebedor — clientes estranhavam o nome na tela da InfinitePay (Pix e cartão).
+// Mesmo texto do carrinho do site (main-cart-footer v10) e da página de atacado (v-atk6). Vai junto de TODO link de pagamento.
+// ⚠️ Multi-sistema: mudou titular/handle da InfinitePay → trocar aqui, no carrinho, no atacado, no Orçamento e no portal.
+const AVISO_RECEBEDOR = '🔒 *Pagamento seguro via InfinitePay*\n' +
+  'Na tela de pagamento constará:\n' +
+  '• Recebedor: *VITAFUEL ($vitafuel)*\n' +
+  '• Titular: *Allan Gouveia Afonso*\n' +
+  'Esta é a conta oficial de recebimento da VitaFlow, válida para pagamentos via Pix, cartão de crédito e Apple Pay.';
 const FIREBASE_URL    = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 // Segredo do Realtime Database (env var FIREBASE_SECRET no Netlify — NÃO hardcodar).
 // Passa por cima das regras, permitindo o backend ler/gravar mesmo com os nós fechados.
@@ -3646,7 +3654,7 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
   } catch {}
   await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, link: link || '', cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
   return await responderDireto(sid, link
-    ? `✅ *Pedido gerado!*${infoDesconto}${session.atacado ? '\n\n' + AVISO_ATACADO_MOMENTO : ''}\n\n💳 *Link de pagamento:*\n${link}\n\n_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão — é só escolher lá. (Quer ver os valores das parcelas antes? Digite *parcelar*.)_\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
+    ? `✅ *Pedido gerado!*${infoDesconto}${session.atacado ? '\n\n' + AVISO_ATACADO_MOMENTO : ''}\n\n💳 *Link de pagamento:*\n${link}\n\n${AVISO_RECEBEDOR}\n\n_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão — é só escolher lá. (Quer ver os valores das parcelas antes? Digite *parcelar*.)_\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
     : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond, assistente);
 }
 // Leitor determinístico de reserva — funciona mesmo se a IA falhar.
@@ -4220,7 +4228,7 @@ exports.handler = async (event) => {
           `${resumoCarrinho(carrinho)}\n` +
           `🚚 ${frete.label || 'Frete'}${estadoPend ? ' — ' + estadoPend : ''}\n` +
           `💰 *Total: R$ ${totalPend.toFixed(2).replace('.',',')}*\n\n` +
-          (novoLink ? `💳 *Link atualizado:*\n${novoLink}\n\n` : '') +
+          (novoLink ? `💳 *Link atualizado:*\n${novoLink}\n\n${AVISO_RECEBEDOR}\n\n` : '') +
           `_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão. Assim que você pagar, *eu confirmo automaticamente aqui* e já sigo com seu envio._ 🚀`
         );
       }
@@ -4339,7 +4347,7 @@ exports.handler = async (event) => {
             `🚚 ${frete.label||'Frete'} — ${pend.estado||''}\n` +
             `🏷️ ${lbl}\n` +
             `💰 *Novo total: R$ ${novoTotal.toFixed(2).replace('.',',')}*\n\n` +
-            (novoLink ? `💳 *Link atualizado com o desconto:*\n${novoLink}\n\n` : '') +
+            (novoLink ? `💳 *Link atualizado com o desconto:*\n${novoLink}\n\n${AVISO_RECEBEDOR}\n\n` : '') +
             `_Assim que você pagar, *eu confirmo automaticamente aqui* e já sigo com seu envio — não precisa enviar comprovante._ 🚀`
           );
         }
@@ -5286,7 +5294,7 @@ exports.handler = async (event) => {
       // Cliente perguntou sobre PARCELAR enquanto o link está aberto → simula (não confirma nada).
       if (ehPedidoParcelamento(mensagem)) {
         return respond(simularParcelas(session.total || 0) + (session.link
-          ? `\n\n💳 *Seu link de pagamento:*\n${session.link}\n\n_No próprio link você escolhe as parcelas (até 12x)._ 😉`
+          ? `\n\n💳 *Seu link de pagamento:*\n${session.link}\n\n${AVISO_RECEBEDOR}\n\n_No próprio link você escolhe as parcelas (até 12x)._ 😉`
           : `\n\n💳 É só abrir o *link de pagamento* que te mandei e escolher lá as parcelas (até 12x). 😉`));
       }
       // ⚠️ REGRA CRÍTICA: a Athena NUNCA confirma pagamento por palavra do cliente nem por comprovante.
@@ -5321,7 +5329,7 @@ exports.handler = async (event) => {
         await saveSession(sid, { ...session, linkNaoAbreAvisado: true });
         return respond(
           `Poxa, que chato! 😕 Vamos resolver: *seu pedido está guardado* (R$ ${totalPend.toFixed(2).replace('.',',')}).\n\n` +
-          (session.link ? `Tenta por este link aqui, sozinho — toca nele ou *copia e cola no navegador*:\n\n${session.link}\n\n` : '') +
+          (session.link ? `Tenta por este link aqui, sozinho — toca nele ou *copia e cola no navegador*:\n\n${session.link}\n\n${AVISO_RECEBEDOR}\n\n` : '') +
           `Se ainda assim não abrir, *já avisei nossa equipe* — em instantes alguém te manda o *Pix* ou um link novo por aqui mesmo. 🧡`
         );
       }
@@ -5351,7 +5359,7 @@ exports.handler = async (event) => {
 
       // Mensagem padrão de pedido em aberto (não fala em "digite SIM" — só o pagamento confirma).
       // Reenvia o LINK salvo na sessão, pra "cadê o link?" sempre devolver o link.
-      const _linkPend = session.link ? `💳 *Link de pagamento:*\n${session.link}\n\n` : '';
+      const _linkPend = session.link ? `💳 *Link de pagamento:*\n${session.link}\n\n${AVISO_RECEBEDOR}\n\n` : '';
       return respond(
         `⏳ Você tem um pedido em aberto aguardando pagamento:\n\n` +
         `${resumoCarrinho(carrinhoPend)}\n` +
