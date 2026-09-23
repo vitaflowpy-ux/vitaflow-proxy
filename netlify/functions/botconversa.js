@@ -1,5 +1,7 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v72 (23/09/2026): contexto da IA leva a lista INTEIRA (até 30, na ordem mostrada) — a descrição sob demanda
+// responde "quantos vem em cada?" de todos, com o número que o cliente vê. Único ajuste; resto = v71.
 const INFINITEPAY_TAG = 'vitafuel'; // 18/09/2026: conta PF (bloqueio judicial na PJ 'vitafueloficial')
 // v71 (22/09/2026): aviso do recebedor — clientes estranhavam o nome na tela da InfinitePay (Pix e cartão).
 // Mesmo texto do carrinho do site (main-cart-footer v10) e da página de atacado (v-atk6). Vai junto de TODO link de pagamento.
@@ -76,7 +78,7 @@ async function limparHistoricoIA(sid){
 function contextoLista(session){
   const partes = [];
   const lista = (session && session.produtoLista) || [];
-  const nomes = lista.slice(0, 10).map(p => p && p.nome).filter(Boolean).join('; ');
+  const nomes = lista.slice(0, 30).map(p => p && p.nome).filter(Boolean).join('; ');   // v72: era 10 (ordem = a mostrada, número = posição + 1)
   if (nomes) partes.push('O cliente está vendo AGORA esta lista de produtos (responda no contexto DELA, ignore assuntos/produtos de mensagens antigas): ' + nomes);
   const carrinho = (session && session.carrinho) || [];
   if (carrinho.length) {
