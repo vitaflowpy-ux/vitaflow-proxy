@@ -1,5 +1,7 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v73 (23/09/2026): LANC_DIAMOND.ativa = false — a Diamond já é vendida no site (varejo); a Athena parava de dizer
+// "só no atacado / ainda não chegou". Único ajuste; resto = v72.
 // v72 (23/09/2026): contexto da IA leva a lista INTEIRA (até 30, na ordem mostrada) — a descrição sob demanda
 // responde "quantos vem em cada?" de todos, com o número que o cliente vê. Único ajuste; resto = v71.
 const INFINITEPAY_TAG = 'vitafuel'; // 18/09/2026: conta PF (bloqueio judicial na PJ 'vitafueloficial')
@@ -1148,7 +1150,9 @@ function msgGrupoVip() {
 // Enquanto a fase for 'previsto', o tempo verbal muda sozinho pela DATA (antes / no dia / depois).
 // Trocar a fase = editar aqui e publicar (decisão do Thiago 14/09: opção A; comando ADM fica pra depois).
 // Vale nos 2 caminhos: resposta fixa (msgDiamond, gatilho no pipeline) + IA (contextoDiamond em contextoPromo).
-const LANC_DIAMOND = { ativa: true, data: '2026-09-14', fase: 'previsto' };
+// 23/09/2026 (v73): DESLIGADO — a linha Diamond já está no SITE (varejo, 6 produtos). Com ativa:false a resposta fixa e o
+// contexto da IA somem; a pergunta cai no catálogo normal ("diamond landerlan" abre a lista real dos produtos).
+const LANC_DIAMOND = { ativa: false, data: '2026-09-14', fase: 'previsto' };
 function _hojeISO_SP(){
   try { return new Intl.DateTimeFormat('en-CA', { timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date()); }
   catch (e) { return new Date().toISOString().slice(0, 10); }
