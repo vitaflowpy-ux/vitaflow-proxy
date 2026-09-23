@@ -396,6 +396,330 @@ async function pensarComClaude(sys, mensagem, historico, prazoMs){
 // Saída   : 200 { resposta: "texto pronto pro cliente", abriuLista: true|false }
 //           Se não conseguir responder a tempo, devolve { resposta: "" } — e o
 //           botconversa.js cai no comportamento antigo (👀 + IA assíncrona).
+// ── BASE DO GERADOR DE PROTOCOLOS (23/09/2026) ──────────────────────────────────
+// O protocolo pós-venda passa a usar a MESMA base do Gerador de Protocolos do site
+// (gerador-protocolos-vitaflow.netlify.app) como fonte da verdade de dose, frequência,
+// via, duração, horário, modo de uso e cuidados. A base é lida AO VIVO do gerador
+// (uma substância, uma dose, um lugar: mexeu na base do gerador, a Athena acompanha).
+//  - peptídeos/emagrecedores: `var BASE = [...]` dentro de /peptideos/ (trecho de dados,
+//    de `var LOJA =` até `var ET =`, rodado isolado num vm — sem DOM);
+//  - hormônios/GH: `VF.BASE_HORM` em /comum/base.js.
+// Se a leitura falhar, o protocolo sai exatamente como antes (só com as regras do prompt).
+// As TABELAS DE FRACIONAMENTO continuam as da Athena (FRAC_TABELAS no botconversa),
+// anexadas no fim — a base só governa o texto do protocolo.
+const vm = require('vm');
+const GERADOR_SITE = 'https://gerador-protocolos-vitaflow.netlify.app';
+let _baseGer = null, _baseGerEm = 0;
+function _optTimeout(ms){ return (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? { signal: AbortSignal.timeout(ms) } : {}; }
+
+async function carregarBaseGerador(){
+  if (_baseGer && (Date.now() - _baseGerEm) < 60 * 60 * 1000) return _baseGer;
+  const out = { pep: [], horm: [], ativoDe: null };
+  try {
+    const html = await (await fetch(GERADOR_SITE + '/peptideos/', _optTimeout(4000))).text();
+    const i = html.indexOf('var LOJA ='), j = html.indexOf('var ET = {', i);
+    if (i >= 0 && j > i) {
+      const ctx = {}; vm.createContext(ctx);
+      vm.runInContext(html.slice(i, j) + '\n;this.__B = BASE;', ctx, { timeout: 3000 });
+      if (Array.isArray(ctx.__B)) out.pep = ctx.__B;
+    }
+  } catch (e) { console.log('[IA] base do gerador (peptídeos) não carregou:', e.message); }
+  try {
+    const js = await (await fetch(GERADOR_SITE + '/comum/base.js', _optTimeout(4000))).text();
+    const ctx = {}; vm.createContext(ctx);
+    vm.runInContext(js + '\n;this.__VF = VF;', ctx, { timeout: 3000 });
+    if (ctx.__VF) { out.horm = ctx.__VF.BASE_HORM || []; out.ativoDe = ctx.__VF.ativoDe || null; }
+  } catch (e) { console.log('[IA] base do gerador (hormônios) não carregou:', e.message); }
+  console.log('[IA] base do gerador: peptídeos', out.pep.length, '| hormônios', out.horm.length);
+  if (out.pep.length || out.horm.length) { _baseGer = out; _baseGerEm = Date.now(); }
+  return out;
+}
+
+function _nb(s){ return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9+]+/g, ' ').trim(); }
+// Marcas comerciais no catálogo → substância (confirmadas pelo VitaFlow em 23/09/2026; Semaglix = semaglutida).
+const MARCAS_SUBSTANCIA = { tirzepatida: ['tg', 't g', 'tirzec', 'lipoland', 'lipoless', 'mounjaro', 't36', 'slimex', 'tirzedral', 'gluconex'],
+                            semaglutida: ['semaglix'] };
+function _chavesBase(s){
+  const k = [];
+  function add(t){ t = _nb(t); if (t && t.length >= 2 && k.indexOf(t) < 0) k.push(t); }
+  add(String(s.id).replace(/_/g, ' '));
+  add(s.nome);
+  add(String(s.nome).split('(')[0]);
+  const m = String(s.nome).match(/\(([^)]*)\)/); if (m) add(m[1]);
+  if (s.busca) add(s.busca);
+  (MARCAS_SUBSTANCIA[s.id] || []).forEach(add);
+  return k;
+}
+// Produto do pedido → entrada da base (a chave mais longa que aparece como palavra inteira).
+// Hormônio/GH existe nas DUAS bases (a de peptídeos tem entradas antigas de hormônio): quando
+// a base hormonal reconhece o produto, ela vence — é a que tem faixa por sexo e as travas.
+const CATS_HORM_NO_PEP = ['GH', 'Hormônio', 'Hormônio oral'];
+// Casa por palavra inteira; chave de 5+ caracteres COM número ou espaço também casa SEM espaços
+// ("IGF1 LR3" = "IGF-1 LR3", "SLUPP-332" = "SLU-PP-332", "Melanotan 2" = "melanotan2"),
+// sempre começando no INÍCIO de uma palavra ("fenilpropionato" não casa "propionato").
+// Devolve a posição onde casou (-1 = não casou).
+function _posCompacto(n, kc){
+  for (let p = 0; p < n.length - 1; p++) {
+    if (n[p] === ' ' && n[p + 1] !== ' ' && n.slice(p + 1).replace(/ /g, '').indexOf(kc) === 0) return p;
+  }
+  return -1;
+}
+// Escolha: a substância citada PRIMEIRO no título vence ("Masteron Propionato" = Masteron,
+// "Trembolona Enantato" = Trembolona); empate → a que cobre mais do título
+// ("Stanozolol 50mg (Oleoso)" = o injetável). Forma escrita no título (oral × injetável)
+// diferente da forma da base = não casa (a dose seria de outra apresentação).
+const ESTERES_TESTO = ['enantato', 'cipionato', 'propionato', 'undecanoato'];
+function _melhorEm(n, lista){
+  let melhor = null, pos = Infinity, cob = 0;
+  const diz = / oral /.test(n) ? 'oral' : (/ (injetavel|oleoso|inj) /.test(n) ? 'inj' : '');
+  (lista || []).forEach(function(s){
+    if (diz && s.forma && s.forma !== diz) return;
+    let p0 = Infinity, c0 = 0;
+    _chavesBase(s).forEach(function(k){
+      const kc = k.replace(/ /g, '');
+      let p = n.indexOf(' ' + k + ' ');
+      if (p < 0 && kc.length >= 5 && /[ 0-9]/.test(k)) p = _posCompacto(n, kc);
+      if (p >= 0) { if (p < p0) p0 = p; c0 += kc.length; }
+    });
+    if (p0 === Infinity) return;
+    // Éster sozinho no meio do título é de OUTRA substância ("Trestolona Enantato"):
+    // éster de testosterona só vale se abre o título ou se o título fala em testosterona.
+    if (ESTERES_TESTO.indexOf(s.id) >= 0 && p0 > 0 && !/ (testosterona|test) /.test(n)) return;
+    if (p0 < pos || (p0 === pos && c0 > cob)) { melhor = s; pos = p0; cob = c0; }
+  });
+  return melhor ? { s: melhor, tam: cob, pos: pos } : null;
+}
+// Produto com várias substâncias (Mix/Stack/"+") só casa com entrada que também é blend —
+// senão a base daria a dose de UMA substância para um frasco com várias.
+function _ehBlendBase(s){ return (s.contem && s.contem.length) || String(s.nome).indexOf('+') >= 0; }
+function acharNaBase(produto, base){
+  const n = ' ' + _nb(produto) + ' ';
+  const h = _melhorEm(n, base.horm), p = _melhorEm(n, base.pep);
+  let r = null;
+  if (h && (!p || CATS_HORM_NO_PEP.indexOf(p.s.cat) >= 0 || h.tam >= p.tam)) r = { tipo: 'horm', s: h.s };
+  else if (p) r = { tipo: 'pep', s: p.s };
+  if (r && /( \+ | mix | stack | blend )/.test(n) && !_ehBlendBase(r.s)) return null;
+  return r;
+}
+function _faixa(f){ return f ? (f.min + (f.max !== f.min ? '–' + f.max : '') + ' ' + f.un) : ''; }
+function _linhaBase(a){
+  const s = a.s, p = [];
+  if (a.tipo === 'pep') {
+    p.push('*' + s.nome + '* [' + (s.cat || 'peptídeo') + ']');
+    if (s.dose) p.push('dose: ' + s.dose + (s.dose_mg ? ' (referência: ' + s.dose_mg + ' mg por aplicação)' : ''));
+    if (s.freq) p.push('frequência: ' + s.freq);
+    if (s.via) p.push('via: ' + s.via);
+    if (s.ciclo) p.push('duração: ' + s.ciclo);
+    if (s.horario) p.push('horário: ' + s.horario);
+    if (s.como) p.push('como usar: ' + s.como);
+    if (s.cuidados) p.push('cuidados: ' + s.cuidados);
+    if (s.contem && s.contem.length) p.push('é um blend (contém: ' + s.contem.join(', ') + ')');
+    if (s.fem === false) p.push('NÃO indicado para mulheres');
+  } else {
+    p.push('*' + s.nome + '* [hormônio · ' + (s.forma === 'oral' ? 'oral' : 'injetável') + ']');
+    if (s.doseM) p.push('faixa masculina: ' + _faixa(s.doseM));
+    p.push(s.doseF ? 'faixa feminina: ' + _faixa(s.doseF) : 'sem faixa feminina na base (para mulher, não informe dose desta substância)');
+    if (s.doseTRT) p.push('dose de TRT/cruise: ' + _faixa(s.doseTRT));
+    if (s.freq) p.push('frequência: ' + s.freq);
+    if (s.ciclo) p.push('duração: ' + s.ciclo);
+    if (s.meiaVida) p.push('meia-vida: ' + s.meiaVida);
+    if (s.oral17aa) p.push('oral 17-alfa-alquilado (hepatotóxico — só um por vez)');
+    if (s.familia === '19nor') p.push('derivado 19-nor (só um por ciclo)');
+    if (s.nota) p.push('observação: ' + s.nota);
+  }
+  return '- ' + p.join(' · ');
+}
+// Mesmas travas do montador (hormônios: 19-nor 2+, 17aa 2+, mesma molécula; peptídeos:
+// blend × componente / conflita, e dois análogos de GLP-1).
+function conflitosBase(achados, base){
+  const out = [];
+  const h = achados.filter(function(a){ return a.tipo === 'horm'; }).map(function(a){ return a.s; });
+  const p = achados.filter(function(a){ return a.tipo === 'pep'; }).map(function(a){ return a.s; });
+  const nor = h.filter(function(s){ return s.familia === '19nor'; });
+  const aa = h.filter(function(s){ return s.oral17aa; });
+  if (nor.length >= 2) out.push(nor.map(function(s){ return s.nome; }).join(' + ') + ' (dois derivados 19-nor)');
+  if (aa.length >= 2) out.push(aa.map(function(s){ return s.nome; }).join(' + ') + ' (dois orais 17-alfa-alquilados)');
+  const porAtivo = {};
+  h.forEach(function(s){ const a = base.ativoDe ? base.ativoDe(s.id) : s.id; (porAtivo[a] = porAtivo[a] || []).push(s.nome); });
+  Object.keys(porAtivo).forEach(function(a){ if (porAtivo[a].length > 1) out.push(porAtivo[a].join(' + ') + ' (a mesma molécula: ' + a + ')'); });
+  function partes(s){ return [s.id].concat(s.contem || []).concat(s.conflita || []); }
+  for (let i = 0; i < p.length; i++) for (let j = i + 1; j < p.length; j++) {
+    const pa = partes(p[i]), pb = partes(p[j]);
+    if (pa.some(function(x){ return pb.indexOf(x) >= 0; })) out.push(p[i].nome + ' + ' + p[j].nome + ' (mesma molécula ou blend que já contém a outra)');
+    else if (p[i].cat === 'GLP-1' && p[j].cat === 'GLP-1') out.push(p[i].nome + ' + ' + p[j].nome + ' (dois análogos de GLP-1)');
+  }
+  return out;
+}
+// Conta ÚNICA de rendimento/duração — a MESMA na pré-venda e no protocolo (regra "antes e depois TÊM que bater").
+// Hormônio usa o MÍNIMO da faixa, o mesmo ponto de partida do montador do gerador.
+const REGRA_RENDIMENTO = 'CONTA DO RENDIMENTO/DURAÇÃO DO FRASCO (a mesma na pré-venda e no protocolo): peptídeo/emagrecedor = dose de referência da base na frequência da base; hormônio = MÍNIMO da faixa (masculina; feminina se for mulher) na frequência da base.';
+// Bloco que entra no system prompt do protocolo pós-venda.
+async function blocoBaseGerador(produtos, temTabela){
+  const base = await carregarBaseGerador();
+  if (!base.pep.length && !base.horm.length) return { texto: '', achados: [], semBase: produtos.slice(), conflitos: [] };
+  const achados = [], vistos = {}, semBase = [];
+  produtos.forEach(function(prod){
+    const a = acharNaBase(prod, base);
+    if (!a) { semBase.push(prod); return; }
+    const k = a.tipo + ':' + a.s.id;
+    if (!vistos[k]) { vistos[k] = true; achados.push(Object.assign({ produto: prod }, a)); }
+  });
+  const conflitos = conflitosBase(achados, base);
+  let t = '';
+  if (achados.length) {
+    t += '\n\n=== BASE OFICIAL DO GERADOR DE PROTOCOLOS VITAFLOW (fonte da verdade p/ DOSE, frequência, via, duração, horário, modo de uso e cuidados) ===\n';
+    t += 'Para os produtos abaixo, use ESTES valores. A dose fica DENTRO da faixa/referência da base. Onde a base e as âncoras deste prompt divergirem, vale a BASE. O que a base não trouxer, siga as regras gerais deste prompt. ' + REGRA_RENDIMENTO + '\n';
+    t += achados.map(_linhaBase).join('\n');
+  }
+  if (semBase.length) t += '\n\nProdutos SEM entrada na base (siga as regras gerais deste prompt): ' + semBase.join(', ') + '.';
+  if (conflitos.length) {
+    t += '\n\n⛔ COMBINAÇÃO QUE NÃO ANDA JUNTA entre os produtos deste cliente: ' + conflitos.join('; ') + '.\n';
+    t += 'NUNCA monte esses itens para uso no mesmo período. Monte o protocolo de cada um SEPARADAMENTE e diga ao cliente, com clareza, que eles NÃO devem ser usados juntos.';
+  }
+  if (temTabela) t += '\n\nTABELA DE FRACIONAMENTO: o sistema anexa a(s) tabela(s) oficial(is) no fim da mensagem. NÃO monte tabela de fracionamento/UI no texto — quando precisar, diga "veja a tabela de fracionamento no fim desta mensagem".';
+  return { texto: t, achados: achados, semBase: semBase, conflitos: conflitos };
+}
+
+// ── DESCRIÇÃO SOB DEMANDA — de QUAIS produtos? (23/09/2026) ─────────────────────
+// Bug de 23/09 (Hemogenin, "quantos comprimidos vem em cada?"): o termo de busca era o
+// CONTEXTO inteiro ("O cliente está vendo AGORA esta lista…: A; B; C"). A busca da loja
+// exige TODAS as palavras → voltava vazio → a IA dizia "não tenho essa informação", mesmo
+// com a quantidade escrita na descrição. Agora:
+//  - com lista aberta: pega os NOMES da lista; se a pergunta aponta um (número "o 6", marca,
+//    mg…), lê só a descrição dele(s); se vale pra lista toda ("cada"), lê a de todos;
+//  - sem lista: busca só pelas palavras de produto da mensagem (tira "quantos", "vem"…).
+// Lê só o que foi perguntado (nada de carregar descrição do catálogo inteiro).
+var PALAVRAS_PERGUNTA = ['quantos','quantas','quanto','quanta','comprimido','comprimidos','capsula','capsulas','vem','vêm','veem',
+  'cada','um','uma','no','na','nos','nas','do','da','dos','das','de','em','o','a','os','as','e','ou','que','qual','quais','tem','tém',
+  'contem','contém','frasco','frascos','ampola','ampolas','caneta','canetas','dose','doses','esse','essa','esses','essas','este',
+  'esta','estes','estas','isso','isto','dele','dela','deles','delas','por','pra','para','com','sem','como','usa','usar','uso','toma',
+  'tomar','aplica','aplicar','serve','composicao','apresentacao','quantidade','dosagem','concentracao','unidade','unidades','vial',
+  'caixa','caixas','cartela','produto','produtos','me','fala','diz','sabe','voce','vc','ai','oi','ola','bom','dia','tarde','noite',
+  'opcao','numero','item','ele','ela','eles','elas','vem','sao','é','e','tb','tambem','mais','menos','quero','saber','gostaria','pode',
+  'dizer','informar','nele','nela','neles','nelas','dentro','vêm','feito','composto','posologia','especificacao','ml','ui','mcg'];
+function _nd(s){ return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
+var _PERG_ND = PALAVRAS_PERGUNTA.map(_nd);
+// Nomes que o botconversa manda no contexto (contextoLista): lista aberta e carrinho.
+function nomesDoContexto(contexto){
+  var lista = [], carrinho = [];
+  String(contexto || '').split('\n').forEach(function(l){
+    var i = l.indexOf('): '), j = l.indexOf('CARRINHO: ');
+    if (l.indexOf('vendo AGORA') >= 0 && i >= 0) {
+      l.slice(i + 3).split(';').forEach(function(n){ n = n.trim(); if (n && lista.indexOf(n) < 0) lista.push(n); });
+    } else if (j >= 0) {
+      l.slice(j + 10).split('. NUNCA')[0].split(';').forEach(function(n){ n = n.trim(); if (n && carrinho.indexOf(n) < 0) carrinho.push(n); });
+    }
+  });
+  return { lista: lista, carrinho: carrinho };
+}
+function _tokensUteis(txt){
+  return _nd(txt).split(/[^a-z0-9]+/).filter(function(w){ return w.length >= 2 && _PERG_ND.indexOf(w) < 0; });
+}
+async function _produtosPorQuery(q, max){
+  try {
+    var query = 'query($q:String!,$n:Int!){ products(first:$n, query:$q){ edges{ node{ title description } } } }';
+    var r = await fetch(SHOP_GRAPHQL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN },
+      body: JSON.stringify({ query: query, variables: { q: q, n: max || 3 } })
+    });
+    var d = await r.json();
+    return ((d && d.data && d.data.products && d.data.products.edges) || []).map(function(e){ return e.node || {}; });
+  } catch (e) { return []; }
+}
+function _porTitulo(nome){ return _produtosPorQuery('title:"' + String(nome).replace(/["\\]/g, ' ').trim() + '"', 1); }
+// Pergunta de detalhe que vale pra VÁRIOS produtos ("quantos vem em cada?") — 23/09/2026.
+var MULTI_DETALHE = '\nSe a pergunta vale para VÁRIOS produtos (ex.: "cada", "todos", "esses"), responda UM PRODUTO POR LINHA, na MESMA ORDEM e com o MESMO NÚMERO da lista que o cliente está vendo (o "Nº X da lista" vem antes de cada descrição acima), no formato: número, nome do produto e o dado perguntado. Para os que a descrição NÃO traz o dado, escreva "não consta na descrição". NÃO resuma, NÃO agrupe ("a maioria vem com…") e NÃO pule nenhum. Se um item não for do tipo perguntado (ex.: injetável quando perguntam comprimidos), diga o que ele é pela descrição.';
+async function descricoesDaPergunta(mensagem, contexto){
+  var ctx = nomesDoContexto(contexto);
+  var nomes = ctx.lista.length ? ctx.lista : ctx.carrinho;
+  var achados = [];
+  if (nomes.length) {
+    var alvo = [];
+    // "o 6", "número 6", "do 6" (não confunde com "50mg", "60 comprimidos"…)
+    var mNum = _nd(mensagem).match(/(?:^|\s)(?:o|a|numero|n[o°º]|opcao|item|do|da)\s*(\d{1,2})(?!\s*(?:mg|ml|ui|mcg|g\b|comp|cap|x\b|un))/);
+    var n = mNum ? parseInt(mNum[1], 10) : 0;
+    if (n >= 1 && n <= nomes.length) alvo = [nomes[n - 1]];
+    else {
+      // palavra que está em TODOS os nomes (ex.: "hemogenin") não escolhe ninguém; as outras
+      // ("king", "25mg", "zphc"…) apontam o(s) produto(s) perguntado(s).
+      var _tn = function(nm){ return ' ' + _nd(nm).replace(/[^a-z0-9]+/g, ' ') + ' '; };
+      var tk = _tokensUteis(mensagem).filter(function(w){ return !nomes.every(function(nm){ return _tn(nm).indexOf(' ' + w + ' ') >= 0; }); });
+      if (tk.length) {
+        // fica com o(s) que casam MAIS palavras ("king pharma" = King, não Cooper Pharma)
+        var pts = nomes.map(function(nm){ var t = _tn(nm); return tk.filter(function(w){ return t.indexOf(' ' + w + ' ') >= 0; }).length; });
+        var maxp = Math.max.apply(null, pts);
+        if (maxp > 0) alvo = nomes.filter(function(nm, i){ return pts[i] === maxp; });
+        if (alvo.length === nomes.length) alvo = [];
+      }
+    }
+    if (alvo.length) {
+      var rs = await Promise.all(alvo.slice(0, 10).map(_porTitulo));
+      rs.forEach(function(r){ if (r[0]) achados.push(r[0]); });
+    } else {
+      // pergunta vale pra lista toda ("cada"): se todos começam pela mesma palavra, uma busca só
+      // pega a lista inteira (inclusive os que passam dos 10 nomes do contexto); senão, título a título.
+      var prim = _nd(nomes[0]).split(/[^a-z0-9]+/).filter(Boolean)[0] || '';
+      var todosComecam = prim.length >= 3 && nomes.every(function(nm){ return _nd(nm).split(/[^a-z0-9]+/).filter(Boolean)[0] === prim; });
+      if (todosComecam) achados = await _produtosPorQuery('title:' + prim + '*', 30);
+      // o que a busca por prefixo não trouxe (ou lista com nomes variados): título a título, até 15
+      var _kk = function(t){ return _nd(t).replace(/[^a-z0-9]+/g, ' ').trim(); };
+      var jaTem = {}; achados.forEach(function(p){ jaTem[_kk(p.title)] = true; });
+      var faltam = nomes.filter(function(nm){ return !jaTem[_kk(nm)]; }).slice(0, 15);
+      if (faltam.length) {
+        var rs2 = await Promise.all(faltam.map(_porTitulo));
+        rs2.forEach(function(r){ if (r[0]) achados.push(r[0]); });
+      }
+      // só o que está na lista que o cliente vê (a busca por prefixo pode trazer outros)
+      var naLista = {}; nomes.forEach(function(nm){ naLista[_kk(nm)] = true; });
+      var soLista = achados.filter(function(p){ return naLista[_kk(p.title)]; });
+      if (soLista.length) achados = soLista;
+    }
+  } else {
+    var tk2 = _tokensUteis(mensagem);
+    if (tk2.length) achados = await _produtosPorQuery(tk2.join(' '), 3);
+  }
+  // Na ORDEM da lista que o cliente vê, com o NÚMERO dela (o que ele digita pra escolher).
+  var _k = function(t){ return _nd(t).replace(/[^a-z0-9]+/g, ' ').trim(); };
+  var posLista = {}; ctx.lista.forEach(function(nm, i){ posLista[_k(nm)] = i + 1; });
+  achados = achados.map(function(p){ return { p: p, n: posLista[_k(p.title)] || 0 }; })
+    .sort(function(a, b){ return (a.n || 999) - (b.n || 999); });
+  var blocos = [], total = 0;
+  achados.forEach(function(x){
+    var p = x.p, desc = String(p.description || '').trim();
+    if (!desc) desc = '(sem descrição cadastrada)';
+    if (desc.length > 1500) desc = desc.slice(0, 1500) + '…';
+    if (total + desc.length > 15000) return;
+    total += desc.length;
+    blocos.push('• ' + (x.n ? 'Nº ' + x.n + ' da lista — ' : '') + String(p.title || '').trim() + ':\n' + desc);
+  });
+  if (!blocos.some(function(b){ return b.indexOf('(sem descrição cadastrada)') < 0; })) return '';
+  console.log('[IA] descrição sob demanda | nomes no contexto:', nomes.length, '| lidas:', blocos.length);
+  return blocos.join('\n\n');
+}
+
+// ── PRÉ-VENDA lendo a MESMA base (23/09/2026) ────────────────────────────────────
+// Produtos em conversa (lista aberta, carrinho ou citados na mensagem) → valores da base,
+// pra estimativa de ANTES da compra bater com o protocolo de DEPOIS.
+async function blocoBasePreVenda(mensagem, contexto){
+  const base = await carregarBaseGerador();
+  if (!base.pep.length && !base.horm.length) return '';
+  const ctx = nomesDoContexto(contexto);
+  const achados = [], vistos = {};
+  // a mensagem pode citar mais de um produto ("a retatrutida e o klow"): testa cada pedaço também
+  const pedacos = String(mensagem || '').split(/,|;| e | ou /i);
+  ctx.lista.concat(ctx.carrinho).concat([mensagem]).concat(pedacos).forEach(function(c){
+    const a = acharNaBase(c, base); if (!a) return;
+    const k = a.tipo + ':' + a.s.id;
+    if (!vistos[k]) { vistos[k] = true; achados.push(a); }
+  });
+  if (!achados.length) return '';
+  return '\n\n=== BASE OFICIAL DO GERADOR DE PROTOCOLOS (a MESMA do protocolo pós-venda) ===\n' +
+    'Quando falar de dose, frequência, duração ou quanto um frasco rende destes produtos, use ESTES valores — a estimativa de ANTES da compra tem que bater com o protocolo de DEPOIS. Onde a base e as âncoras deste prompt divergirem, vale a BASE. ' +
+    REGRA_RENDIMENTO + ' A regra da CONSULTORIA continua: protocolo completo e personalizado só depois da compra.\n' +
+    achados.slice(0, 8).map(_linhaBase).join('\n');
+}
+
 exports.handler = async (event) => {
   const headers = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json' };
   if (event.httpMethod === 'OPTIONS') return { statusCode:200, headers, body:'' };
@@ -427,16 +751,21 @@ exports.handler = async (event) => {
            + '\nResponda com base NESSE contexto atual. Se o histórico falar de outro produto/assunto, IGNORE — o cliente está tratando do que está acima AGORA.';
     }
 
+    // 23/09: pré-venda com a MESMA base do Gerador que o protocolo pós-venda usa. Aqui o prazo é
+    // curto (webhook): se a base não vier em 1,5 s, segue sem ela (a leitura continua e fica em cache).
+    try {
+      sys += await Promise.race([ blocoBasePreVenda(mensagem, contexto), new Promise(function(r){ setTimeout(function(){ r(''); }, 1500); }) ]);
+    } catch (e) { console.log('[IA-SYNC] base do gerador na pré-venda falhou (segue sem ela):', e.message); }
+
     // ── DESCRIÇÃO SOB DEMANDA: só quando o cliente PERGUNTA um detalhe do produto ──
     // Lê a descrição da página do produto na hora. Se não tiver descrição, a IA responde
     // HONESTAMENTE que não tem essa info (NÃO promete confirmar, NÃO inventa).
     if (ehPerguntaDetalheProduto(mensagem)) {
-      const termoBusca = contexto || mensagem;
-      const descProd = await buscarDescricaoProduto(termoBusca);
+      const descProd = await descricoesDaPergunta(mensagem, contexto);   // 23/09: só dos produtos perguntados
       console.log('[IA-SYNC] pergunta de detalhe do produto | descrição encontrada:', descProd ? 'sim' : 'nao');
       if (descProd) {
         sys += '\n\n=== DESCRIÇÃO OFICIAL DO PRODUTO (da página da loja — use SÓ isto p/ responder o detalhe perguntado) ===\n' + descProd;
-        sys += '\n\n=== COMO RESPONDER ESTA PERGUNTA DE DETALHE ===\nResponda o que o cliente perguntou USANDO SOMENTE a descrição oficial acima. Se a descrição NÃO trouxer exatamente o dado perguntado, diga com honestidade que não consta essa informação. NUNCA invente quantidade, composição, dosagem ou qualquer dado. NÃO prometa "confirmar depois".';
+        sys += '\n\n=== COMO RESPONDER ESTA PERGUNTA DE DETALHE ===\nResponda o que o cliente perguntou USANDO SOMENTE a descrição oficial acima. Se a descrição NÃO trouxer exatamente o dado perguntado, diga com honestidade que não consta essa informação. NUNCA invente quantidade, composição, dosagem ou qualquer dado. NÃO prometa "confirmar depois".' + MULTI_DETALHE;
       } else {
         sys += '\n\n=== PERGUNTA DE DETALHE SEM DESCRIÇÃO DISPONÍVEL ===\nO cliente perguntou um detalhe do produto, mas ESTE produto NÃO tem descrição cadastrada. Responda com honestidade que você não tem essa informação disponível. NÃO invente. NÃO prometa "vou confirmar" ou "já te confirmo" — apenas diga, de forma educada, que essa informação não está disponível.';
       }
