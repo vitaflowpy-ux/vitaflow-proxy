@@ -1,5 +1,8 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v74 (25/09/2026): atacado — (1) o texto de "não encontrei" não fala mais em *fornecedor* (nunca expor isso ao
+// cliente); (2) dentro do atacado, "atacado"/"quero atacado"/"tabela de atacado" mostram a apresentação de novo e
+// "tabela"/"pdf" mandam o link — antes viravam BUSCA na tabela ("Não encontrei Atacado", caso real 25/09). Resto = v73.
 // v73 (23/09/2026): LANC_DIAMOND.ativa = false — a Diamond já é vendida no site (varejo); a Athena parava de dizer
 // "só no atacado / ainda não chegou". Único ajuste; resto = v72.
 // v72 (23/09/2026): contexto da IA leva a lista INTEIRA (até 30, na ordem mostrada) — a descrição sob demanda
@@ -1499,10 +1502,34 @@ function _ehConversaSolta(t) {
   var s = norm(t || '').replace(/[!?.,]/g, ' ').replace(/\s+/g, ' ').trim();
   return /^(oi|ola|opa|eae|e ai|hey|alo|bom dia|boa tarde|boa noite|tudo bem|tudo bom|blz|beleza|ok|okay|certo|entendi|obrigado|obrigada|valeu|vlw|de nada|show|otimo|otima|perfeito|legal|top|sim|nao|nada|nenhum|nenhuma)$/.test(s);
 }
+// v74 (25/09/2026): mensagem que é só NAVEGAÇÃO dentro do atacado (não é nome de produto).
+// 'apresentacao' → mostra MSG_ATACADO de novo | 'pdf' → manda o link da tabela | '' → segue a busca.
+function _navegacaoAtacado(t) {
+  var s = norm(t || '').replace(/[!?.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/^(o |no |por |pelo )?(atacado|mayoreo)( por favor| pf| pfv)?$/.test(s)) return 'apresentacao';
+  if (/^(quero|queria|gostaria de|pode ser|vamos de|vou de) (comprar |fazer |ver |o |no |por |pelo )*(atacado|mayoreo)( por favor| pf| pfv)?$/.test(s)) return 'apresentacao';
+  if (/^(comprar|compra|compras) (no |por |pelo |de )?atacado$/.test(s)) return 'apresentacao';
+  if (/^(a )?tabela (de|do) atacado$/.test(s)) return 'apresentacao';
+  if (/^(a |me manda a |manda a |quero a |ver a )?(tabela|tabela completa|tabela em pdf|pdf|tabela pdf)( por favor| pf| pfv)?$/.test(s)) return 'pdf';
+  return '';
+}
 async function atkAbrirBusca(session, sid, termo, respond) {
   if (_ehConversaSolta(termo)) {
     await saveSession(sid, { ...session, state: 'ATACADO' });
     return respond(MSG_ATACADO);
+  }
+  // v74 (25/09/2026): palavra de NAVEGAÇÃO dentro do atacado não é produto. Caso real 25/09:
+  // a cliente já estava no atacado, digitou "Atacado" e levou "Não encontrei Atacado na tabela".
+  // (O reconhecimento geral de "atacado" fica desligado aqui dentro — ATACADO/ATK_* contam como
+  // checkout.) Só casa a mensagem INTEIRA, pra nunca engolir nome de produto. Carrinho intacto.
+  const _navAtk = _navegacaoAtacado(termo);
+  if (_navAtk === 'apresentacao') {
+    await saveSession(sid, { ...session, state: 'ATACADO' });
+    return respond(MSG_ATACADO);
+  }
+  if (_navAtk === 'pdf') {
+    await saveSession(sid, { ...session, state: 'ATACADO' });
+    return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`);
   }
   const tab = await lerTabelaAtacado();
   if (!tab.produtos.length) {
@@ -1519,7 +1546,7 @@ async function atkAbrirBusca(session, sid, termo, respond) {
       return await responderComIA(sid, termo, contextoLista(session), respond);
     }
     await saveSession(sid, { ...session, state: 'ATACADO' });
-    return respond(`Não encontrei *${termo}* na tabela de atacado de hoje. 🤔\n\nA tabela do atacado é a do *fornecedor* e muda todo dia — pode ser que esse item não esteja nela agora. Tenta o *nome do princípio ativo* (ex.: *oxandrolona* no lugar de *anavar*) ou baixe a tabela completa em PDF:\n${TABELA_ATACADO_URL}\n\n_Se você quer esse produto no *varejo*, digite *menu* — lá o catálogo é outro._`);
+    return respond(`Não encontrei *${termo}* na nossa tabela de atacado de hoje. 🤔\n\nPode ser que ele esteja *esgotado* no momento ou com outro nome na tabela. Tenta o *nome do princípio ativo* (ex.: *oxandrolona* no lugar de *anavar*) ou baixe a tabela completa em PDF:\n${TABELA_ATACADO_URL}\n\n_Se você quer esse produto no *varejo*, digite *menu* — lá o catálogo é outro._`);
   }
   const lista = achados.slice(0, 30);
   await saveSession(sid, { ...session, state: 'ATK_LISTA', atkLista: lista });
