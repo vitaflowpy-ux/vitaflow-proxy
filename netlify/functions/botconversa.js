@@ -1,5 +1,8 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v76 (27/09/2026): CUPOM DE FRETE (FRETEZERO) NÃO ACUMULA MAIS COM OS 3% DA ATHENA (Thiago: "não vou dar o frete
+// grátis e ainda os 3%"). No fecharResumoNormal, com cupom tipo 'frete' vale o MAIOR pro cliente: OU o frete
+// grátis/abatido OU os 3% nos produtos (se os 3% vencem, o cupom não é consumido); o resumo avisa. Textos da opção 8 (MSG_PROMO_FRETE) e do contextoPromo corrigidos. Resto = v75.
 // v75 (27/09/2026): PROMOÇÃO FRETE GRÁTIS — FRETEZERO acima de R$ 1.000, de 27/09 até quarta 30/09 23h59.
 // PROMO_FRETE ganhou .ini (liga sozinha 27/09 00:00) e .fim = 30/09 23:59:59 (desliga sozinha); MSG_PROMO_FRETE
 // (opção 8 / "promo"), aviso no buildMenuPrincipal() (regra nº 2) e texto do contextoPromo da IA atualizados.
@@ -981,7 +984,7 @@ async function contextoPromo(){
   if (promoIndepAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — INDEPENDÊNCIA 9.9 (07 a 09/09): 15% OFF em TODO o site (varejo) com o cupom INDEPENDENCIA99, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo, qualquer quantidade. NÃO vale no atacado. NÃO acumula com outros cupons ou promoções nem com o benefício de 3% da Athena — vale sempre o MAIOR (os 15% do cupom vencem os 3%). SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE a Independência 9.9 e diga pra usar o cupom INDEPENDENCIA99 no fechamento. ALGUNS produtos já estão com PREÇO ESPECIAL de 9.9 e por isso NÃO aceitam o cupom (o desconto já está no preço) — se o cliente disser que o cupom não pegou num produto, explique que esse item já está com preço promocional especial. NÃO fale de frete grátis/FRETEZERO nem "Compre 2 Leve 3" (não estão ativos).');
   } else if (promoFreteAtiva()) {
-    linhas.push('PROMOÇÃO ATUAL — FRETE GRÁTIS (de 27/09 só até quarta 30/09 às 23h59): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE o Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até quarta 30/09 às 23h59). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione a Semana do Cliente, a Independência 9.9/INDEPENDENCIA99 nem "15% OFF" (já encerraram).');
+    linhas.push('PROMOÇÃO ATUAL — FRETE GRÁTIS (de 27/09 só até quarta 30/09 às 23h59): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com NADA: nem com outro cupom, nem com promoção, nem com o benefício de 3% da Athena. No fechamento o sistema aplica sozinho o que for MAIOR pro cliente: OU o frete grátis OU os 3% nos produtos — nunca os dois. NUNCA diga que o cliente ganha o frete grátis E os 3% juntos. SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE o Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até quarta 30/09 às 23h59). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione a Semana do Cliente, a Independência 9.9/INDEPENDENCIA99 nem "15% OFF" (já encerraram).');
   } else if (!PROMO_GENESIS_3x1.ativa) {
     linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
   }
@@ -1042,7 +1045,7 @@ Em pedidos *acima de R$ 1.000*, o *frete é por nossa conta* pra todo o Brasil! 
 🏷️ É só usar o cupom *FRETEZERO* no fechamento (aqui comigo ou no site).
 ⏰ *Só até quarta (30/09) às 23h59!*
 
-_E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
+_Não acumula com os 3% da Athena nem com outros cupons ou promoções — eu aplico sempre o que for MAIOR pra você. 😉_`;
 // ── INDEPENDÊNCIA 9.9: 15% OFF em todo o site (varejo) com o cupom INDEPENDENCIA99 ──
 // Janela 07 a 09/09. Auto-LIGA na virada da meia-noite do dia 07 (exatamente quando o
 // FRETEZERO acima expira, 06/09 23:59:59) e auto-DESLIGA depois do dia 09. Ninguém precisa
@@ -3303,13 +3306,27 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
 `;
       cupomDocId = cupomResultado.docId;
       cupomCodigo = cupomResultado.codigo;
-      // descNormais já é o benefício Athena de 3% nos produtos fora da promo (calculado acima).
     } else if (cupomResultado.descontoFrete > 0) {
       freteValorFinal = Math.max(0, freteValorFinal - cupomResultado.descontoFrete);
       linhaFreteGratis = `🚚 *Desconto no frete* — Cupom ${cupomResultado.codigo}: -R$ ${cupomResultado.descontoFrete.toFixed(2).replace('.',',')}
 `;
       cupomDocId = cupomResultado.docId;
       cupomCodigo = cupomResultado.codigo;
+    }
+    // v76 (Thiago, 27/09): cupom de FRETE NÃO acumula com os 3% da Athena — vale o MAIOR pro cliente:
+    // ou o desconto no frete, ou os 3% nos produtos. Nunca os dois.
+    if (linhaFreteGratis && descAthenaAcc > 0 && descCupomAcc === 0) {
+      const _ganhoFrete = Math.max(0, (frete.valor || 0) - freteValorFinal);
+      if (_ganhoFrete >= descAthenaAcc) {
+        descNormais = 0; labelNormais = ''; descAthenaAcc = 0;
+        linhaFreteGratis += `_(Neste pedido o frete grátis é o maior benefício pra você — apliquei ele no lugar dos ${DESCONTO_ATHENA_PCT}% da Athena. Não acumulam.)_
+`;
+      } else {
+        freteValorFinal = frete.valor || 0; linhaFreteGratis = '';
+        cupomDocId = null; cupomCodigo = null;   // o cupom não foi usado: não consome
+        linhaFreteGratis = `_(Os ${DESCONTO_ATHENA_PCT}% da Athena valem mais que o cupom ${cupomResultado.codigo} neste pedido — mantive os ${DESCONTO_ATHENA_PCT}%, que é o melhor pra você. Não acumulam.)_
+`;
+      }
     }
   }
 
@@ -5283,8 +5300,7 @@ exports.handler = async (event) => {
         const resultado = await validarCupom(mensagem, totalProd);
         if (resultado.ok) {
           // Cupom de FRETE (frete grátis ou desconto no frete, ex.: FRETEZERO): aplica SEMPRE.
-          // Não compara com os 3% da Athena — frete e desconto em produto são coisas diferentes,
-          // e o fecharResumoNormal mantém os 3% nos produtos E zera/abate o frete.
+          // (até a v75 somava com os 3%; na v76 o fecharResumoNormal escolhe o MAIOR: frete OU 3%.)
           if (resultado.tipo === 'frete') {
             return await fecharResumoNormal({ ...session, cupomDocId:null, cupomCodigo:null }, sid, resultado, respond);
           }
