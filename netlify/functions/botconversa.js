@@ -1,5 +1,9 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v75 (27/09/2026): PROMOÇÃO FRETE GRÁTIS — FRETEZERO acima de R$ 1.000, de 27/09 até quarta 30/09 23h59.
+// PROMO_FRETE ganhou .ini (liga sozinha 27/09 00:00) e .fim = 30/09 23:59:59 (desliga sozinha); MSG_PROMO_FRETE
+// (opção 8 / "promo"), aviso no buildMenuPrincipal() (regra nº 2) e texto do contextoPromo da IA atualizados.
+// O cupom continua validado pelo Firestore (cupons_vitaflow). Resto = v74.
 // v74 (25/09/2026): atacado — (1) o texto de "não encontrei" não fala mais em *fornecedor* (nunca expor isso ao
 // cliente); (2) dentro do atacado, "atacado"/"quero atacado"/"tabela de atacado" mostram a apresentação de novo e
 // "tabela"/"pdf" mandam o link — antes viravam BUSCA na tabela ("Não encontrei Atacado", caso real 25/09). Resto = v73.
@@ -977,7 +981,7 @@ async function contextoPromo(){
   if (promoIndepAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — INDEPENDÊNCIA 9.9 (07 a 09/09): 15% OFF em TODO o site (varejo) com o cupom INDEPENDENCIA99, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo, qualquer quantidade. NÃO vale no atacado. NÃO acumula com outros cupons ou promoções nem com o benefício de 3% da Athena — vale sempre o MAIOR (os 15% do cupom vencem os 3%). SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE a Independência 9.9 e diga pra usar o cupom INDEPENDENCIA99 no fechamento. ALGUNS produtos já estão com PREÇO ESPECIAL de 9.9 e por isso NÃO aceitam o cupom (o desconto já está no preço) — se o cliente disser que o cupom não pegou num produto, explique que esse item já está com preço promocional especial. NÃO fale de frete grátis/FRETEZERO nem "Compre 2 Leve 3" (não estão ativos).');
   } else if (promoFreteAtiva()) {
-    linhas.push('PROMOÇÃO ATUAL — SEMANA DO FRETE GRÁTIS (só até domingo 06/09 à meia-noite): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE a Semana do Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até 06/09). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione o 8.8/PAPAI88 nem "15% OFF" (essa promoção já encerrou).');
+    linhas.push('PROMOÇÃO ATUAL — FRETE GRÁTIS (de 27/09 só até quarta 30/09 às 23h59): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com outro cupom de produto, MAS o benefício padrão de 3% da Athena continua valendo normalmente nos produtos (frete e produto são coisas separadas: o cliente ganha o frete grátis E os 3% ao mesmo tempo). SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE o Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até quarta 30/09 às 23h59). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione a Semana do Cliente, a Independência 9.9/INDEPENDENCIA99 nem "15% OFF" (já encerraram).');
   } else if (!PROMO_GENESIS_3x1.ativa) {
     linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
   }
@@ -1025,17 +1029,18 @@ async function anunciarLancamento(session, sid) {
 // ── PROMO GÊNESIS "Compre 2, Leve 3" = a PROMOÇÃO DO MOMENTO (opção 8 / "promoção") ──
 // Pra desligar no futuro: ativa:false.
 const PROMO_GENESIS = { ativa: false };
-// ── SEMANA DO FRETE GRÁTIS: frete grátis acima de R$ 1.000 com o cupom FRETEZERO ──
-// Auto-expira sozinha em .fim. Pra desligar antes: ativa:false. Pra trocar o prazo: edite .fim.
-const PROMO_FRETE = { ativa: true, fim: '2026-09-06T23:59:59-03:00' };
-function promoFreteAtiva(){ return PROMO_FRETE.ativa && Date.now() <= new Date(PROMO_FRETE.fim).getTime(); }
-// Promoção atual (única): SEMANA DO FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
-const MSG_PROMO_FRETE = `🚚 *SEMANA DO FRETE GRÁTIS — PRA TODO O BRASIL!* 🎉
+// ── FRETE GRÁTIS: frete grátis acima de R$ 1.000 com o cupom FRETEZERO ──
+// 27/09/2026 (v75): janela 27/09 00:00 → quarta 30/09 23:59:59. Liga e desliga sozinha pela data.
+// Pra desligar antes: ativa:false. Pra trocar o prazo: edite .ini/.fim.
+const PROMO_FRETE = { ativa: true, ini: '2026-09-27T00:00:00-03:00', fim: '2026-09-30T23:59:59-03:00' };
+function promoFreteAtiva(){ return PROMO_FRETE.ativa && Date.now() >= new Date(PROMO_FRETE.ini).getTime() && Date.now() <= new Date(PROMO_FRETE.fim).getTime(); }
+// Promoção atual (única): FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
+const MSG_PROMO_FRETE = `🚚 *FRETE GRÁTIS PRA TODO O BRASIL!* 🎉
 
 Em pedidos *acima de R$ 1.000*, o *frete é por nossa conta* pra todo o Brasil! 🇧🇷
 
 🏷️ É só usar o cupom *FRETEZERO* no fechamento (aqui comigo ou no site).
-⏰ *Só até domingo (06/09) à meia-noite!*
+⏰ *Só até quarta (30/09) às 23h59!*
 
 _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
 // ── INDEPENDÊNCIA 9.9: 15% OFF em todo o site (varejo) com o cupom INDEPENDENCIA99 ──
@@ -1069,7 +1074,7 @@ _Desconto nos produtos (varejo), aplicado sozinho no fechamento. Não acumula co
 // "promoções" da Stella/Athena (opção 8 / comando "promo"). NÃO basta pôr só no contextoPromo da IA.
 // Se a promoção tiver data, adicione também o aviso no buildMenuPrincipal(). Isso vale SEMPRE.
 // Mensagem da "promoção do momento" (opção 8 / "promoção").
-// Prioridade: Semana do Cliente (13-20/09) > Independência > Gênesis > Frete > sorteio > padrão 3%.
+// Prioridade: Semana do Cliente (13-20/09) > Independência > Gênesis > Frete (27-30/09) > sorteio > padrão 3%.
 function msgPromoAtual(){
   if (semanaClienteAtiva()) {
     return MSG_PROMO_SEMANA;
@@ -1615,6 +1620,11 @@ function buildMenuPrincipal() {
     menu += `
 
 🧡 *SEMANA DO CLIENTE ATIVA!* Desconto automático que cresce com o seu pedido — digite *promo* ou escolha a *opção 8*. 🔥`;
+  }
+  if (promoFreteAtiva()) {
+    menu += `
+
+🚚 *FRETE GRÁTIS ATIVO!* Acima de *R$ 1.000* com o cupom *FRETEZERO* — só até *quarta (30/09) às 23h59*. Digite *promo* ou escolha a *opção 8*. 🔥`;
   }
   const promo = promoAtiva();
   if (promo) {
