@@ -1,5 +1,6 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v77 (29/09/2026): pedido pago grava no GAS/planilha SÓ o nome do produto (sem " x<qtd>" no nome) — igual ao site.
 // v76 (27/09/2026): CUPOM DE FRETE (FRETEZERO) NÃO ACUMULA MAIS COM OS 3% DA ATHENA (Thiago: "não vou dar o frete
 // grátis e ainda os 3%"). No fecharResumoNormal, com cupom tipo 'frete' vale o MAIOR pro cliente: OU o frete
 // grátis/abatido OU os 3% nos produtos (se os 3% vencem, o cupom não é consumido); o resumo avisa. Textos da opção 8 (MSG_PROMO_FRETE) e do contextoPromo corrigidos. Resto = v75.
@@ -5558,8 +5559,12 @@ exports.handler = async (event) => {
       // 2) TRABALHO PESADO só DEPOIS do recibo já ter saído (tudo best-effort, não trava nada).
       if (num_pedido) {
         try {
+          // v77 (29/09/2026): SÓ o nome do produto na descrição. Antes ia "${i.nome} x${i.qtd}" e o GAS ainda
+          // acrescenta " x<qtd>" → na planilha ficava "BOTOX Allergan 100UI x2 (R$ … un.) x2" (qtd DUAS vezes).
+          // Isso quebrava o e-mail de recompra (produto não achado no site / "já recomprou" falhando), o lucro do
+          // Telegram ("sem vínculo no radar", casa por nome) e o Painel de Dados. Agora grava igual ao site.
           const items = carrinho.map(i => ({
-            description: `${i.nome} x${i.qtd}`, quantity: i.qtd, price: Math.round(i.preco * 100)
+            description: String(i.nome || '').trim(), quantity: i.qtd, price: Math.round(i.preco * 100)
           }));
           items.push({ description: `Frete ${frete.label} — ${session.estadoCliente}`, quantity: 1, price: Math.round(frete.valor * 100) });
           // Promo Gênesis: recupera o brinde (da sessão OU do nó vitaflow_brindes) → Observação do pedido.
