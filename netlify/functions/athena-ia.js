@@ -250,9 +250,12 @@ QUEM FECHA O PEDIDO É O SISTEMA, NÃO VOCÊ — e é AQUI no WhatsApp (NUNCA no
 - A compra é fechada AQUI na conversa, mas quem monta o carrinho, pede o estado/frete e gera o LINK DE PAGAMENTO é o SISTEMA — através da LISTA de produtos. Você NÃO gera link, NÃO monta carrinho, NÃO coleta endereço e NÃO envia rastreio. Você só CONDUZ o cliente até a lista; o sistema faz TODO o resto.
 - É TERMINANTEMENTE PROIBIDO FINGIR que está fazendo o checkout. Você NÃO consegue fazer isso, então NUNCA diga frases como: "vou montar seu pedido", "estou finalizando seu pedido", "vou gerar seu link", "gerando seu link agora", "já já o link aparece", "te mando o rastreio", "confirmado? eu fecho pra você". Se disser qualquer coisa assim, o cliente vai esperar um link que NUNCA vem — é um erro GRAVE (já aconteceu).
 - É IGUALMENTE PROIBIDO FINGIR que está CONSULTANDO um pedido, rastreio ou status de entrega. Você NÃO tem acesso a pedidos. NUNCA escreva "vou consultar seu pedido", "deixa eu verificar o status", "um momento, o sistema vai buscar", "já te trago o rastreio" — o cliente fica esperando uma consulta que NUNCA acontece (aconteceu em 17/09/2026: cliente ficou 6 minutos no vácuo). Se o cliente perguntar de pedido, entrega, rastreio, prazo de um pedido já feito ou "cadê meu produto", responda EXATAMENTE isto e nada mais sobre o pedido: "Me manda o *número do pedido* (começa com VF-), seu *CPF* ou o *e-mail* da compra que eu consulto o status na hora! 😊" — quando ele mandar esse dado, o SISTEMA faz a consulta de verdade.
-- OS ÚNICOS MARCADORES QUE EXISTEM são [[LISTA:...]] e [[STACK:...]]. NUNCA invente outro marcador (ex.: [[CARRINHO]], [[FINALIZAR]], [[CHECKOUT]]) — eles NÃO fazem nada e aparecem como texto quebrado pro cliente.
-- CARRINHO E FINALIZAÇÃO são do SISTEMA, não seus. Você NÃO enxerga nem controla o carrinho. Se o cliente quer VER o carrinho, FINALIZAR ou PAGAR, NÃO tente abrir nada nem diga que o carrinho está vazio — apenas oriente em UMA linha: "É só digitar *finalizar* que eu fecho seu pedido 👇" (ou *carrinho* pra ver os itens). O sistema assume dali. Se o CONTEXTO acima disser que o cliente TEM itens no carrinho, confirme isso ("você já tem X no carrinho") — NUNCA diga que está vazio.
-- Então, quando o cliente quiser COMPRAR (disse "quero", "ok", "sim", "fecha", "pode ser", "vou querer"), sua ÚNICA ação é ABRIR A LISTA REAL do produto com o marcador [[LISTA:...]] (ver abaixo). A partir daí o SISTEMA assume: o cliente escolhe o número, define a quantidade, e o sistema monta o carrinho, pede o estado/frete e gera o link de verdade. NÃO narre esses passos como se fosse você fazendo — apenas abra a lista com uma fala curta.
+- OS ÚNICOS MARCADORES QUE EXISTEM são [[LISTA:...]], [[STACK:...]] e [[COMPRAR:...]]. NUNCA invente outro marcador (ex.: [[CARRINHO]], [[FINALIZAR]], [[CHECKOUT]]) — eles NÃO fazem nada e aparecem como texto quebrado pro cliente.
+- CARRINHO E FINALIZAÇÃO são do SISTEMA, não seus. Você NÃO enxerga nem controla o carrinho. Se o cliente quer VER o carrinho, FINALIZAR ou PAGAR, NÃO tente abrir nada nem diga que o carrinho está vazio — apenas oriente em UMA linha: "É só digitar *finalizar* que eu fecho seu pedido 👇" (ou *carrinho* pra ver os itens). O sistema assume dali. Se o CONTEXTO acima disser que o cliente TEM itens no carrinho, confirme isso ("você já tem X no carrinho") — NUNCA diga que está vazio. ⚠️ Se o CONTEXTO NÃO disser que há itens no carrinho, o produto AINDA NÃO FOI COLOCADO: NÃO mande digitar *finalizar* — use [[COMPRAR:...]] do produto que ele quer (ou [[LISTA:...]] se não souber a versão).
+- 🛒 COLOCAR NO CARRINHO — quando o cliente quiser COMPRAR um produto ESPECÍFICO (disse "quero", "vou querer", "fecha", "pode ser", "vamos finalizar", "só quero o X") e você sabe EXATAMENTE qual é (nome E versão, ex.: Lipoless 15mg 4 ampolas), use o marcador [[COMPRAR:colecao:termo]] com um termo que identifique SÓ esse produto (ex.: "Perfeito! 👇 [[COMPRAR:emagrecedores:lipoless 4 ampolas]]"). O SISTEMA mostra o produto com o preço real e PERGUNTA se pode colocar no carrinho; se o cliente disser sim, o sistema coloca e segue pro fechamento (estado, frete e link). Se existir mais de uma versão e você não souber qual ele quer, use [[LISTA:...]] pra ele escolher. Fala antes do marcador: CURTA (1 linha). NÃO escreva preço, frete nem "posso colocar no carrinho?" você mesma — o sistema faz.
+- 🚫 FRETE — você NÃO tem a tabela de frete. É PROIBIDO escrever QUALQUER valor de frete (PAC, SEDEX, Transportadora ou outro), prazo por transportadora, pedir CEP ou estado, ou simular cálculo de frete. Caso real (29/09/2026): a IA inventou "PAC R$ 25 / SEDEX R$ 45 / Transportadora R$ 35" pro PR — o real era 50 / 65 / 75 — e o cliente reclamou. Se perguntarem frete, responda EXATAMENTE: "É só digitar *frete* que eu calculo na hora pelo seu estado 👇". Na finalização o SISTEMA calcula o frete sozinho.
+- 🚫 NUNCA ofereça opções NUMERADAS (1., 2., 3. ou 1️⃣ 2️⃣) pro cliente escolher digitando o número. Números digitados vão para o MENU do sistema e abrem OUTRA coisa (caso real 29/09: o cliente digitou "3" pra escolher a transportadora e abriu a lista de HORMÔNIOS). Pra produtos, use a LISTA ([[LISTA:...]]), que o sistema numera.
+- Então, quando o cliente quiser COMPRAR (disse "quero", "ok", "sim", "fecha", "pode ser", "vou querer"): se você sabe EXATAMENTE o produto, use [[COMPRAR:...]] (ver acima); se não sabe a versão, ABRA A LISTA REAL com [[LISTA:...]] (ver abaixo). A partir daí o SISTEMA assume: o cliente escolhe o número, define a quantidade, e o sistema monta o carrinho, pede o estado/frete e gera o link de verdade. NÃO narre esses passos como se fosse você fazendo — apenas abra a lista com uma fala curta.
 - NUNCA mande o cliente comprar no site. O link sai do sistema aqui na conversa, não é "o site". Só cite vitaflowoficial.com se o cliente pedir explicitamente.
 - Se em mensagens antigas você disse que a compra é no site OU que VOCÊ ia gerar o link, aquilo estava ERRADO — não repita.
 
@@ -407,6 +410,29 @@ async function pensarComClaude(sys, mensagem, historico, prazoMs){
 // Se a leitura falhar, o protocolo sai exatamente como antes (só com as regras do prompt).
 // As TABELAS DE FRACIONAMENTO continuam as da Athena (FRAC_TABELAS no botconversa),
 // anexadas no fim — a base só governa o texto do protocolo.
+// v78 (30/09/2026): TRAVA DE SAÍDA — a IA não pode falar valor de frete nem simular o checkout.
+// O prompt já proíbe, mas o modelo desobedeceu num caso real (29/09: inventou PAC/SEDEX/Transportadora
+// pro PR e pediu CEP). Se a resposta tiver valor de frete ou pedir CEP/estado, ela é TROCADA por uma
+// orientação fixa. "Frete grátis acima de R$ 1.000" (promoção) NÃO é barrado: só PAC/SEDEX/Transportadora
+// com valor, "frete fica/sai/custa R$", ou pedido de CEP/estado.
+const MSG_FRETE_SISTEMA = 'Pra te passar o frete certinho, é só digitar *frete* que eu calculo na hora pelo seu estado 👇';
+function travarFreteInventado(txt){
+  if (!txt) return txt;
+  const t = String(txt);
+  const valorTransp = /(\bPAC\b|\bSEDEX\b|transportadora)[^\n]{0,60}R\$\s*\d/i.test(t);
+  const valorFrete  = /frete[^\n]{0,25}\b(fica|sai|custa|e|é)\s+(de\s+)?R\$\s*\d/i.test(t);
+  const pedeCep     = /(qual|me (passa|manda|informa|confirma)|informe|digite)[^\n]{0,30}\b(cep|seu estado|sua uf|o estado)\b/i.test(t);
+  if (valorTransp || valorFrete || pedeCep) {
+    console.log('[IA] TRAVA FRETE: resposta trocada ->', t.slice(0, 160));
+    return MSG_FRETE_SISTEMA;
+  }
+  return t;
+}
+// v78: texto da pergunta "posso colocar no carrinho?" (o botconversa.js trata a resposta no estado CONFIRMAR_CARRINHO).
+function msgConfirmarCarrinho(prod){
+  const preco = (Number(prod.preco) || 0).toFixed(2).replace('.', ',');
+  return '📦 *' + prod.nome + '*\n💰 R$ ' + preco + '\n\n*Posso colocar no seu carrinho?* 🛒\n_Responda *sim* ou *não*._';
+}
 const vm = require('vm');
 const GERADOR_SITE = 'https://gerador-protocolos-vitaflow.netlify.app';
 let _baseGer = null, _baseGerEm = 0;
@@ -773,11 +799,11 @@ exports.handler = async (event) => {
 
     const restante = PRAZO_MS - (Date.now() - t0);
     const pensado = await pensarComClaude(sys, mensagem, historico, restante);
-    const reply = pensado.texto;
+    const reply = travarFreteInventado(pensado.texto);   // v78: nunca frete inventado nem checkout simulado
     if (!reply) { console.log('[IA-SYNC] sem resposta do modelo dentro do prazo.'); return vazio; }
 
     // O cliente NUNCA vê o marcador.
-    const replyLimpo = reply.replace(/\[\[\s*(LISTA|STACK)\s*:[^\]]*\]\]/gi, '').trim();
+    const replyLimpo = reply.replace(/\[\[\s*(LISTA|STACK|COMPRAR)\s*:[^\]]*\]\]/gi, '').trim();
 
     // ── COMBO/STACK ──
     const mStack = reply.match(/\[\[\s*STACK\s*:\s*([^\]]+?)\s*\]\]/i);
@@ -807,6 +833,35 @@ exports.handler = async (event) => {
           console.log('[IA-SYNC] devolvendo STACK em', (Date.now()-t0), 'ms');
           return { statusCode:200, headers, body: JSON.stringify({ resposta: corpo, abriuLista:true }) };
         }
+      }
+    }
+
+    // ── v78: COMPRAR — [[COMPRAR:colecao:termo]]: 1 produto → pergunta se pode colocar no carrinho ──
+    const mComprar = reply.match(/\[\[\s*COMPRAR\s*:\s*([a-z0-9\-]*)\s*:\s*([^\]]*?)\s*\]\]/i);
+    if (mComprar) {
+      const colC = (mComprar[1] || '').toLowerCase(), termoC = mComprar[2] || '';
+      const abC = await montarLista(colC, termoC);
+      if (abC && abC.produtoLista.length === 1) {
+        const prod = Object.assign({}, abC.produtoLista[0], { colecao: colC });
+        const sessAtual = await getSession(phone);
+        await saveSession(phone, Object.assign({}, sessAtual, { state:'CONFIRMAR_CARRINHO', produtoSelecionado: prod, errosSeguidos:0 }));
+        const corpo = (replyLimpo ? replyLimpo + '\n\n' : '') + msgConfirmarCarrinho(prod);
+        await salvarHistorico(phone, historico.concat([
+          { role:'user', content: mensagem },
+          { role:'assistant', content: (replyLimpo ? replyLimpo + ' ' : '') + '(perguntou se pode colocar ' + prod.nome + ' no carrinho)' }
+        ]));
+        console.log('[IA-SYNC] devolvendo COMPRAR em', (Date.now()-t0), 'ms');
+        return { statusCode:200, headers, body: JSON.stringify({ resposta: corpo, abriuLista:true }) };
+      }
+      if (abC && abC.linhas.length > 1) {
+        const sessAtual = await getSession(phone);
+        await saveSession(phone, Object.assign({}, sessAtual, { state:'LISTA_PRODUTOS', produtoLista: abC.produtoLista, errosSeguidos:0 }));
+        const corpo = (replyLimpo ? replyLimpo + '\n\n' : '') + formatarLista(abC.linhas) + '\n\n*Digite o número do produto:*';
+        await salvarHistorico(phone, historico.concat([
+          { role:'user', content: mensagem },
+          { role:'assistant', content: replyLimpo || ('(abriu a lista de ' + termoC + ')') }
+        ]));
+        return { statusCode:200, headers, body: JSON.stringify({ resposta: corpo, abriuLista:true }) };
       }
     }
 
