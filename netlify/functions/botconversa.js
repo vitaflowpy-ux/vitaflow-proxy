@@ -1,5 +1,8 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v79 (30/09/2026): pedido de ATACADO passa a sair com prefixo W (VF-DDMM-W###), como o atacado do site. Antes saía
+//   com A (Athena) e o sistema não reconhecia como atacado (prazo de varejo, origem errada no rastreio). gerarNumeroPedido
+//   recebe o tipo: sessão com atacado:true -> 'W'; resto -> 'A'. Contingência do atacado: VF-DDMM-WX<HHmm>. Resto = v78.
 // v78 (30/09/2026): 3 correções de caso real (cliente Antonio, 29/09):
 //   (1) PERGUNTA DE PRAZO fora do atacado responde DIRETO o prazo do varejo (antes abria o menu "1 varejo / 2 atacado"
 //       pra quem estava comprando no varejo). Com carrinho de ATACADO, manda o prazo completo (varejo + atacado).
@@ -3587,25 +3590,29 @@ async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReai
     return d?.url || null;
   } catch { return null; }
 }
-// Número de contingência no MESMO formato do GAS (VF-DDMM-AX<HHmm>, fuso de São Paulo).
+// Número de contingência no MESMO formato do GAS (VF-DDMM-AX<HHmm> / atacado VF-DDMM-WX<HHmm>, fuso de São Paulo).
 // Usado SÓ quando o GAS não responde — assim a InfinitePay NUNCA carimba um UUID no pedido.
-function numeroContingenciaAthena() {
+function numeroContingenciaAthena(tipo) {
+  const L = tipo === 'W' ? 'W' : 'A';
   try {
     const p = new Intl.DateTimeFormat('en-GB', { timeZone:'America/Sao_Paulo', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(new Date());
     const g = t => (p.find(x => x.type === t) || {}).value || '00';
-    return 'VF-' + g('day') + g('month') + '-AX' + g('hour') + g('minute');
+    return 'VF-' + g('day') + g('month') + '-' + L + 'X' + g('hour') + g('minute');
   } catch (e) {
-    return 'VF-0000-AX0000';
+    return 'VF-0000-' + L + 'X0000';
   }
 }
-async function gerarNumeroPedido() {
+// v79: tipo 'W' = pedido de ATACADO (sessão com atacado:true); 'A' = varejo da Athena.
+function tipoNumeroAthena(session) { return (session && session.atacado) ? 'W' : 'A'; }
+async function gerarNumeroPedido(tipo) {
+  const t = tipo === 'W' ? 'W' : 'A';
   try {
-    const r = await fetchT(GAS_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'gerar_numero', tipo:'A' }) }, 7000);
+    const r = await fetchT(GAS_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'gerar_numero', tipo: t }) }, 7000);
     const d = await r.json();
     if (d && d.order_nsu) return d.order_nsu;
   } catch (e) {}
   // GAS fora/sem resposta → número de contingência no formato VF (nunca deixa virar UUID da InfinitePay)
-  return numeroContingenciaAthena();
+  return numeroContingenciaAthena(t);
 }
 async function salvarPedidoGAS(pedido) {
   try {
@@ -3674,7 +3681,7 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
     if (descontoPromo > 0) infoDesconto += `\n🎁 Promo Dia dos Pais (compre 2): -R$ ${descontoPromo.toFixed(2).replace('.',',')}`;
     infoDesconto += `\n💰 *Total: R$ ${totalFinal.toFixed(2).replace('.',',')}*`;
   }
-  const orderNsu = await gerarNumeroPedido();
+  const orderNsu = await gerarNumeroPedido(tipoNumeroAthena(session));
   // Promo Gênesis: grava o brinde vinculado ao número do pedido → vira Observação no registro.
   if (session.brinde && orderNsu) {
     try {
@@ -5537,7 +5544,7 @@ exports.handler = async (event) => {
       const carrinho = session.carrinho || [];
       const frete    = session.freteSelecionado || {};
       const total    = session.total || 0;
-      const num_pedido = session.orderNsu || await gerarNumeroPedido();
+      const num_pedido = session.orderNsu || await gerarNumeroPedido(tipoNumeroAthena(session));
 
       // Endereço completo + telefone no recibo, pro cliente CONFERIR e corrigir ANTES do envio.
       const _cepFmt = String(coleta.cep || '').replace(/\D/g,'').replace(/^(\d{5})(\d{3})$/, '$1-$2') || (coleta.cep || '');
