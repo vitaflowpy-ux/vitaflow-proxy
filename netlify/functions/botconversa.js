@@ -1,5 +1,8 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v80 (30/09/2026): o Apps Script às vezes segura a chamada 10-40 s. (1) Número do pedido pela função Netlify numero-pedido
+//   (Firebase direto, ~0,3 s) — antes a Athena caía no número de contingência AX; GAS vira reserva (6 s). (2) Consulta de
+//   rastreio pela função rastreio-consulta (resposta pronta no Firebase); GAS de reserva, agora com limite de 8 s. Resto = v79.
 // v79 (30/09/2026): pedido de ATACADO passa a sair com prefixo W (VF-DDMM-W###), como o atacado do site. Antes saía
 //   com A (Athena) e o sistema não reconhecia como atacado (prazo de varejo, origem errada no rastreio). gerarNumeroPedido
 //   recebe o tipo: sessão com atacado:true -> 'W'; resto -> 'A'. Contingência do atacado: VF-DDMM-WX<HHmm>. Resto = v78.
@@ -2895,12 +2898,24 @@ const RASTREIO_RODAPE =
   `\n\n_Quer consultar outro? É só mandar o número do pedido, CPF ou e-mail._\n` +
   `📞 Para mais informações sobre seu pedido, fale com a logística: 👉 wa.me/447537155718\n` +
   `_Ou digite *menu* para voltar ao início._`;
+// v80: 1º a consulta RÁPIDA (função rastreio-consulta: resposta pronta no Firebase feita pelo GAS v50, ~0,3 s, sem
+// Apps Script). Se ela disser usar_gas (pedido recém-criado, termo parcial, resposta de outro dia) ou falhar → GAS como
+// antes, agora com limite de 8 s (antes era sem limite: com o Apps Script lento, a function inteira ficava presa).
+const RASTREIO_RAPIDO_URL = 'https://vitaflow-proxy.netlify.app/.netlify/functions/rastreio-consulta';
 async function consultarStatusGAS(termo) {
   try {
-    const r = await fetch(GAS_URL, {
+    const r = await fetchT(RASTREIO_RAPIDO_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ action:'consultar_status', termo })
-    });
+    }, 4000);
+    const d = await r.json();
+    if (d && d.success === true && Array.isArray(d.pedidos)) return d.pedidos;
+  } catch (e) {}
+  try {
+    const r = await fetchT(GAS_URL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'consultar_status', termo })
+    }, 8000);
     const d = await r.json();
     return (d && d.success && Array.isArray(d.pedidos)) ? d.pedidos : [];
   } catch { return []; }
@@ -3604,10 +3619,19 @@ function numeroContingenciaAthena(tipo) {
 }
 // v79: tipo 'W' = pedido de ATACADO (sessão com atacado:true); 'A' = varejo da Athena.
 function tipoNumeroAthena(session) { return (session && session.atacado) ? 'W' : 'A'; }
+// v80: 1º a função numero-pedido (mesmo site Netlify): conta direto no Firebase (mesmo contador do GAS, com trava),
+// ~0,3 s, sem Apps Script. O GAS fica de reserva. Só aceita número VF com a letra pedida (A ou W).
+const NUMERO_PEDIDO_URL = 'https://vitaflow-proxy.netlify.app/.netlify/functions/numero-pedido';
 async function gerarNumeroPedido(tipo) {
   const t = tipo === 'W' ? 'W' : 'A';
+  const valido = n => new RegExp('^VF-\\d{4}-' + t + 'X?\\d{2,4}$', 'i').test(String(n || '').trim());
   try {
-    const r = await fetchT(GAS_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'gerar_numero', tipo: t }) }, 7000);
+    const r = await fetchT(NUMERO_PEDIDO_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tipo: t }) }, 4000);
+    const d = await r.json();
+    if (d && d.success && valido(d.order_nsu)) return String(d.order_nsu).trim();
+  } catch (e) {}
+  try {
+    const r = await fetchT(GAS_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'gerar_numero', tipo: t }) }, 6000);
     const d = await r.json();
     if (d && d.order_nsu) return d.order_nsu;
   } catch (e) {}
