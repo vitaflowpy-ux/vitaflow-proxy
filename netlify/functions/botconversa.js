@@ -1,5 +1,17 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v78 (30/09/2026): 3 correções de caso real (cliente Antonio, 29/09):
+//   (1) PERGUNTA DE PRAZO fora do atacado responde DIRETO o prazo do varejo (antes abria o menu "1 varejo / 2 atacado"
+//       pra quem estava comprando no varejo). Com carrinho de ATACADO, manda o prazo completo (varejo + atacado).
+//   (2) "finalizar" com o carrinho VAZIO não vai mais pra IA: a IA "fingia" o checkout, pedia estado e CEP e INVENTAVA
+//       frete (PAC 25 / SEDEX 45 / Transp. 35 pro PR — o real é 50 / 65 / 75). Agora vai pra IA com a instrução de
+//       usar [[COMPRAR]] do produto da conversa (item 3). Travas de frete na IA: athena-ia.js / athena-ia-background.js.
+//   (3) IA PERGUNTA SE PODE COLOCAR NO CARRINHO (pedido do Thiago, 30/09: "quando ela acha o produto ela deve perguntar
+//       ao cliente se pode colocar no carrinho, caso a resposta seja afirmativa, ela coloca e já muda para o sistema
+//       normal para finalizar a compra"). A IA usa o marcador [[COMPRAR:colecao:termo]]; achando UM produto, a sessão
+//       vai pro estado CONFIRMAR_CARRINHO e o cliente vê "Posso colocar no seu carrinho?". SIM → entra no carrinho
+//       (1 unidade, ou a quantidade que ele escrever junto: "sim, 2") → irParaCheckout (estado → frete real → link).
+//       NÃO → menu. "finalizar" com carrinho vazio agora vai pra IA COM ESSA INSTRUÇÃO (ela usa o produto da conversa).
 // v77 (29/09/2026): pedido pago grava no GAS/planilha SÓ o nome do produto (sem " x<qtd>" no nome) — igual ao site.
 // v76 (27/09/2026): CUPOM DE FRETE (FRETEZERO) NÃO ACUMULA MAIS COM OS 3% DA ATHENA (Thiago: "não vou dar o frete
 // grátis e ainda os 3%"). No fecharResumoNormal, com cupom tipo 'frete' vale o MAIOR pro cliente: OU o frete
@@ -4026,7 +4038,7 @@ exports.handler = async (event) => {
     // A lista abaixo é TODO estado que o código ATUAL grava, mais os dois que já não são
     // gravados mas ainda têm handler vivo (FABRICANTES, PERGUNTA_CUPOM). Qualquer outro
     // volta pro MENU. O CARRINHO É PRESERVADO — só o estado muda.
-    const ESTADOS_VALIDOS = ['ADM','AGUARDAR_COMPROVANTE','ATACADO','ATK_BLOQUEIO','ATK_CART','ATK_CONFIRMAR','ATK_LISTA','ATK_QTD','ATK_REMOVER','BUSCA_LIVRE','CARRINHO','COLETA_DADOS','CONFIRMAR','CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO','DUVIDAS','DUVIDAS_LIVRE','ESCOLHER_BRINDE','ESTADO','ESTER_BASE','FABRICANTES','FRETE','FRETE_AVULSO','HORMONIOS','INFORMAR_CUPOM','LISTA_PRODUTOS','MENU','OBS_PERGUNTA','OBS_TEXTO','PEPTIDEOS','PERGUNTA_CUPOM','POS_TABELA_FRAC','PRAZOS_RASTREIO','PRAZO_TIPO','PROMO_OFERECER','PROTO_CLIENTE','PROTO_ESCOLHER','PROTO_HUMANO','PROTO_IDENTIFICAR','PROTO_TIPO','QUANTIDADE','RASTREAR','REMOVER_ITEM','RETOMAR_CARRINHO','SORTEIO','STACK_PROXIMO','SUBMENU_TESTO','TRIAGEM','VAREJO_BLOQUEIO'];
+    const ESTADOS_VALIDOS = ['ADM','AGUARDAR_COMPROVANTE','ATACADO','ATK_BLOQUEIO','ATK_CART','ATK_CONFIRMAR','ATK_LISTA','ATK_QTD','ATK_REMOVER','BUSCA_LIVRE','CARRINHO','COLETA_DADOS','CONFIRMAR','CONFIRMAR_CARRINHO','CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO','DUVIDAS','DUVIDAS_LIVRE','ESCOLHER_BRINDE','ESTADO','ESTER_BASE','FABRICANTES','FRETE','FRETE_AVULSO','HORMONIOS','INFORMAR_CUPOM','LISTA_PRODUTOS','MENU','OBS_PERGUNTA','OBS_TEXTO','PEPTIDEOS','PERGUNTA_CUPOM','POS_TABELA_FRAC','PRAZOS_RASTREIO','PRAZO_TIPO','PROMO_OFERECER','PROTO_CLIENTE','PROTO_ESCOLHER','PROTO_HUMANO','PROTO_IDENTIFICAR','PROTO_TIPO','QUANTIDADE','RASTREAR','REMOVER_ITEM','RETOMAR_CARRINHO','SORTEIO','STACK_PROXIMO','SUBMENU_TESTO','TRIAGEM','VAREJO_BLOQUEIO'];
     if (session.state && ESTADOS_VALIDOS.indexOf(session.state) < 0) {
       console.log('[ESTADO-ORFAO] estado desconhecido:', session.state, '— voltando pro MENU (carrinho preservado).');
       session.state = 'MENU';
@@ -4128,6 +4140,23 @@ exports.handler = async (event) => {
         return await irParaCheckout(session, sid, respond);
       }
     }
+    // v78: "finalizar" com o carrinho VAZIO (varejo e atacado) NÃO vai pra IA. Caso real 29/09: a IA disse
+    // "digite finalizar", o cliente digitou, o carrinho estava vazio, a mensagem caiu na IA e ela SIMULOU o checkout
+    // (pediu estado e CEP) e INVENTOU valores de frete. Aqui responde de forma fixa e pede o produto.
+    const _temCarAtkF = Array.isArray(session.carrinhoAtk) && session.carrinhoAtk.length > 0;
+    if (!_temCarrinho && !_temCarAtkF && !_naoInterferir && !emCheckout && state !== 'CONFIRMAR_CARRINHO') {
+      const ehFinalizarVazio = /\b(finalizar|fechar (a |o )?(compra|pedido|carrinho)|concluir (a )?compra|ir pro pagamento|quero pagar|pode fechar|finaliza(r)?|encerrar (a )?compra|checkout)\b/.test(n);
+      if (ehFinalizarVazio) {
+        // A IA sabe da conversa qual produto o cliente quer: ela usa [[COMPRAR:...]] e o sistema pergunta se pode
+        // colocar no carrinho. Se ela não souber o produto, pergunta qual é. Frete ela NÃO fala (trava na saída).
+        const _ctxFin = [contextoLista(session),
+          'ATENÇÃO: o cliente quer FINALIZAR a compra, mas o carrinho está VAZIO (o produto ainda não foi colocado). ' +
+          'Se pela conversa você sabe EXATAMENTE qual produto ele quer, use [[COMPRAR:colecao:termo]] desse produto. ' +
+          'Se não souber qual, pergunte em UMA linha qual produto ele quer. NÃO peça estado, CEP nem fale de frete.'
+        ].filter(Boolean).join('\n');
+        return await responderComIA(sid, mensagem, _ctxFin, respond);
+      }
+    }
     // "carrinho" (palavra solta, ou o erro comum "carinho") SEMPRE mostra o carrinho —
     // cheio OU vazio. Antes caía na IA ("Deixa eu ver isso pra você") e travava,
     // justamente a palavra que o sistema manda o cliente digitar.
@@ -4186,7 +4215,7 @@ exports.handler = async (event) => {
     //   mídia / número puro / palavra de navegação -> não é nome de produto.
     // E só no modo 'canonico' (nome cheio e sem ambiguidade). Apelido/gíria continua
     // passando pelo caminho normal, que pergunta "Você quis dizer X?" antes.
-    const _ESPERA_RESPOSTA_CURTA = ['CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO','PROMO_OFERECER','RETOMAR_CARRINHO','SORTEIO','PRAZO_TIPO','FRETE_AVULSO','BUSCA_LIVRE','PERGUNTA_CUPOM'];
+    const _ESPERA_RESPOSTA_CURTA = ['CONFIRMAR_CARRINHO','CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO','PROMO_OFERECER','RETOMAR_CARRINHO','SORTEIO','PRAZO_TIPO','FRETE_AVULSO','BUSCA_LIVRE','PERGUNTA_CUPOM'];
     if (state && !emCheckout
         && _JA_TRATA_DUVIDA.indexOf(state) < 0
         && _DADO_LIVRE.indexOf(state) < 0
@@ -4548,8 +4577,12 @@ exports.handler = async (event) => {
     const ehPerguntaPrazo = ["prazo","quanto tempo","quantos dias","demora","chega em","tempo de entrega","prazo de entrega","prazo de postagem"].some(p => n.includes(p));
     if (ehPerguntaPrazo && !emCheckout && !["ATACADO","PRAZO_TIPO"].includes(state)) {
       if (ehAtacado) { return await entrarAtacado(session, sid, respond); }
-      await saveSession(sid, { ...session, state:'PRAZO_TIPO' });
-      return respond(MSG_PERGUNTA_TIPO_PRAZO);
+      // v78: responde DIRETO. Quem está no varejo (a imensa maioria) recebe o prazo do varejo, sem menu de opções.
+      // Só quem tem carrinho de ATACADO recebe o texto completo (varejo + atacado). O estado NÃO muda:
+      // o cliente continua de onde parou (lista, quantidade etc.).
+      const _temCarAtk = Array.isArray(session.carrinhoAtk) && session.carrinhoAtk.length > 0;
+      if (_temCarAtk) return respond(MSG_PRAZOS_COMPLETO);
+      return respond(MSG_PRAZO_VAREJO + '\n\n_Pode continuar de onde parou — ou digite *menu* para ver nossos produtos._');
     }
 
     const ehPerguntaFrete = ["frete","transportadora","pac","sedex","valor do envio","custo do envio","quanto e o frete","quanto fica o frete"].some(p => n.includes(p));
@@ -4801,6 +4834,33 @@ exports.handler = async (event) => {
         return respond(`Ótima escolha! 🔥\n📦 *${achado.nome}*\n💰 R$ ${achado.preco.toFixed(2).replace('.',',')}\n_(já com seu desconto de ${PROMO_PRODUTO.pct}% aplicado no fechamento)_\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
       }
       return respond('Digite *1* para Sim ou *2* para Não. 😊');
+    }
+
+    // v78: a IA achou o produto ([[COMPRAR:...]]) e perguntou "Posso colocar no seu carrinho?".
+    // SIM → entra no carrinho e segue direto pro fechamento normal (irParaCheckout: estado → frete → link).
+    if (state === 'CONFIRMAR_CARRINHO') {
+      const prod = session.produtoSelecionado || {};
+      const _s = String(n || '').trim();
+      const _nums = _s.match(/\d{1,2}/);
+      const _sim = /^(sim|s|pode|pode sim|pode colocar|coloca|colocar|coloque|ok|okay|isso|claro|quero|quero sim|bora|vamos|fechado|fecha|manda|beleza|blz|positivo|com certeza|finalizar|finaliza|sim pode)\b/.test(_s) || /^\d{1,2}$/.test(_s);
+      const _nao = /^(nao|n|agora nao|depois|nao quero|negativo|deixa|cancela|cancelar)\b/.test(_s);
+      if (_sim && prod.nome) {
+        const qtd = _nums ? Math.max(1, Math.min(99, parseInt(_nums[0], 10))) : 1;
+        // mesma trava do QUANTIDADE: não mistura atacado aberto com varejo
+        if ((session.carrinhoAtk || []).length) {
+          await saveSession(sid, { ...session, state:'VAREJO_BLOQUEIO' });
+          return respond(`Você tem um *pedido de atacado* em aberto. 🏭\n\nNão dá pra misturar *atacado* e *varejo* no mesmo pedido. O que você prefere?\n\n1️⃣ *Finalizar o atacado* primeiro\n2️⃣ *Esvaziar o atacado* e comprar no varejo\n3️⃣ Voltar ao menu`);
+        }
+        const carrinho = (session.carrinho || []).slice();
+        carrinho.push({ nome: prod.nome, preco: prod.preco, qtd: qtd, colecao: prod.colecao || session.colecaoAtual || '', genesis: !!(prod.genesis || ehLinhaGenesis(prod.nome)) });
+        return await irParaCheckout({ ...session, carrinho, stackFila: [], produtoSelecionado: null, errosSeguidos: 0 }, sid, respond);
+      }
+      if (_nao) {
+        await saveSession(sid, { ...session, state:'MENU', produtoSelecionado: null, errosSeguidos: 0 });
+        return respond('Sem problema! 😊 Me diz o que você procura ou escolha uma opção:\n\n' + buildMenuPrincipal());
+      }
+      // outra coisa (pergunta, outro produto): trata como texto livre
+      return await tratarTextoLivre(session, sid, n, '', respond);
     }
 
     if (state === 'CONFIRMAR_PRODUTO') {
