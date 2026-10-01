@@ -12,3 +12,5 @@
   schedule = "0 13 * * 1-5"
 [functions."logistica-bot"]
   timeout = 26
+[functions."conta-cliente"]
+  timeout = 26
