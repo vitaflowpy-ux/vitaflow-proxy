@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v2  ·  30/09/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v3  ·  30/09/2026
+   v3: o reconhecimento de pedido/CPF virou um BLOCO ÚNICO, igual na Athena (v81) e na página de rastreio (v5).
+       Corrige a contingência (VF-DDMM-SX0930 perdia o zero) e, sem "VF", a letra tem que vir grudada no número.
    v2: reconhece número do pedido e CPF escritos de qualquer jeito (ver "identificação" abaixo);
        pede o dia/mês quando vem só o final do número; avisa CPF que não confere e número sem a letra;
        texto da opção 5 (entregue há menos de 48 h) reescrito.
@@ -53,7 +55,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v2';
+var VERSAO = 'v3';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -382,107 +384,118 @@ function resumo(it) {
   };
 }
 
-/* ------------------------------------------------------------------ identificação
-   v2 (30/09): o cliente escreve o número do pedido e o CPF de qualquer jeito — e erra.
-   NÚMERO DO PEDIDO (formato real VF-DDMM-L000):
-     - aceita minúscula, com ou sem "VF", com espaço/ponto/barra/traço ou tudo junto:
-       "vf 2909 s012", "VF2909S012", "2909-S012", "29/09 S012", "VF-2909-S12" (vira S012)
-     - letra O no lugar de zero grudada em número ("29O9", "SO12") vira 0
-     - letra do tipo: S (site) M (manual) A (Athena) V (revendedor) W (atacado), com X opcional
-       (número de contingência); dia 01-31 e mês 01-12 — senão não é número de pedido
-     - só o final ("S012"): o bot pede o dia e o mês da compra (fazem parte do número)
-     - VF + data sem a letra ("VF-2909-012"): o bot avisa que falta a letra
-       (NUNCA chuta letra/data: o número chutado pode ser de OUTRO cliente)
-   CPF:
-     - com ou sem ponto/traço/espaço; 10 dígitos (perdeu o zero da frente) vira 0 + os 10
-     - 11 dígitos que não fecham o dígito verificador: avisa que o CPF não confere            */
-var SEP = '[\\s\\-_.\\/]*';
-var RE_PED_VF = new RegExp('V\\s*F' + SEP + '(\\d{2})' + SEP + '(\\d{2})' + SEP + '([A-Z]{1,2})' + SEP + '(\\d{1,4})(?!\\d)');
-var RE_PED_SEM_VF = new RegExp('(?<![A-Z0-9])(\\d{2})[\\s\\-_.\\/]?(\\d{2})' + SEP + '([A-Z]{1,2})' + SEP + '(\\d{1,4})(?!\\d)');
-var RE_PED_SEM_LETRA = new RegExp('V\\s*F' + SEP + '(\\d{2})' + SEP + '(\\d{2})' + SEP + '(\\d{2,4})(?!\\d)');
-var RE_PED_FINAL = /(?<![A-Z0-9])([SMAVW]X?)[\s\-_.]?(\d{2,4})(?![\dA-Z])/;
-var LETRAS_OK = /^[SMAVW]X?$/;
+/* ===== IDENTIFICAÇÃO DO CLIENTE — número do pedido e CPF escritos de qualquer jeito (30/09/2026) =====
+   MESMO BLOCO em 3 lugares: logistica-bot.js · botconversa.js (Athena) · página rastrear-pedido.
+   Mudou aqui → mudar nos 3. ES5 de propósito (a página roda em celular antigo: sem lookbehind, sem const).
+   NÚMERO DO PEDIDO (formato real VF-DDMM-L000; contingência VF-DDMM-LX<HHmm>):
+     - minúscula, com/sem "VF", espaço/ponto/barra/traço ou tudo junto: "vf 2909 s012", "VF2909S012",
+       "2909-S012", "29/09 S012"; final sem zero ("S12" → S012); letra O no lugar de zero grudada em número
+     - letras S M A V W (+X da contingência); dia 01-31 e mês 01-12 — senão não é pedido
+     - sem "VF", a letra tem que vir GRUDADA no número ("29/09 S012" sim; "29/09 a 12h" não)
+   INCOMPLETO (o sistema explica o que falta — NUNCA chuta letra/data: o número chutado pode ser de outro cliente):
+     - sem_letra: "VF-2909-012" · final: só "S012" (falta dia/mês) · cpf_errado: 11 dígitos que não fecham
+   CPF: com/sem ponto/traço/espaço; 10 dígitos = perdeu o zero da frente (o índice do GAS guarda com 11) */
+var ID_SEP = '[\\s\\-_.\\/]*';
+var ID_RE_VF = new RegExp('V\\s*F' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2})' + ID_SEP + '([A-Z]{1,2})' + ID_SEP + '(\\d{1,4})(?![0-9])');
+var ID_RE_SEM_VF = /(?:^|[^A-Z0-9])(\d{2})[\/\-.]?(\d{2})[\s\-_.\/]*([SMAVW]X?)[\-_.]?(\d{1,4})(?![A-Z0-9])/;
+var ID_RE_SEM_LETRA = new RegExp('V\\s*F' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2,4})(?![0-9])');
+var ID_RE_FINAL = /(?:^|[^A-Z0-9])([SMAVW]X?)[\-_.]?(\d{2,4})(?![A-Z0-9])/;
+var ID_LETRAS = /^[SMAVW]X?$/;
+var ID_MESES = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
 
-function pad3(n) { var s = String(Number(n)); while (s.length < 3) s = '0' + s; return s; }
-function dataOk(dd, mm) { var d = Number(dd), m = Number(mm); return d >= 1 && d <= 31 && m >= 1 && m <= 12; }
-
-/* maiúscula + O→0 quando grudado em número (sem mexer em e-mail: o e-mail sai do texto ORIGINAL) */
-function prepararNumero(texto) {
+function idSoDig(s) { return String(s == null ? '' : s).replace(/\D/g, ''); }
+function idDataOk(dd, mm) { var d = Number(dd), m = Number(mm); return d >= 1 && d <= 31 && m >= 1 && m <= 12; }
+/* final do número: normal = 3 dígitos (S12 → S012); contingência (letra + X) = hora e minuto, 4 dígitos */
+function idSeq(letra, dig) {
+  var s;
+  if (/X$/.test(letra)) { s = String(dig); while (s.length < 4) s = '0' + s; return s; }
+  s = String(Number(dig)); while (s.length < 3) s = '0' + s; return s;
+}
+/* maiúscula + letra O no lugar de zero quando grudada em número. NÃO usar pra e-mail. */
+function idPrepNum(texto) {
   var t = String(texto || '').toUpperCase();
   for (var i = 0; i < 3; i++) t = t.replace(/(\d)O/g, '$10').replace(/O(\d)/g, '0$1');
   return t;
 }
-function montarPedido(dd, mm, letra, seq) { return 'VF-' + dd + mm + '-' + letra + pad3(seq); }
-
-function acharNumeroPedido(texto) {
-  var t = prepararNumero(texto), m;
-  m = t.match(RE_PED_VF);
-  if (m && dataOk(m[1], m[2]) && LETRAS_OK.test(m[3])) return montarPedido(m[1], m[2], m[3], m[4]);
-  m = t.match(RE_PED_SEM_VF);
-  if (m && dataOk(m[1], m[2]) && LETRAS_OK.test(m[3])) return montarPedido(m[1], m[2], m[3], m[4]);
+/* número do pedido normalizado ou '' */
+function idPedido(texto) {
+  var t = idPrepNum(texto), m = t.match(ID_RE_VF);
+  if (m && idDataOk(m[1], m[2]) && ID_LETRAS.test(m[3])) return 'VF-' + m[1] + m[2] + '-' + m[3] + idSeq(m[3], m[4]);
+  m = t.match(ID_RE_SEM_VF);
+  if (m && idDataOk(m[1], m[2])) return 'VF-' + m[1] + m[2] + '-' + m[3] + idSeq(m[3], m[4]);
   return '';
 }
-function cpfValido(c) {
-  c = soDigitos(c);
+function idEmail(texto) {
+  var m = String(texto || '').match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
+  return m ? m[0].toLowerCase() : '';
+}
+function idCpfValido(c) {
+  c = idSoDig(c);
   if (c.length !== 11 || /^(\d)\1{10}$/.test(c)) return false;
   var s = 0, i, r;
-  for (i = 0; i < 9; i++) s += Number(c[i]) * (10 - i);
+  for (i = 0; i < 9; i++) s += Number(c.charAt(i)) * (10 - i);
   r = (s * 10) % 11; if (r === 10) r = 0;
-  if (r !== Number(c[9])) return false;
+  if (r !== Number(c.charAt(9))) return false;
   s = 0;
-  for (i = 0; i < 10; i++) s += Number(c[i]) * (11 - i);
+  for (i = 0; i < 10; i++) s += Number(c.charAt(i)) * (11 - i);
   r = (s * 10) % 11; if (r === 10) r = 0;
-  return r === Number(c[10]);
+  return r === Number(c.charAt(10));
 }
-/* { cpf:'11 dígitos válidos' } ou { errado:'dígitos de um CPF que não confere' } ou {} */
-function analisarCPF(texto) {
-  var t = String(texto || ''), cand = [], i, d;
-  /* 1) cada pedaço sem espaço ("529.982.247-25") 2) sequências com espaço ("529 982 247 25") */
-  t.split(/\s+/).forEach(function (tok) { cand.push(soDigitos(tok)); });
-  (t.match(/\d(?:[\s.\-\/]{0,2}\d){8,12}/g) || []).forEach(function (r) { cand.push(soDigitos(r)); });
+/* { cpf: '11 dígitos válidos' } · { errado: 'dígitos de um CPF que não confere' } · {} */
+function idCpf(texto) {
+  var t = String(texto || ''), cand = [], i, d, toks = t.split(/\s+/), runs = t.match(/\d(?:[\s.\-\/]{0,2}\d){8,12}/g) || [];
+  for (i = 0; i < toks.length; i++) cand.push(idSoDig(toks[i]));
+  for (i = 0; i < runs.length; i++) cand.push(idSoDig(runs[i]));
   var errado = '';
   for (i = 0; i < cand.length; i++) {
     d = cand[i];
-    if (d.length === 11 && cpfValido(d)) return { cpf: d };
-    if (d.length === 10 && cpfValido('0' + d)) return { cpf: '0' + d };
-    if (d.length === 9 && cpfValido('00' + d)) return { cpf: '00' + d };
+    if (d.length === 11 && idCpfValido(d)) return { cpf: d };
+    if (d.length === 10 && idCpfValido('0' + d)) return { cpf: '0' + d };
     if (!errado && (d.length === 11 || d.length === 10)) errado = d;
   }
   return errado ? { errado: errado } : {};
 }
-function acharCPF(texto) { return analisarCPF(texto).cpf || ''; }
-function acharEmail(texto) {
-  var m = String(texto || '').match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
-  return m ? m[0].toLowerCase() : '';
-}
-function acharIdentificador(texto) {
-  return acharNumeroPedido(texto) || acharEmail(texto) || acharCPF(texto) || '';
-}
-/* Identificação QUASE certa — o que o cliente mandou parece pedido/CPF, mas falta ou sobra algo.
-   { tipo:'sem_letra'|'final'|'cpf_errado', valor } ou null */
-function identificacaoIncompleta(texto) {
-  var t = prepararNumero(texto), m;
-  m = t.match(RE_PED_SEM_LETRA);
-  if (m && dataOk(m[1], m[2])) return { tipo: 'sem_letra', valor: 'VF-' + m[1] + m[2] + '-' + m[3] };
-  var c = analisarCPF(texto);
-  if (c.errado) return { tipo: 'cpf_errado', valor: c.errado };
-  m = t.match(RE_PED_FINAL);
-  if (m) return { tipo: 'final', valor: m[1] + pad3(m[2]) };
-  return null;
-}
-/* dia e mês da compra: "29/09", "29-9", "29.09", "29 de setembro", "dia 29/09" */
-var MESES = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
-function acharDiaMes(texto) {
-  var t = low(texto), m = t.match(/(\d{1,2})\s*(?:\/|-|\.)\s*(\d{1,2})(?!\d)/);
-  if (m && dataOk(m[1], m[2])) return ('0' + Number(m[1])).slice(-2) + ('0' + Number(m[2])).slice(-2);
-  m = t.match(/(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)/);
-  if (m && dataOk(m[1], MESES[m[2]])) return ('0' + Number(m[1])).slice(-2) + ('0' + MESES[m[2]]).slice(-2);
-  return '';
-}
-function cpfFormatado(d) {
-  d = soDigitos(d);
+function idCpfFmt(d) {
+  d = idSoDig(d);
   return d.length === 11 ? d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6, 9) + '-' + d.slice(9) : d;
 }
+/* parece pedido/CPF mas falta ou sobra algo: { tipo:'sem_letra'|'cpf_errado'|'final', valor } ou null */
+function idIncompleto(texto) {
+  var t = idPrepNum(texto), m = t.match(ID_RE_SEM_LETRA);
+  if (m && idDataOk(m[1], m[2])) return { tipo: 'sem_letra', valor: 'VF-' + m[1] + m[2] + '-' + m[3] };
+  var c = idCpf(texto);
+  if (c.errado) return { tipo: 'cpf_errado', valor: c.errado };
+  m = t.match(ID_RE_FINAL);
+  if (m) return { tipo: 'final', valor: m[1] + idSeq(m[1], m[2]) };
+  return null;
+}
+/* { tipo:'pedido'|'email'|'cpf'|'sem_letra'|'cpf_errado'|'final'|'', valor } */
+function idAnalisar(texto) {
+  var p = idPedido(texto); if (p) return { tipo: 'pedido', valor: p };
+  var e = idEmail(texto); if (e) return { tipo: 'email', valor: e };
+  var c = idCpf(texto); if (c.cpf) return { tipo: 'cpf', valor: c.cpf };
+  return idIncompleto(texto) || { tipo: '', valor: '' };
+}
+/* dia e mês da compra ("29/09", "29-9", "29 de setembro") → 'DDMM' ou '' */
+function idDiaMes(texto) {
+  var t = String(texto || '').toLowerCase(), m = t.match(/(\d{1,2})\s*[\/\-.]\s*(\d{1,2})(?![0-9])/);
+  if (m && idDataOk(m[1], m[2])) return ('0' + Number(m[1])).slice(-2) + ('0' + Number(m[2])).slice(-2);
+  m = t.match(/(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)/);
+  if (m && idDataOk(m[1], ID_MESES[m[2]])) return ('0' + Number(m[1])).slice(-2) + ('0' + ID_MESES[m[2]]).slice(-2);
+  return '';
+}
+/* ===== fim do bloco de identificação ===== */
+
+/* nomes usados no resto do bot (mesmas funções do bloco acima) */
+function acharNumeroPedido(t) { return idPedido(t); }
+function acharEmail(t) { return idEmail(t); }
+function acharCPF(t) { return idCpf(t).cpf || ''; }
+function analisarCPF(t) { return idCpf(t); }
+function cpfValido(c) { return idCpfValido(c); }
+function cpfFormatado(d) { return idCpfFmt(d); }
+function identificacaoIncompleta(t) { return idIncompleto(t); }
+function acharDiaMes(t) { return idDiaMes(t); }
+function acharIdentificador(texto) { return idPedido(texto) || idEmail(texto) || idCpf(texto).cpf || ''; }
 
 /* Consulta: função rápida → GAS. { ok:true, pedidos:[...] } ou { ok:false } */
 async function consultar(termo) {
