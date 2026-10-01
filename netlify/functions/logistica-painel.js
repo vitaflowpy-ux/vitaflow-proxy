@@ -379,7 +379,7 @@ function montarEmail(a, tipo, txt) {
 var crypto = require('crypto');
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
 var COD = RAIZ + '/codigos';
-var LOTE_GAS = 15;                 /* itens por chamada ao Apps Script (cada um grava e espelha: ~1 s) */
+var LOTE_GAS = 8;                  /* itens por chamada ao Apps Script. Na 1ª rodada real (01/10) 15 itens passaram de 22 s e a chamada caiu 2 vezes (o Apps Script gravou, mas a rodada perdeu o registro do lote). Com 8 fica em ~10 s. */
 var ENTRADA_VALE_MS = 60 * 60000;  /* o que veio do site do Daniel / da Onlog vale 1 h */
 var TICKET_VALE_MS = 30 * 60000;
 var MAX_DIAS_PAR = 20;             /* código criado até 20 dias depois da confirmação do pedido */
