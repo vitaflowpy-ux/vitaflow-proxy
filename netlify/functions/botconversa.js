@@ -1,5 +1,10 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v81 (30/09/2026): NÚMERO DO PEDIDO E CPF ESCRITOS DE QUALQUER JEITO (pedido do Thiago: "muitos erram esses números").
+//   Bloco de identificação ÚNICO (igual no bot da logística v3 e na página de rastreio v5): "vf 2909 s012", "VF2909S012",
+//   "29/09 S012", "S12" → S012, letra O no lugar de zero, contingência VF-DDMM-AX0930; CPF com/sem ponto/traço/espaço e
+//   sem o zero da frente. Incompleto → explica o que falta (falta a letra / falta dia e mês / CPF não confere) — NUNCA chuta.
+//   Vale no rastreio (universal, estado RASTREAR, dentro do atacado), no SORTEIO e no PROTO_IDENTIFICAR. Resto = v80.
 // v80 (30/09/2026): o Apps Script às vezes segura a chamada 10-40 s. (1) Número do pedido pela função Netlify numero-pedido
 //   (Firebase direto, ~0,3 s) — antes a Athena caía no número de contingência AX; GAS vira reserva (6 s). (2) Consulta de
 //   rastreio pela função rastreio-consulta (resposta pronta no Firebase); GAS de reserva, agora com limite de 8 s. Resto = v79.
@@ -2355,18 +2360,146 @@ function ehPedidoCupomBemVindo(nMsg){
   return /(cupom de boas|cupom boas|cupom de bem|cupom de 7|meu cupom|quero o cupom|quero um cupom|pega[r]? o cupom|pega[r]? meu cupom|libera[r]? o cupom|libera[r]? meu cupom|gera[r]? o cupom|gera[r]? meu cupom|cupom de desconto de boas)/.test(t);
 }
 
-// ── Detecção de intenção de RASTREIO (CPF, nº de pedido, e-mail, palavra) ──────
-// Número de pedido VitaFlow: VF-DDMM-XNNN (ex.: VF-0806-A003). Aceita variações de espaço/traço.
-function ehNumeroPedido(msg) {
-  const t = (msg || '').toUpperCase().replace(/\s/g,'');
-  return /VF-?\d{3,4}-?[A-Z]?\d{2,4}/.test(t);
+/* ===== IDENTIFICAÇÃO DO CLIENTE — número do pedido e CPF escritos de qualquer jeito (30/09/2026) =====
+   MESMO BLOCO em 3 lugares: logistica-bot.js · botconversa.js (Athena) · página rastrear-pedido.
+   Mudou aqui → mudar nos 3. ES5 de propósito (a página roda em celular antigo: sem lookbehind, sem const).
+   NÚMERO DO PEDIDO (formato real VF-DDMM-L000; contingência VF-DDMM-LX<HHmm>):
+     - minúscula, com/sem "VF", espaço/ponto/barra/traço ou tudo junto: "vf 2909 s012", "VF2909S012",
+       "2909-S012", "29/09 S012"; final sem zero ("S12" → S012); letra O no lugar de zero grudada em número
+     - letras S M A V W (+X da contingência); dia 01-31 e mês 01-12 — senão não é pedido
+     - sem "VF", a letra tem que vir GRUDADA no número ("29/09 S012" sim; "29/09 a 12h" não)
+   INCOMPLETO (o sistema explica o que falta — NUNCA chuta letra/data: o número chutado pode ser de outro cliente):
+     - sem_letra: "VF-2909-012" · final: só "S012" (falta dia/mês) · cpf_errado: 11 dígitos que não fecham
+   CPF: com/sem ponto/traço/espaço; 10 dígitos = perdeu o zero da frente (o índice do GAS guarda com 11) */
+var ID_SEP = '[\\s\\-_.\\/]*';
+var ID_RE_VF = new RegExp('V\\s*F' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2})' + ID_SEP + '([A-Z]{1,2})' + ID_SEP + '(\\d{1,4})(?![0-9])');
+var ID_RE_SEM_VF = /(?:^|[^A-Z0-9])(\d{2})[\/\-.]?(\d{2})[\s\-_.\/]*([SMAVW]X?)[\-_.]?(\d{1,4})(?![A-Z0-9])/;
+var ID_RE_SEM_LETRA = new RegExp('V\\s*F' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2,4})(?![0-9])');
+var ID_RE_FINAL = /(?:^|[^A-Z0-9])([SMAVW]X?)[\-_.]?(\d{2,4})(?![A-Z0-9])/;
+var ID_LETRAS = /^[SMAVW]X?$/;
+var ID_MESES = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
+
+function idSoDig(s) { return String(s == null ? '' : s).replace(/\D/g, ''); }
+function idDataOk(dd, mm) { var d = Number(dd), m = Number(mm); return d >= 1 && d <= 31 && m >= 1 && m <= 12; }
+/* final do número: normal = 3 dígitos (S12 → S012); contingência (letra + X) = hora e minuto, 4 dígitos */
+function idSeq(letra, dig) {
+  var s;
+  if (/X$/.test(letra)) { s = String(dig); while (s.length < 4) s = '0' + s; return s; }
+  s = String(Number(dig)); while (s.length < 3) s = '0' + s; return s;
 }
+/* maiúscula + letra O no lugar de zero quando grudada em número. NÃO usar pra e-mail. */
+function idPrepNum(texto) {
+  var t = String(texto || '').toUpperCase();
+  for (var i = 0; i < 3; i++) t = t.replace(/(\d)O/g, '$10').replace(/O(\d)/g, '0$1');
+  return t;
+}
+/* número do pedido normalizado ou '' */
+function idPedido(texto) {
+  var t = idPrepNum(texto), m = t.match(ID_RE_VF);
+  if (m && idDataOk(m[1], m[2]) && ID_LETRAS.test(m[3])) return 'VF-' + m[1] + m[2] + '-' + m[3] + idSeq(m[3], m[4]);
+  m = t.match(ID_RE_SEM_VF);
+  if (m && idDataOk(m[1], m[2])) return 'VF-' + m[1] + m[2] + '-' + m[3] + idSeq(m[3], m[4]);
+  return '';
+}
+function idEmail(texto) {
+  var m = String(texto || '').match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
+  return m ? m[0].toLowerCase() : '';
+}
+function idCpfValido(c) {
+  c = idSoDig(c);
+  if (c.length !== 11 || /^(\d)\1{10}$/.test(c)) return false;
+  var s = 0, i, r;
+  for (i = 0; i < 9; i++) s += Number(c.charAt(i)) * (10 - i);
+  r = (s * 10) % 11; if (r === 10) r = 0;
+  if (r !== Number(c.charAt(9))) return false;
+  s = 0;
+  for (i = 0; i < 10; i++) s += Number(c.charAt(i)) * (11 - i);
+  r = (s * 10) % 11; if (r === 10) r = 0;
+  return r === Number(c.charAt(10));
+}
+/* { cpf: '11 dígitos válidos' } · { errado: 'dígitos de um CPF que não confere' } · {} */
+function idCpf(texto) {
+  var t = String(texto || ''), cand = [], i, d, toks = t.split(/\s+/), runs = t.match(/\d(?:[\s.\-\/]{0,2}\d){8,12}/g) || [];
+  for (i = 0; i < toks.length; i++) cand.push(idSoDig(toks[i]));
+  for (i = 0; i < runs.length; i++) cand.push(idSoDig(runs[i]));
+  var errado = '';
+  for (i = 0; i < cand.length; i++) {
+    d = cand[i];
+    if (d.length === 11 && idCpfValido(d)) return { cpf: d };
+    if (d.length === 10 && idCpfValido('0' + d)) return { cpf: '0' + d };
+    if (!errado && (d.length === 11 || d.length === 10)) errado = d;
+  }
+  return errado ? { errado: errado } : {};
+}
+function idCpfFmt(d) {
+  d = idSoDig(d);
+  return d.length === 11 ? d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6, 9) + '-' + d.slice(9) : d;
+}
+/* parece pedido/CPF mas falta ou sobra algo: { tipo:'sem_letra'|'cpf_errado'|'final', valor } ou null */
+function idIncompleto(texto) {
+  var t = idPrepNum(texto), m = t.match(ID_RE_SEM_LETRA);
+  if (m && idDataOk(m[1], m[2])) return { tipo: 'sem_letra', valor: 'VF-' + m[1] + m[2] + '-' + m[3] };
+  var c = idCpf(texto);
+  if (c.errado) return { tipo: 'cpf_errado', valor: c.errado };
+  m = t.match(ID_RE_FINAL);
+  if (m) return { tipo: 'final', valor: m[1] + idSeq(m[1], m[2]) };
+  return null;
+}
+/* { tipo:'pedido'|'email'|'cpf'|'sem_letra'|'cpf_errado'|'final'|'', valor } */
+function idAnalisar(texto) {
+  var p = idPedido(texto); if (p) return { tipo: 'pedido', valor: p };
+  var e = idEmail(texto); if (e) return { tipo: 'email', valor: e };
+  var c = idCpf(texto); if (c.cpf) return { tipo: 'cpf', valor: c.cpf };
+  return idIncompleto(texto) || { tipo: '', valor: '' };
+}
+/* dia e mês da compra ("29/09", "29-9", "29 de setembro") → 'DDMM' ou '' */
+function idDiaMes(texto) {
+  var t = String(texto || '').toLowerCase(), m = t.match(/(\d{1,2})\s*[\/\-.]\s*(\d{1,2})(?![0-9])/);
+  if (m && idDataOk(m[1], m[2])) return ('0' + Number(m[1])).slice(-2) + ('0' + Number(m[2])).slice(-2);
+  m = t.match(/(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)/);
+  if (m && idDataOk(m[1], ID_MESES[m[2]])) return ('0' + Number(m[1])).slice(-2) + ('0' + ID_MESES[m[2]]).slice(-2);
+  return '';
+}
+/* ===== fim do bloco de identificação ===== */
+
+// ── Detecção de intenção de RASTREIO (CPF, nº de pedido, e-mail, palavra) ──────
+// v81: usa o bloco de identificação acima. Número de pedido VitaFlow: VF-DDMM-XNNN (ex.: VF-0806-A003).
+// Palavras que podem vir junto do número/CPF sem tirar o "a mensagem é o dado" (ver _restoDaMensagem).
+const _ID_PALAVRAS_OK = ['meu','minha','o','a','e','é','cpf','pedido','numero','número','nº','n','do','da','de','aqui','segue','esta','está','ta','tá','ai','aí','vf'];
+function _restoDaMensagem(msg, tirar) {
+  let t = String(msg || '');
+  if (tirar) t = t.split(tirar).join(' ');
+  return t.toLowerCase().split(/[^a-zà-úç]+/).filter(w => w && _ID_PALAVRAS_OK.indexOf(w) < 0).join('');
+}
+// Pedido "forte": com VF sempre; sem VF ("2909-S012") só quando a mensagem é basicamente o número —
+// pra conversa comum de produto nunca virar rastreio por acaso.
+function idPedidoForte(msg) {
+  const p = idPedido(msg);
+  if (!p) return '';
+  if (/V\s*F/i.test(String(msg || ''))) return p;
+  return _restoDaMensagem(idPrepNum(msg).replace(/[\d\/\-._]+/g, ' ')).length <= 12 ? p : '';
+}
+function ehNumeroPedido(msg) {
+  if (idPedidoForte(msg)) return true;
+  const inc = idIncompleto(msg);
+  return !!(inc && inc.tipo === 'sem_letra');          // "VF-2909-012": é pedido, só falta a letra
+}
+// CPF "solto": a mensagem é basicamente o CPF (não um endereço/cadastro com vários números).
+// v81: aceita com/sem ponto/traço/espaço, sem o zero da frente e CPF que NÃO confere (pra avisar o cliente).
 function ehCPFsolto(msg) {
-  const d = (msg || '').replace(/\D/g,'');
-  // 11 dígitos e a mensagem é "majoritariamente" esse número (não um endereço com vários números)
-  if (d.length !== 11) return false;
-  const resto = (msg || '').replace(/[\d.\-\s/]/g,'').trim();
-  return resto.length <= 4; // tolera "cpf" antes do número
+  const c = idCpf(msg);
+  if (!c.cpf && !c.errado) return false;
+  return _restoDaMensagem(msg).length <= 4;
+}
+// v81: mensagem pronta quando o dado veio QUASE certo (falta a letra / falta dia e mês / CPF não confere). null = nada a dizer.
+function respostaIdIncompleto(msg, aceitaFinal) {
+  if (idPedido(msg) || idEmail(msg) || idCpf(msg).cpf) return null;
+  const inc = idIncompleto(msg);
+  if (!inc) return null;
+  if (inc.tipo === 'sem_letra') return `🔎 O número *${inc.valor}* está incompleto: falta a *letra* antes dos últimos números (ex.: VF-2909-*S*012).\n\nConfere no e-mail ou no recibo da compra e me manda de novo — ou me manda o *CPF* ou o *e-mail* da compra. 😊`;
+  if (inc.tipo === 'cpf_errado') return `🔎 O CPF *${idCpfFmt(inc.valor)}* não confere — parece ter algum número trocado ou faltando.\n\nConfere os 11 números e me manda de novo. Se preferir, me manda o *número do pedido* (ex.: VF-2909-S012) ou o *e-mail* da compra. 😊`;
+  if (inc.tipo === 'final' && aceitaFinal) return `📅 Achei o final do número do pedido (*${inc.valor}*), mas falta o *dia e o mês* da compra — eles fazem parte do número (ex.: VF-*2909*-S012 é uma compra de 29/09).\n\nMe manda assim: *29/09 ${inc.valor}* (dia/mês da compra + o final). Se preferir, me manda o *CPF* ou o *e-mail* da compra. 😊`;
+  return null;
 }
 // Detecta quando o cliente colou o CÓDIGO DA TRANSPORTADORA (Correios/Loggi/Jadlog/J&T)
 // em vez do número do pedido VitaFlow. Aí a gente avisa pra ele usar o dado certo.
@@ -2393,16 +2526,18 @@ function ehIntencaoRastreio(nMsg, msgOriginal) {
 // "VF-1409-S011 sobre esse pedido?" -> "VF-1409-S011". Sem nada disso, devolve a frase inteira.
 function extrairTermoRastreio(msg) {
   const raw = String(msg || '');
-  const vf = raw.toUpperCase().replace(/\s/g,'').match(/VF-?\d{3,4}-?[A-Z]?\d{2,4}/);
-  if (vf) return vf[0];
-  const em = raw.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
-  if (em) return em[0].trim();
-  const dig = raw.replace(/\D/g,'');
-  if (dig.length === 11 && ehCPFsolto(raw)) return dig;
+  const p = idPedido(raw);                 // v81: já normalizado (VF-DDMM-L000)
+  if (p) return p;
+  const em = idEmail(raw);
+  if (em) return em;
+  const c = idCpf(raw);                    // v81: com/sem ponto, sem o zero da frente
+  if (c.cpf) return c.cpf;
   return raw.trim();
 }
 // Executa o rastreio direto (mesma lógica do estado RASTREAR), a partir de qualquer estado.
 async function fazerRastreio(termo, respond) {
+  const _inc = respostaIdIncompleto(termo, true);   // v81: falta a letra / dia e mês / CPF não confere
+  if (_inc) return respond(_inc + `\n\n_Ou digite *menu* para voltar._`);
   const pedidos = await consultarStatusGAS((termo || '').trim());
   if (!pedidos.length) {
     // Cliente colou o código da TRANSPORTADORA em vez do número do pedido VitaFlow → orienta.
@@ -4499,7 +4634,9 @@ exports.handler = async (event) => {
     // ── SORTEIO ── "quantos números eu tenho", "sorteio", "meus números" ──
     if (!emCheckout && state !== 'ADM' && !['AGUARDAR_COMPROVANTE','COLETA_DADOS','PROTOCOLO'].includes(state) && ehIntencaoSorteio(n)) {
       if (ehCPFsolto(mensagem)) {
-        const _s = await consultarSorteioGAS(mensagem);
+        const _cpfS = idCpf(mensagem);
+        if (!_cpfS.cpf) { await saveSession(sid, { ...session, state:'SORTEIO' }); return respond(respostaIdIncompleto(mensagem, false)); }
+        const _s = await consultarSorteioGAS(_cpfS.cpf);
         await saveSession(sid, { ...session, state:'MENU' });
         return respond(_s ? msgMeusNumeros(_s)
           : `😕 Não consegui consultar seus números agora. Tenta de novo em instantes, ou veja em ${SORTEIO.link}`);
@@ -4510,8 +4647,10 @@ exports.handler = async (event) => {
 
     // ── SORTEIO: cliente já está no estado e mandou o CPF ──
     if (state === 'SORTEIO') {
-      if (ehCPFsolto(mensagem)) {
-        const _s = await consultarSorteioGAS(mensagem);
+      const _cpfS2 = idCpf(mensagem);                       // v81: no SORTEIO o cliente está mandando o CPF — vale em qualquer formato
+      if (!_cpfS2.cpf && _cpfS2.errado) return respond(respostaIdIncompleto(mensagem, false) + `\n\n_Digite *menu* para voltar._`);
+      if (_cpfS2.cpf) {
+        const _s = await consultarSorteioGAS(_cpfS2.cpf);
         await saveSession(sid, { ...session, state:'MENU' });
         return respond(_s ? msgMeusNumeros(_s)
           : `😕 Não consegui consultar seus números agora. Tenta de novo em instantes, ou veja em ${SORTEIO.link}`);
@@ -4554,6 +4693,8 @@ exports.handler = async (event) => {
       // Se só pediu "rastrear" sem informar o dado, leva ao estado RASTREAR pedindo o dado.
       if (!ehNumeroPedido(mensagem) && !ehCPFsolto(mensagem) && !mensagem.includes('@')) {
         await saveSession(sid, { ...session, state:'RASTREAR' });
+        const _incU = respostaIdIncompleto(mensagem, true);   // v81: "cadê meu pedido S012" → pede dia e mês
+        if (_incU) return respond(_incU + `\n\n_Ou digite *menu* para voltar._`);
         return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido*, seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_Digite *menu* para voltar._`);
       }
       // Já mandou o dado (CPF/pedido/email) → rastreia direto, sem perder o estado de compra.
@@ -4825,7 +4966,9 @@ exports.handler = async (event) => {
     }
 
     if (state === 'RASTREAR') {
-      const termo = (mensagem || '').trim();
+      const _incR = respostaIdIncompleto(mensagem, true);   // v81: falta a letra / dia e mês / CPF não confere
+      if (_incR) return respond(_incR + `\n\n_Ou digite *menu* para voltar._`);
+      const termo = extrairTermoRastreio(mensagem);         // v81: número/CPF normalizados (o resto vai como veio)
       const alnum = termo.replace(/[^a-zA-Z0-9@]/g, '');
       if (alnum.length < 2) {
         return respond(`Hmm, isso não parece um número de pedido, CPF ou e-mail. 🤔\n\nMe manda o *número do pedido*, o *CPF* (11 dígitos) ou o *e-mail* da compra.\n\n_Ou digite *menu* para voltar._`);
@@ -5225,10 +5368,13 @@ exports.handler = async (event) => {
       const s = norm(mensagem);
       if (/^(menu|inicio|início|voltar|cancelar)$/.test(s)) { await saveSession(sid, { ...session, state:'MENU' }); return respond(buildMenuPrincipal()); }
       const ehEmail = (mensagem||'').indexOf('@') >= 0;
-      const cpf = (mensagem||'').replace(/\D/g,'');   // aceita CPF com/sem ponto/traço/espaço
+      const _cpfP = idCpf(mensagem);                     // v81: com/sem ponto/traço/espaço, sem o zero da frente
       let termo = null;
-      if (ehEmail) termo = (mensagem||'').trim();
-      else if (cpf.length === 11) termo = cpf;
+      if (ehEmail) termo = idEmail(mensagem) || (mensagem||'').trim();
+      else if (_cpfP.cpf) termo = _cpfP.cpf;
+      if (!termo && _cpfP.errado) {
+        return respond(`🔎 O CPF *${idCpfFmt(_cpfP.errado)}* não confere — parece ter algum número trocado ou faltando. Confere os 11 números e me manda de novo, ou me manda o *e-mail* da compra. 😊`);
+      }
       if (!termo) {
         return respond(`Não reconheci como CPF nem e-mail. 😊 Me manda os *11 números do CPF* (com ou sem pontos) ou o *e-mail* da compra.`);
       }
