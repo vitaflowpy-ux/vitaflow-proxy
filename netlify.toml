@@ -6,3 +6,9 @@
   schedule = "*/10 * * * *"
 [functions."botconversa"]
   timeout = 26
+[functions."logistica-painel"]
+  timeout = 26
+[functions."logistica-atrasos"]
+  schedule = "0 13 * * 1-5"
+[functions."logistica-bot"]
+  timeout = 26
