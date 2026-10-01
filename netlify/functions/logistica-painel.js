@@ -974,8 +974,29 @@ function coletorDaniel(ticket) {
 function coletorOnlog(ticket) {
   var FN = 'https://vitaflow-proxy.netlify.app/.netlify/functions/logistica-painel';
   var S = window._vfOnlog = { estado: 'iniciando', total: 0, feitos: 0, com_objeto: 0, objetos: 0, erros: 0, msg: '' };
-  function espera(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  /* A aba da Onlog costuma ficar em 2º plano: lá o Chrome segura o setTimeout da página (até 1 por minuto). O relógio de um
+     Worker não é segurado. Sem Worker (bloqueado), cai no setTimeout normal. */
+  var relogio = null, esperas = {}, nEsp = 0;
+  try {
+    relogio = new Worker(URL.createObjectURL(new Blob(['onmessage=function(e){var d=e.data;setTimeout(function(){postMessage(d.id)},d.ms)}'], { type: 'text/javascript' })));
+    relogio.onmessage = function (e) { var f = esperas[e.data]; if (f) { delete esperas[e.data]; f(); } };
+    relogio.onerror = function () { relogio = null; Object.keys(esperas).forEach(function (k) { var f = esperas[k]; delete esperas[k]; f(); }); };
+  } catch (e) { relogio = null; }
+  function espera(ms) {
+    return new Promise(function (r) {
+      if (!relogio) { setTimeout(r, ms); return; }
+      var id = ++nEsp; esperas[id] = r; relogio.postMessage({ id: id, ms: ms });
+    });
+  }
   async function ate(cond, ms) { var t0 = Date.now(); while (Date.now() - t0 < ms) { if (cond()) return true; await espera(300); } return false; }
+  /* cada consulta é UMA chamada da página (jQuery): conta as que terminaram, pra resposta atrasada nunca cair no CPF seguinte */
+  var enviadas = 0, terminadas = 0;
+  if (window.jQuery) { window.jQuery(document).ajaxSend(function () { enviadas++; }).ajaxComplete(function () { terminadas++; }); }
+  /* aviso "Nenhum objeto encontrado" (janelinha com OK): fecha */
+  function fecharAviso() {
+    var b = document.querySelector('.swal2-container .swal2-confirm');
+    if (b && b.offsetWidth) b.click();
+  }
   function token() { var e = document.querySelector('[name=cf-turnstile-response]'); return !!(e && e.value); }
   function linhas(e) { return String((e && e.innerText) || '').split('\n').map(function (x) { return x.replace(/\s+/g, ' ').trim(); }).filter(Boolean); }
   var DATA = /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/;
@@ -1011,16 +1032,26 @@ function coletorOnlog(ticket) {
     var campo = document.querySelector('#txtR1RastreioEncomendas'), div = document.getElementById('divRetornoRastreio'), btn = document.getElementById('btnConsultar');
     var aba = document.querySelector('.btnTipo[data-tipo=cpf]');
     if (!campo || !div || !btn || !aba || !window.jQuery) return { erro: 'a página da Onlog mudou' };
-    await fecharModal();
+    await fecharModal(); fecharAviso();
+    /* consulta anterior ainda sem resposta: espera ela terminar antes de começar outra */
+    if (!(await ate(function () { return terminadas >= enviadas; }, 30000))) return { erro: 'a Onlog não respondeu a consulta anterior' };
     if (!(await ate(token, 30000))) return { erro: 'verificacao', parar: true };   /* o Cloudflare não liberou sozinho → PARA (ninguém clica nele) */
     aba.click(); await espera(200);
     div.innerHTML = '';
     var fmt = cpf.slice(0, 3) + '.' + cpf.slice(3, 6) + '.' + cpf.slice(6, 9) + '-' + cpf.slice(9);
     window.jQuery(campo).val(fmt).trigger('input').trigger('change');
+    var env0 = enviadas, ter0 = terminadas;
     btn.click();
     var semToken = false;
-    await ate(function () { if (!token()) semToken = true; return div.children.length > 0 || (semToken && token()); }, 15000);
-    if (!div.children.length) await espera(1500);
+    /* terminou = a chamada desta consulta voltou (ou, se a página não usar o jQuery pra isso, o Cloudflare renovou a senha) */
+    var voltou = await ate(function () {
+      if (!token()) semToken = true;
+      if (enviadas > env0) return terminadas > ter0 && terminadas >= enviadas;
+      return div.children.length > 0 || (semToken && token());
+    }, 20000);
+    if (!voltou) return { erro: 'a Onlog não respondeu' };
+    await espera(600);
+    fecharAviso();
     if (!div.children.length) return { objetos: [] };
     var trs = [].slice.call(div.querySelectorAll('tbody tr'));
     if (!trs.length) { var u = lerDetalhe(div); return { objetos: (u.aa || u.real) ? [u] : [] }; }
