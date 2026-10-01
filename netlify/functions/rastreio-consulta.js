@@ -1,9 +1,14 @@
 'use strict';
 /* =============================================================================
-   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v3  ·  01/10/2026
+   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v4  ·  01/10/2026
    Netlify Function no repo vitaflow-proxy → netlify/functions/rastreio-consulta.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/rastreio-consulta
 
+   v4 (01/10/2026): COLUNA ORIGEM + LINHA D (pacote). A coluna nova ORIGEM da planilha (MS/SP/RJ/PY — gravada pela rodada
+   de códigos, a partir do site do Daniel, ou à mão), quando preenchida, MANDA na origem do mapa. A linha D criada pelo
+   Compras traz PEDIDO_ORIGINAL: a regra do produto do Daniel lê o vitaflow_compras do pedido original. Igual ao GAS v53.
+   A busca pelo NÚMERO do pedido devolve também os PACOTES dele (linhas D com PEDIDO_ORIGINAL = o número).
+   ORIGEM da fornecedora VITAFLOW: SP (Campinas) — antes RJ. Nunca sai nada do RJ (Thiago, 01/10).
    v3 (01/10/2026): PRAZOS NOVOS — tabela por ESTADO aprovada em 29/09 (PRAZOS_ENTREGA.estados), postagem varejo 3 dias
    úteis e atacado 6. A MESMA tabela está no GAS v52 (o consultar_status de reserva). O resto do código = v2.
    v2 (01/10/2026): CALCULA A RESPOSTA AQUI, lendo o Firebase direto. Na v1 ela só entregava a resposta
@@ -50,21 +55,23 @@ var MAX_PEDIDOS = 60;   /* mesmo teto do índice no GAS */
 function resp(obj) { return { statusCode: 200, headers: CORS, body: JSON.stringify(obj) }; }
 function usarGas(motivo) { return resp({ success: false, usar_gas: true, motivo: motivo }); }
 
-function fbUrl(caminho) {
-  return FB_BASE + '/' + caminho + '.json' + (FB_SECRET ? '?auth=' + encodeURIComponent(FB_SECRET) : '');
+function fbUrl(caminho, query) {
+  var u = FB_BASE + '/' + caminho + '.json' + (FB_SECRET ? '?auth=' + encodeURIComponent(FB_SECRET) : '');
+  if (query) u += (u.indexOf('?') >= 0 ? '&' : '?') + query;
+  return u;
 }
 /* Firebase GET. Erro de rede/HTTP → lança (quem chama decide); ausente → null */
-async function fbGet(caminho) {
+async function fbGet(caminho, query) {
   var ctrl = new AbortController();
   var t = setTimeout(function () { ctrl.abort(); }, 6000);
   try {
-    var r = await fetch(fbUrl(caminho), { signal: ctrl.signal });
+    var r = await fetch(fbUrl(caminho, typeof query === 'string' ? query : ''), { signal: ctrl.signal });
     if (!r.ok) throw new Error('firebase ' + r.status + ' ' + caminho);
     return await r.json();
   } finally { clearTimeout(t); }
 }
 /* mesmo, mas erro vira null (dados acessórios: histórico, eventos, compras, cidade) */
-async function fbGetOu(caminho) { try { return await fbGet(caminho); } catch (e) { return null; } }
+async function fbGetOu(caminho, query) { try { return await fbGet(caminho, query); } catch (e) { return null; } }
 
 /* cache em memória da função (instância quente) — tabelas do Daniel, como o CacheService do GAS */
 var _mem = {};
@@ -180,7 +187,7 @@ function _origemEnvio(pedido, fornTxt) {
     if (/\bSP\b/.test(trechoD)) return 'SP';
     return 'DANIEL';
   }
-  if (f && f.replace(/[^A-Z]/g, '').indexOf('VITAFLOW') === 0) return 'RJ';
+  if (f && f.replace(/[^A-Z]/g, '').indexOf('VITAFLOW') === 0) return 'SP';   /* v4 (Thiago, 01/10): fornecedora VitaFlow sai de Campinas/SP — nunca do RJ */
   return 'SP';
 }
 function _danNomeCompatGAS(a, b) {
@@ -235,7 +242,7 @@ async function _origemDaniel(pedido, nome, codigo, comp) {
 }
 
 /* ---- montagem (= _rastBaseDaLinha) ---- */
-function _rastBaseDaLinha(linhaS, colTranspS, colRastS, colFornS) {
+function _rastBaseDaLinha(linhaS, colTranspS, colRastS, colFornS, colExtraS) {
   var statusCel = String(linhaS[5] || '').trim();
   var transpCel = (colTranspS >= 0) ? String(linhaS[colTranspS] || '').trim() : '';
   var rastCel   = (colRastS >= 0) ? String(linhaS[colRastS] || '').trim() : '';
@@ -253,7 +260,10 @@ function _rastBaseDaLinha(linhaS, colTranspS, colRastS, colFornS) {
            codigo: rastPub, link_transp: rastPub ? _linkRastreioPub(transpCel) : '',
            data: _dataConf, estado: _estadoS, cidade: _cidadeDoEndereco(linhaS[8], _estadoS),
            nome: String(linhaS[1] || '').trim(), produtos: String(linhaS[4] || '').trim(),
-           _forn: (colFornS >= 0) ? String(linhaS[colFornS] || '') : '', _rast: rastCel, _emRota: _emRota };
+           _forn: (colFornS >= 0) ? String(linhaS[colFornS] || '') : '', _rast: rastCel, _emRota: _emRota,
+           /* v4: coluna ORIGEM (manda na origem) e PEDIDO_ORIGINAL (linha D = pacote de outro pedido) */
+           _orig: (colExtraS && colExtraS.orig >= 0) ? String(linhaS[colExtraS.orig] || '').trim().toUpperCase() : '',
+           _pai: (colExtraS && colExtraS.pai >= 0) ? String(linhaS[colExtraS.pai] || '').trim() : '' };
 }
 
 /* ---- = _rastreioEnriquecer (com os dados já lidos: evo e comp) ---- */
@@ -279,13 +289,14 @@ async function _rastreioEnriquecer(rr, fornTxt, rastCel, emRota, evo, comp) {
     var ordemEx = _ETAPA_ORDEM.hasOwnProperty(exU) ? _ETAPA_ORDEM[exU] : -1;
 
     rr.origem = _origemEnvio(rr.pedido, fornTxt);
-    if (rr.origem === 'DANIEL') rr.origem = await _origemDaniel(rr.pedido, rr.nome, rastCel, comp);
+    if (rr.origem === 'DANIEL') rr.origem = await _origemDaniel(rr._pai || rr.pedido, rr.nome, rastCel, comp);
     if (rr.cidade && rr.estado) {
       var gC = await _geoCidade(rr.cidade, rr.estado);
       if (gC) rr.destino = { cidade: rr.cidade, uf: rr.estado, lat: gC.lat, lon: gC.lon };
     }
     rr.atacado = /VF-\d{4}-W/i.test(String(rr.pedido)) || _semAcentoUp(fornTxt).indexOf('CAMILA') >= 0;
     if (rr.atacado) rr.origem = 'PY';
+    if (rr._orig === 'MS' || rr._orig === 'SP' || rr._orig === 'RJ' || rr._orig === 'PY') rr.origem = rr._orig;   /* v4: coluna ORIGEM manda */
 
     var tConf = 0, tPostHist = 0;
     (rr.historico || []).forEach(function (h) {
@@ -328,7 +339,7 @@ async function _rastCompletar(resultados) {
     var lidos = await Promise.all([
       fbGetOu('vitaflow_historico_status/' + k),
       fbGetOu('vitaflow_sync/rastreio_eventos/' + k),
-      precisaComp ? fbGetOu('vitaflow_compras/' + k) : Promise.resolve(null)
+      precisaComp ? fbGetOu('vitaflow_compras/' + _histKey(rr._pai || rr.pedido)) : Promise.resolve(null)
     ]);
     var objH = lidos[0], hist = [];
     if (objH && typeof objH === 'object') {
@@ -339,7 +350,7 @@ async function _rastCompletar(resultados) {
     }
     rr.historico = hist;
     await _rastreioEnriquecer(rr, rr._forn, rr._rast, rr._emRota, lidos[1], lidos[2]);
-    delete rr._forn; delete rr._rast; delete rr._emRota;
+    delete rr._forn; delete rr._rast; delete rr._emRota; delete rr._orig; delete rr._pai;
   }));
   return resultados;
 }
@@ -356,7 +367,23 @@ async function _linhasDoEspelho(termoRaw) {
     else {
       var kPed = _histKey(termoRaw.toUpperCase().replace(/\s+/g, ''));
       var rowP = kPed ? await fbGet('vitaflow_pedidos/' + kPed) : null;
-      if (rowP && rowP.length) { chIdx = {}; chIdx[kPed] = true; }
+      if (rowP && rowP.length) {
+        chIdx = {}; chIdx[kPed] = true;
+        /* v4: os PACOTES do pedido (linhas D do mesmo dia com PEDIDO_ORIGINAL = este número) entram junto.
+           Aqui só junta as candidatas (célula igual ao número); quem decide é o laço do handler, pela coluna certa. */
+        var mDia = String(rowP[0] || '').toUpperCase().match(/^(VF-\d{4}-)/);
+        if (mDia) {
+          var ds = await fbGetOu('vitaflow_pedidos', 'orderBy=' + encodeURIComponent('"$key"') + '&startAt=' + encodeURIComponent('"' + mDia[1] + 'D"') + '&endAt=' + encodeURIComponent('"' + mDia[1] + 'D\uf8ff"'));
+          var alvo = _normPed(rowP[0]);
+          if (ds && typeof ds === 'object') {
+            Object.keys(ds).forEach(function (kd) {
+              var rd = ds[kd];
+              if (!rd || !rd.length) return;
+              for (var c = 1; c < rd.length; c++) { if (rd[c] && _normPed(rd[c]) === alvo) { chIdx[kd] = true; break; } }
+            });
+          }
+        }
+      }
     }
     var ks = (chIdx && typeof chIdx === 'object') ? Object.keys(chIdx) : [];
     if (ks.length && ks.length <= MAX_PEDIDOS) {
@@ -401,6 +428,7 @@ exports.handler = async function (event) {
     var colTranspS = hdS.indexOf('TRANSPORTADORA');
     var colRastS = hdS.indexOf('CODIGO_RASTREIO'); if (colRastS < 0) colRastS = hdS.indexOf('CODIGO RASTREIO');
     var colFornS = hdS.indexOf('COMPRADO_FORNECEDORES');
+    var colExtraS = { orig: hdS.indexOf('ORIGEM'), pai: hdS.indexOf('PEDIDO_ORIGINAL') };   /* v4 */
     var termoDig = _soDig(termoRaw), termoEmail = _norm(termoRaw), termoPed = _normPed(termoRaw);
     var ehEmail = termoRaw.indexOf('@') !== -1, ehCpf = termoDig.length === 11;
     var resultados = [];
@@ -419,9 +447,11 @@ exports.handler = async function (event) {
         bate = (pedidoCel === termoPed) || (pedidoCel.indexOf(termoPed) !== -1 && termoPed.length >= 2);
         porNumero = true;
       }
+      /* v4: pacote (linha D) do pedido procurado — PEDIDO_ORIGINAL igual ao número digitado */
+      if (!bate && !ehEmail && !ehCpf && termoPed && colExtraS.pai >= 0 && _normPed(linhaS[colExtraS.pai]) === termoPed) { bate = true; porNumero = true; }
       if (!bate) continue;
       if (!porNumero && _rastNaoPagou(statusCel, obsAband)) continue;   /* por CPF/e-mail só pedido PAGO */
-      resultados.push(_rastBaseDaLinha(linhaS, colTranspS, colRastS, colFornS));
+      resultados.push(_rastBaseDaLinha(linhaS, colTranspS, colRastS, colFornS, colExtraS));
     }
     await _rastCompletar(resultados);
     /* ordem: mais antigo primeiro (data e depois o número), como a v1 */
@@ -441,7 +471,7 @@ exports.handler = async function (event) {
 /* v3: as mesmas peças usadas por outras funções do site (logistica-painel / logistica-atrasos), pra que o prazo
    do painel e do e-mail de atraso seja EXATAMENTE o da página de rastreio, da Athena e do bot. */
 exports.lib = { fbGet: fbGet, fbGetOu: fbGetOu, histKey: _histKey, semAcentoUp: _semAcentoUp, naoPagou: _rastNaoPagou,
-  baseDaLinha: _rastBaseDaLinha, enriquecer: _rastreioEnriquecer, origemEnvio: _origemEnvio, linkTransp: _linkRastreioPub,
+  baseDaLinha: _rastBaseDaLinha, enriquecer: _rastreioEnriquecer, origemEnvio: _origemEnvio, origemDaniel: _origemDaniel, linkTransp: _linkRastreioPub,
   duEntre: _duEntre, somaDU: _somaDU, ddmm: _ddmm, diaBR: _diaBR, diaUtilBR: _diaUtilBR,
   PRAZOS_ENTREGA: PRAZOS_ENTREGA, UF_REGIAO: _UF_REGIAO, ETAPA_ORDEM: _ETAPA_ORDEM };
 

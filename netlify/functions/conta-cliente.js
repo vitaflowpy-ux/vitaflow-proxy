@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
    conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v1  ·  01/10/2026
+   v2 (01/10/2026): PACOTES AUTOMÁTICOS. A linha D criada pelo Compras (GAS v53) traz a coluna PEDIDO_ORIGINAL e o
+       fornecedor do pacote: (1) a linha D é ligada ao pedido pelo PEDIDO_ORIGINAL (sem adivinhar por nome/dia);
+       (2) cada envio cuja linha tem UM fornecedor só na coluna COMPRADO_FORNECEDORES fica com os itens daquele
+       fornecedor — o cliente vê o que vai em cada pacote antes mesmo de existir código. As linhas D antigas (feitas à
+       mão, sem PEDIDO_ORIGINAL) continuam pelas regras da v1.
    Netlify Function no repo vitaflow-proxy → netlify/functions/conta-cliente.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/conta-cliente   (POST JSON { acao, ... })
 
@@ -53,7 +58,7 @@
 var crypto = require('crypto');
 var R = require('./rastreio-consulta.js').lib;
 
-var VERSAO = 'v1';
+var VERSAO = 'v2';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_contas';
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
@@ -306,7 +311,8 @@ function indices(hdr) {
   var rast = u.indexOf('CODIGO_RASTREIO'); if (rast < 0) rast = u.indexOf('CODIGO RASTREIO');
   return { ped: i('PEDIDO', 0), nome: i('NOME', 1), email: i('EMAIL', 2), cpf: i('CPF', 3), prod: i('PRODUTOS', 4), status: i('STATUS', 5),
     data: i('DATA', 7), end: i('ENDERECO', 8), tel: i('TELEFONE', 9), valor: i('VALOR', 10), metodo: i('METODO_PAGAMENTO', 11),
-    transp: u.indexOf('TRANSPORTADORA'), rast: rast, forn: u.indexOf('COMPRADO_FORNECEDORES'), onlog: u.indexOf('CODIGO_ONLOG'), _hdr: u };
+    transp: u.indexOf('TRANSPORTADORA'), rast: rast, forn: u.indexOf('COMPRADO_FORNECEDORES'), onlog: u.indexOf('CODIGO_ONLOG'),
+    pai: u.indexOf('PEDIDO_ORIGINAL'), _hdr: u };
 }
 function cel(linha, i) { return (i >= 0 && linha) ? String(linha[i] == null ? '' : linha[i]).trim() : ''; }
 async function linhasDoIndice(no, chave) {
@@ -377,7 +383,10 @@ async function rastrearLinha(linha, I, herdaUF) {
   await R.enriquecer(rr, rr._forn, rr._rast, rr._emRota, lidos[1], null);
   rr._cod = normCod(rr._rast);
   rr._onlog = normCod(cel(linha, I.onlog));
-  delete rr._forn; delete rr._emRota;
+  /* v2: linha com UM fornecedor só ("Fornecedor: 2x A, 1x B") → o envio dessa linha é daquele fornecedor */
+  var lsF = String(rr._forn || '').split(/\n| \| /).map(function (x) { return x.trim(); }).filter(Boolean);
+  rr._famLinha = (lsF.length === 1 && lsF[0].indexOf(':') > 0) ? familiaForn(lsF[0].split(':')[0]) : '';
+  delete rr._forn; delete rr._emRota; delete rr._orig; delete rr._pai;
   return rr;
 }
 /* o que o cliente vê de um envio */
@@ -419,6 +428,9 @@ function casarD(dLinha, I, cands, conta) {
   var em = normEmail(cel(dLinha, I.email)), cp = cpf11(cel(dLinha, I.cpf));
   if (em && em !== conta.email) return null;                      /* D com e-mail de outra pessoa */
   if (cp && cp.length === 11 && conta.cpfs.indexOf(cp) < 0) return null;   /* D com CPF de outra pessoa */
+  /* v2: linha D automática → o dono é o PEDIDO_ORIGINAL, e só ele (se não for deste cliente, a linha fica de fora) */
+  var pai = cel(dLinha, I.pai).toUpperCase();
+  if (pai) { for (var q = 0; q < cands.length; q++) { if (String(cands[q].pedido).trim().toUpperCase() === pai) return cands[q]; } return null; }
   var nomeD = up(cel(dLinha, I.nome)), dSeq = seqDoNumero(cel(dLinha, I.ped));
   var melhor = null, nota = -1;
   cands.forEach(function (c) {
@@ -527,7 +539,9 @@ async function montarConta(u, agora) {
     g.linhasEnvio = [];
     ordemPeds.forEach(function (x) {
       g.linhasEnvio.push({ linha: x.linha, orig: x, d: false });
-      (dsDe[x.k] || []).forEach(function (dl) { g.linhasEnvio.push({ linha: dl, orig: x, d: true }); });
+      /* v2: pacotes na ordem do número (D060, D061, D160…) — a mesma numeração do e-mail "seu pedido vai em N pacotes" */
+      (dsDe[x.k] || []).slice().sort(function (a, b) { var pa = cel(a, I.ped), pb = cel(b, I.ped); return pa < pb ? -1 : (pa > pb ? 1 : 0); })
+        .forEach(function (dl) { g.linhasEnvio.push({ linha: dl, orig: x, d: true }); });
     });
   });
   /* rastreia todas as linhas de envio em paralelo */
@@ -582,6 +596,7 @@ async function montarConta(u, agora) {
     /* item → pacote(s), SÓ quando é certo:
          · 1 envio só, ou 1 fornecedor só → todos os envios são dele;
          · código do envio = campo "rastreio" do fornecedor no Compras;
+         · (v2) a linha do envio tem UM fornecedor só na coluna COMPRADO_FORNECEDORES (pacote criado pelo Compras);
          · código na planilha de rastreios do Daniel → Daniel;
          · linha com CODIGO_ONLOG → Geovanna/Respect (o que estiver no pedido; se tiver as duas, não decide);
          · código = etiqueta EnvioEcom → VitaFlow.
@@ -602,6 +617,7 @@ async function montarConta(u, agora) {
       envios.forEach(function (rr, j) {
         var fam = '';
         if (rr._cod && codForn[rr._cod]) fam = codForn[rr._cod];
+        else if (rr._famLinha) fam = rr._famLinha;                       /* v2: fornecedor único da linha (pacote do Compras) */
         else if (rr._cod && danCods[rr._cod]) fam = 'DANIEL';
         else if (rr._onlog && !geoEresp) fam = forns.GEOVANNA ? 'GEOVANNA' : (forns.RESPECT ? 'RESPECT' : '');
         else if (rr._cod && eeCods[rr._cod]) fam = 'VITAFLOW';

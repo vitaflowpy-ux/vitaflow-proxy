@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   logistica-atrasos.js — E-MAIL AUTOMÁTICO DE ATRASO NA POSTAGEM (VitaFlow)  ·  v1  ·  01/10/2026
+   logistica-atrasos.js — E-MAIL AUTOMÁTICO DE ATRASO NA POSTAGEM (VitaFlow)  ·  v2  ·  01/10/2026
+   v2 (01/10/2026): PACOTES. (1) O pedido dividido em pacotes (linhas D com PEDIDO_ORIGINAL) recebe UM e-mail de atraso por
+       pedido: o contador fica na chave do pedido ORIGINAL (k_email da logistica-painel v3) e o texto fala no número original.
+       (2) Todo dia útil, antes do e-mail de atraso, manda os e-mails "seu pedido vai em N pacotes" que ficaram esperando a
+       origem do pacote (logistica-painel v3 → enviarPacotesPendentes; depois de 20 h manda sem a origem). Isso roda mesmo
+       com o e-mail de atraso desligado (o e-mail de pacotes tem a chave própria: email_pacotes_modo).
    Netlify Function AGENDADA no repo vitaflow-proxy → netlify/functions/logistica-atrasos.js
    Agenda no netlify.toml: [functions."logistica-atrasos"] schedule = "0 13 * * 1-5"  (10h de Brasília, seg a sex)
    (função agendada não abre por URL — o teste manual é o botão "Enviar e-mail de teste" no painel)
@@ -46,10 +51,13 @@ async function rodar(agora) {
   agora = agora || Date.now();
   if (!FB_SECRET) return { ok: false, erro: 'sem FIREBASE_SECRET' };
   if (!R.diaUtilBR(agora)) return { ok: true, pulou: 'dia não útil' };
+  /* v2: e-mails de pacotes que ficaram esperando a origem (falha aqui não para o e-mail de atraso) */
+  var pacotes = null;
+  try { pacotes = await P.enviarPacotesPendentes(agora); } catch (eP) { pacotes = { erro: String(eP && eP.message || eP) }; }
   var base = await P.lerBase(true);
   var cfg = Object.assign({}, P.EMAIL_CFG_PADRAO, base.cfg || {});
   var modo = cfg.email_atraso_modo || 'desligado';
-  if (modo === 'desligado') return { ok: true, modo: modo };
+  if (modo === 'desligado') return { ok: true, modo: modo, pacotes: pacotes };
   var lista = await P.calcularAtrasos(base, P.montarPedidos(base), agora);
   var fila = [];
   lista.forEach(function (a) { var tipo = P.decidirEnvio(a, cfg, agora); if (tipo) fila.push({ a: a, tipo: tipo }); });
@@ -76,8 +84,9 @@ async function rodar(agora) {
           log.enviados++;
           var envios = {}; envios[agora + j] = x.tipo;
           try {
-            await fbPatch(P.RAIZ + '/email_atraso/' + x.a.k, { n: (x.a.emails || 0) + 1, ultimo: agora, pedido: x.a.pedido });
-            await fbPatch(P.RAIZ + '/email_atraso/' + x.a.k + '/envios', envios);
+            var kE = x.a.k_email || x.a.k;   /* v2: pacote (linha D) conta no pedido original */
+            await fbPatch(P.RAIZ + '/email_atraso/' + kE, { n: (x.a.emails || 0) + 1, ultimo: agora, pedido: x.a.pedido_email || x.a.pedido });
+            await fbPatch(P.RAIZ + '/email_atraso/' + kE + '/envios', envios);
           } catch (eG) { log.erros.push(x.a.pedido + ': enviado, mas não gravou (' + eG.message + ')'); }
         } else { log.falhas++; if (log.erros.length < 10) log.erros.push(x.a.pedido + ': ' + rs[j].erro); }
       }
@@ -88,7 +97,7 @@ async function rodar(agora) {
   if (log.falhas) {   /* Telegram só quando falha (o resumo do dia fica no log, visível no painel) */
     await telegram('⚠️ E-MAIL DE ATRASO (' + modo + '): ' + log.falhas + ' falha(s) de ' + log.elegiveis + '\n' + log.erros.slice(0, 3).join('\n'));
   }
-  return { ok: true, log: log };
+  return { ok: true, log: log, pacotes: pacotes };
 }
 
 exports.handler = async function () {
