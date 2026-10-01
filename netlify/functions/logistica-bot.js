@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v3  ·  30/09/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v4  ·  30/09/2026
+   v4: se NENHUMA mensagem do bot foi entregue (Z-API recusou/fora do ar), a conversa VOLTA ao ponto em que estava.
+       Caso real 30/09: com o token errado, o 1º "Teste" gravou "esperando o pedido" sem as boas-vindas chegarem;
+       no 2º "Teste" o cliente recebeu direto o "preciso localizar o pedido". Protocolo aberto nunca é desfeito.
    v3: o reconhecimento de pedido/CPF virou um BLOCO ÚNICO, igual na Athena (v81) e na página de rastreio (v5).
        Corrige a contingência (VF-DDMM-SX0930 perdia o zero) e, sem "VF", a letra tem que vir grudada no número.
    v2: reconhece número do pedido e CPF escritos de qualquer jeito (ver "identificação" abaixo);
@@ -55,7 +58,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v3';
+var VERSAO = 'v4';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -913,6 +916,7 @@ async function abrirProtocolo(ctx, motivo, extra) {
   await fbPut(RAIZ + '/protocolos/' + k.chave, pr);
   await fbPut(RAIZ + '/por_pedido/' + chaveFb(snap.pedido), k.chave);
   ctx.conv.estado = 'AGUARDANDO'; ctx.conv.protocolo = k.chave;
+  ctx.protocoloNovo = true;
 
   /* aviso: dentro do horário vai na hora pro WhatsApp da Ana; fora, entra na fila e sai na abertura */
   var aviso = textoAvisoAna(pr, cfg);
@@ -1365,6 +1369,10 @@ exports.handler = async function (event) {
     return resp(200, 'silencio (humano atendendo)');
   }
 
+  /* v4: foto do ponto da conversa ANTES de processar — volta pra ela se nada for entregue */
+  var antes = JSON.parse(JSON.stringify({ estado: conv.estado || '', pedido: conv.pedido || null, snap: conv.snap || null,
+    opcoes: conv.opcoes || null, alt: conv.alt || null, av: conv.av || null, parcial: conv.parcial || null,
+    lembrete_ts: conv.lembrete_ts || 0, bot_txt: conv.bot_txt || [] }));   /* bot_txt: sem isso a anti-rajada seguraria a boas-vindas que nunca chegou */
   var ctx = {
     cfg: cfg, T: await carregarTextos(), conv: conv, agora: agora, phone: phone,
     senderName: String(body.senderName || body.chatName || ''), m: tipoDaMensagem(body), msgs: [], depois: []
@@ -1403,7 +1411,12 @@ exports.handler = async function (event) {
   };
   await fbPatch(RAIZ + '/conversas/' + k, salvar);
 
-  for (var i = 0; i < ctx.msgs.length; i++) await enviar(phone, ctx.msgs[i]);
+  var entregues = 0;
+  for (var i = 0; i < ctx.msgs.length; i++) if (await enviar(phone, ctx.msgs[i])) entregues++;
+  if (ctx.msgs.length && !entregues && !ctx.protocoloNovo) {
+    await fbPatch(RAIZ + '/conversas/' + k, antes);
+    console.error('[logistica] nenhuma mensagem entregue para ' + phone + ' — a conversa voltou ao ponto anterior (' + (antes.estado || 'inicio') + ')');
+  }
   for (var j = 0; j < ctx.depois.length; j++) { try { await ctx.depois[j](); } catch (e3) { console.error('[logistica] depois: ' + e3.message); } }
   return resp(200, 'ok ' + (conv.estado || '') + ' · ' + ctx.msgs.length + ' msg');
 };
