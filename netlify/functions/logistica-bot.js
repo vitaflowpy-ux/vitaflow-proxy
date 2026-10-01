@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v1  ·  30/09/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v2  ·  30/09/2026
+   v2: reconhece número do pedido e CPF escritos de qualquer jeito (ver "identificação" abaixo);
+       pede o dia/mês quando vem só o final do número; avisa CPF que não confere e número sem a letra;
+       texto da opção 5 (entregue há menos de 48 h) reescrito.
    Netlify Function no repo vitaflow-proxy → netlify/functions/logistica-bot.js
    Webhook "Ao receber" da instância Z-API `logistica` (+44 7537 155718) aponta pra cá,
    com "Notificar as enviadas por mim também" LIGADO e "Ignorar mensagens de grupos" LIGADO.
@@ -50,7 +53,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v1';
+var VERSAO = 'v2';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -379,13 +382,44 @@ function resumo(it) {
   };
 }
 
-/* ------------------------------------------------------------------ identificação */
-function acharNumeroPedido(texto) {
+/* ------------------------------------------------------------------ identificação
+   v2 (30/09): o cliente escreve o número do pedido e o CPF de qualquer jeito — e erra.
+   NÚMERO DO PEDIDO (formato real VF-DDMM-L000):
+     - aceita minúscula, com ou sem "VF", com espaço/ponto/barra/traço ou tudo junto:
+       "vf 2909 s012", "VF2909S012", "2909-S012", "29/09 S012", "VF-2909-S12" (vira S012)
+     - letra O no lugar de zero grudada em número ("29O9", "SO12") vira 0
+     - letra do tipo: S (site) M (manual) A (Athena) V (revendedor) W (atacado), com X opcional
+       (número de contingência); dia 01-31 e mês 01-12 — senão não é número de pedido
+     - só o final ("S012"): o bot pede o dia e o mês da compra (fazem parte do número)
+     - VF + data sem a letra ("VF-2909-012"): o bot avisa que falta a letra
+       (NUNCA chuta letra/data: o número chutado pode ser de OUTRO cliente)
+   CPF:
+     - com ou sem ponto/traço/espaço; 10 dígitos (perdeu o zero da frente) vira 0 + os 10
+     - 11 dígitos que não fecham o dígito verificador: avisa que o CPF não confere            */
+var SEP = '[\\s\\-_.\\/]*';
+var RE_PED_VF = new RegExp('V\\s*F' + SEP + '(\\d{2})' + SEP + '(\\d{2})' + SEP + '([A-Z]{1,2})' + SEP + '(\\d{1,4})(?!\\d)');
+var RE_PED_SEM_VF = new RegExp('(?<![A-Z0-9])(\\d{2})[\\s\\-_.\\/]?(\\d{2})' + SEP + '([A-Z]{1,2})' + SEP + '(\\d{1,4})(?!\\d)');
+var RE_PED_SEM_LETRA = new RegExp('V\\s*F' + SEP + '(\\d{2})' + SEP + '(\\d{2})' + SEP + '(\\d{2,4})(?!\\d)');
+var RE_PED_FINAL = /(?<![A-Z0-9])([SMAVW]X?)[\s\-_.]?(\d{2,4})(?![\dA-Z])/;
+var LETRAS_OK = /^[SMAVW]X?$/;
+
+function pad3(n) { var s = String(Number(n)); while (s.length < 3) s = '0' + s; return s; }
+function dataOk(dd, mm) { var d = Number(dd), m = Number(mm); return d >= 1 && d <= 31 && m >= 1 && m <= 12; }
+
+/* maiúscula + O→0 quando grudado em número (sem mexer em e-mail: o e-mail sai do texto ORIGINAL) */
+function prepararNumero(texto) {
   var t = String(texto || '').toUpperCase();
-  var m = t.match(/\bVF[\s\-_]*(\d{4})[\s\-_]*([A-Z]{1,2})[\s\-_]*(\d{2,4})\b/);
-  if (m) return 'VF-' + m[1] + '-' + m[2] + m[3];
-  m = t.match(/\b(\d{4})[\s\-]+([A-Z]{1,2})(\d{2,4})\b/);
-  if (m) return 'VF-' + m[1] + '-' + m[2] + m[3];
+  for (var i = 0; i < 3; i++) t = t.replace(/(\d)O/g, '$10').replace(/O(\d)/g, '0$1');
+  return t;
+}
+function montarPedido(dd, mm, letra, seq) { return 'VF-' + dd + mm + '-' + letra + pad3(seq); }
+
+function acharNumeroPedido(texto) {
+  var t = prepararNumero(texto), m;
+  m = t.match(RE_PED_VF);
+  if (m && dataOk(m[1], m[2]) && LETRAS_OK.test(m[3])) return montarPedido(m[1], m[2], m[3], m[4]);
+  m = t.match(RE_PED_SEM_VF);
+  if (m && dataOk(m[1], m[2]) && LETRAS_OK.test(m[3])) return montarPedido(m[1], m[2], m[3], m[4]);
   return '';
 }
 function cpfValido(c) {
@@ -400,17 +434,54 @@ function cpfValido(c) {
   r = (s * 10) % 11; if (r === 10) r = 0;
   return r === Number(c[10]);
 }
-function acharCPF(texto) {
-  var m = String(texto || '').match(/\d{3}\.?\d{3}\.?\d{3}[\-\s]?\d{2}/g) || [];
-  for (var i = 0; i < m.length; i++) if (cpfValido(m[i])) return soDigitos(m[i]);
-  return '';
+/* { cpf:'11 dígitos válidos' } ou { errado:'dígitos de um CPF que não confere' } ou {} */
+function analisarCPF(texto) {
+  var t = String(texto || ''), cand = [], i, d;
+  /* 1) cada pedaço sem espaço ("529.982.247-25") 2) sequências com espaço ("529 982 247 25") */
+  t.split(/\s+/).forEach(function (tok) { cand.push(soDigitos(tok)); });
+  (t.match(/\d(?:[\s.\-\/]{0,2}\d){8,12}/g) || []).forEach(function (r) { cand.push(soDigitos(r)); });
+  var errado = '';
+  for (i = 0; i < cand.length; i++) {
+    d = cand[i];
+    if (d.length === 11 && cpfValido(d)) return { cpf: d };
+    if (d.length === 10 && cpfValido('0' + d)) return { cpf: '0' + d };
+    if (d.length === 9 && cpfValido('00' + d)) return { cpf: '00' + d };
+    if (!errado && (d.length === 11 || d.length === 10)) errado = d;
+  }
+  return errado ? { errado: errado } : {};
 }
+function acharCPF(texto) { return analisarCPF(texto).cpf || ''; }
 function acharEmail(texto) {
   var m = String(texto || '').match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
   return m ? m[0].toLowerCase() : '';
 }
 function acharIdentificador(texto) {
   return acharNumeroPedido(texto) || acharEmail(texto) || acharCPF(texto) || '';
+}
+/* Identificação QUASE certa — o que o cliente mandou parece pedido/CPF, mas falta ou sobra algo.
+   { tipo:'sem_letra'|'final'|'cpf_errado', valor } ou null */
+function identificacaoIncompleta(texto) {
+  var t = prepararNumero(texto), m;
+  m = t.match(RE_PED_SEM_LETRA);
+  if (m && dataOk(m[1], m[2])) return { tipo: 'sem_letra', valor: 'VF-' + m[1] + m[2] + '-' + m[3] };
+  var c = analisarCPF(texto);
+  if (c.errado) return { tipo: 'cpf_errado', valor: c.errado };
+  m = t.match(RE_PED_FINAL);
+  if (m) return { tipo: 'final', valor: m[1] + pad3(m[2]) };
+  return null;
+}
+/* dia e mês da compra: "29/09", "29-9", "29.09", "29 de setembro", "dia 29/09" */
+var MESES = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
+function acharDiaMes(texto) {
+  var t = low(texto), m = t.match(/(\d{1,2})\s*(?:\/|-|\.)\s*(\d{1,2})(?!\d)/);
+  if (m && dataOk(m[1], m[2])) return ('0' + Number(m[1])).slice(-2) + ('0' + Number(m[2])).slice(-2);
+  m = t.match(/(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)/);
+  if (m && dataOk(m[1], MESES[m[2]])) return ('0' + Number(m[1])).slice(-2) + ('0' + MESES[m[2]]).slice(-2);
+  return '';
+}
+function cpfFormatado(d) {
+  d = soDigitos(d);
+  return d.length === 11 ? d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6, 9) + '-' + d.slice(9) : d;
 }
 
 /* Consulta: função rápida → GAS. { ok:true, pedidos:[...] } ou { ok:false } */
@@ -466,6 +537,21 @@ var T_PADRAO = {
 '🔎 Não encontrei pedido com *{TERMO}*.\n⠀\n' +
 'Confira e mande de novo o *número do pedido* (ex.: VF-2909-S012), o *CPF* ou o *e-mail* da compra.\n⠀\n' +
 '_Pelo CPF ou e-mail aparecem só os pedidos com pagamento confirmado._',
+
+  cpf_invalido:
+'🔎 O CPF *{TERMO}* não confere — parece ter algum número trocado ou faltando.\n⠀\n' +
+'Confira os 11 números e mande de novo. Se preferir, mande o *número do pedido* (ex.: VF-2909-S012) ou o *e-mail* da compra.',
+
+  pedido_sem_data:
+'📅 Achei o final do número do pedido (*{FINAL}*), mas falta o *dia e o mês* da compra — eles fazem parte do número (ex.: VF-*2909*-S012 é uma compra de 29/09).\n⠀\n' +
+'Me mande o *dia e o mês* da compra (ex.: *29/09*). Se preferir, mande o *CPF* ou o *e-mail* da compra.',
+
+  pedido_sem_letra:
+'🔎 O número *{TERMO}* está incompleto: falta a *letra* antes dos últimos números (ex.: VF-2909-*S*012).\n⠀\n' +
+'Confira no e-mail ou no recibo da compra e mande de novo — ou mande o *CPF* ou o *e-mail* da compra.',
+
+  data_invalida:
+'📅 Me mande o *dia e o mês* da compra, assim: *29/09*. Se preferir, mande o *CPF* ou o *e-mail* da compra.',
 
   outro_pedido:
 '🔎 Qual pedido você quer consultar? Me mande o *número do pedido* (ex.: VF-2909-S012), o *CPF* ou o *e-mail* da compra.',
@@ -540,7 +626,7 @@ var T_PADRAO = {
 
   op5_aguarde:
 '📬 A transportadora registrou a entrega em *{DATA_ENTREGA}*{LOCAL_TXT}.\n⠀\n' +
-'Às vezes esse registro sai *antes* da entrega de fato, e a encomenda chega em até *{ESPERA} horas* depois dele.\n⠀\n' +
+'Não se preocupe: às vezes a transportadora registra a entrega *antes* de o pacote chegar até você. Quando isso acontece, ele costuma ser entregue em até *{ESPERA} horas* depois do registro.\n⠀\n' +
 'Enquanto isso, vale conferir:\n• portaria, recepção ou zelador\n• vizinhos e outras pessoas da casa\n• caixa de correio\n⠀\n' +
 'Se até *{LIMITE}* não tiver chegado, me chame aqui e escolha a opção *5* de novo — aí eu abro o atendimento com a logística.',
 
@@ -1019,7 +1105,32 @@ async function processar(ctx) {
 
   /* número de pedido, CPF ou e-mail em qualquer etapa = consulta direto */
   var termo = acharIdentificador(txt);
-  if (termo && est !== 'AV') { await mostrarPedidos(ctx, termo); return; }
+  if (termo && est !== 'AV') { c.parcial = null; await mostrarPedidos(ctx, termo); return; }
+
+  /* só o final do número ("S012"): falta o dia e o mês da compra */
+  if (est === 'PED_DATA') {
+    var dm = acharDiaMes(txt);
+    if (dm && c.parcial) {
+      var montado = 'VF-' + dm + '-' + c.parcial;
+      c.parcial = null;
+      await mostrarPedidos(ctx, montado);
+      return;
+    }
+    if (ehForaAssunto(txt)) { ctx.msgs.push(T.fora_assunto); return; }
+    ctx.msgs.push(T.data_invalida);
+    return;
+  }
+
+  /* parece pedido/CPF mas falta ou sobra algo — explica o que é (antes da resposta genérica).
+     No MENU só vale "VF + data sem letra" (o resto ali pode ser outra coisa: telefone, apto A10...) */
+  if (est === '' || est === 'ID' || est === 'VOLTA' || est === 'ESCOLHER' || est === 'MENU') {
+    var inc = identificacaoIncompleta(txt);
+    if (inc && (est !== 'MENU' || inc.tipo === 'sem_letra')) {
+      if (inc.tipo === 'sem_letra') { c.estado = est || 'ID'; ctx.msgs.push(preencher(T.pedido_sem_letra, { TERMO: inc.valor })); return; }
+      if (inc.tipo === 'cpf_errado') { c.estado = est || 'ID'; ctx.msgs.push(preencher(T.cpf_invalido, { TERMO: cpfFormatado(inc.valor) })); return; }
+      if (inc.tipo === 'final') { c.estado = 'PED_DATA'; c.parcial = inc.valor; ctx.msgs.push(preencher(T.pedido_sem_data, { FINAL: inc.valor })); return; }
+    }
+  }
 
   if (est === 'ESCOLHER') {
     var i = parseInt(t, 10);
@@ -1259,7 +1370,7 @@ exports.handler = async function (event) {
   var bt = (conv.bot_txt || []).filter(function (x) { return agora - (x.t || 0) < 10 * MIN; });
   var genericas = [ctx.T.id_invalido, preencher(ctx.T.boas_vindas, { NOME: ctx.nomeTxt }), ctx.T.audio, ctx.T.midia_fora,
     ctx.T.fora_assunto, ctx.T.nao_entendi + '\n⠀\n' + ctx.T.menu].map(impressao);
-  var tentouIdentificar = /\d{5,}|@/.test(ctx.m.texto || '');   /* mandou CPF/número errado: responde sempre */
+  var tentouIdentificar = soDigitos(ctx.m.texto).length >= 5 || /@/.test(ctx.m.texto || '');   /* mandou CPF/número: responde sempre */
   ctx.msgs = ctx.msgs.filter(function (msg) {
     if (tentouIdentificar) return true;
     var h = impressao(msg);
@@ -1273,6 +1384,7 @@ exports.handler = async function (event) {
   var salvar = {
     estado: conv.estado || '', pedido: conv.pedido || null, snap: conv.snap || null, opcoes: conv.opcoes || null,
     protocolo: conv.protocolo || null, alt: conv.alt || null, av: conv.av || null, lembrete_ts: conv.lembrete_ts || 0,
+    parcial: conv.parcial || null,
     ts: agora, telefone: phone, nome_whatsapp: ctx.senderName.slice(0, 80),
     bot_txt: bt.slice(-12), ult_ids: (conv.ult_ids || []).concat(mid ? [mid] : []).slice(-15)
   };
@@ -1285,7 +1397,8 @@ exports.handler = async function (event) {
 
 /* exportado só pro teste local (node) — não usado pela Netlify */
 exports._t = {
-  acharNumeroPedido: acharNumeroPedido, acharCPF: acharCPF, acharEmail: acharEmail, cpfValido: cpfValido,
+  acharNumeroPedido: acharNumeroPedido, acharCPF: acharCPF, analisarCPF: analisarCPF,
+  identificacaoIncompleta: identificacaoIncompleta, acharDiaMes: acharDiaMes, acharEmail: acharEmail, cpfValido: cpfValido,
   chaveNumero: chaveNumero, numeroNaLista: numeroNaLista, dentroHorario: dentroHorario, proximaAbertura: proximaAbertura,
   textoAbertura: textoAbertura, categoria: categoria, jaPostado: jaPostado, entregaInfo: entregaInfo,
   impressao: impressao, opcaoPorPalavra: opcaoPorPalavra, T_PADRAO: T_PADRAO, CFG_PADRAO: CFG_PADRAO,
