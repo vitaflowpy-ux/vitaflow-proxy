@@ -1,5 +1,8 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v82 (01/10/2026): PRAZOS NOVOS (tabela por ESTADO aprovada pelo Thiago em 29/09): postagem do varejo em até 3 dias úteis,
+//   atacado em até 6; entrega por estado (MSG_PRAZO_VAREJO, MSG_PRAZOS_COMPLETO, mensagem do pedido confirmado, regras da IA)
+//   e a previsão do statusBloco (PRAZO_DESPACHO_DU = 3 + PRAZO_UF_DU). Mesma tabela do GAS v52 e da rastreio-consulta v3. Resto = v81.
 // v81 (30/09/2026): NÚMERO DO PEDIDO E CPF ESCRITOS DE QUALQUER JEITO (pedido do Thiago: "muitos erram esses números").
 //   Bloco de identificação ÚNICO (igual no bot da logística v3 e na página de rastreio v5): "vf 2909 s012", "VF2909S012",
 //   "29/09 S012", "S12" → S012, letra O no lugar de zero, contingência VF-DDMM-AX0930; CPF com/sem ponto/traço/espaço e
@@ -1588,14 +1591,14 @@ async function atkAbrirBusca(session, sid, termo, respond) {
 
 const MSG_PRAZO_VAREJO = `*📦 PRAZO DE POSTAGEM E ENTREGA — Varejo*
 
-⏱️ *Despacho:* em até *48 horas úteis* após a confirmação do pagamento.
+⏱️ *Postagem:* em até *3 dias úteis* após a confirmação do pagamento. Com o aumento das fiscalizações, as postagens saem em lotes controlados por dia.
 
-Após a postagem, os prazos estimados de entrega por região são:
-🟢 *Sudeste:* 2 a 5 dias úteis
-🔵 *Sul:* 3 a 5 dias úteis
-🟠 *Centro-Oeste:* 4 a 6 dias úteis
-🟡 *Nordeste:* 5 a 8 dias úteis
-🔴 *Norte:* 7 a 10 dias úteis
+Depois da postagem, os prazos estimados de entrega (dias úteis) são:
+🟢 *Sudeste:* SP e RJ 1 a 6 · MG 2 a 6 · ES 2 a 8
+🔵 *Sul:* PR 2 a 6 · SC 2 a 7 · RS 2 a 5
+🟠 *Centro-Oeste:* DF 3 a 6 · GO 2 a 6 · MS 4 a 8 · MT 4 a 9
+🟡 *Nordeste:* BA 3 a 10 · demais estados 5 a 11
+🔴 *Norte:* 7 a 11
 
 _*Esses prazos são estimativas e podem variar conforme distância, condições climáticas e acesso rodoviário._`;
 
@@ -1711,7 +1714,7 @@ const MSG_DUVIDAS_INTRO = `💬 *Como posso te ajudar?*\n\n` +
 
 const MSG_PRAZOS_COMPLETO = MSG_PRAZO_VAREJO + `\n\n` +
   `*🏭 ATACADO (pedido mínimo R$ 3.000):*\n` +
-  `⏱️ Despacho em até *5 dias úteis* após a compensação do pagamento. Depois da postagem, os prazos de entrega por região são os mesmos do varejo (acima).\n\n` +
+  `⏱️ Postagem em até *6 dias úteis* após a compensação do pagamento. Depois da postagem, valem os mesmos prazos de entrega do varejo (acima).\n\n` +
   `_Digite *2* pra *rastrear* um pedido, *3* pra consultar *frete*, ou *menu* para voltar._`;
 
 // ── Boas-vindas para lead frio (clique no botão "Sim, quero conhecer" do template Meta) ──
@@ -2757,10 +2760,10 @@ REGRAS ABSOLUTAS — NUNCA VIOLE:
 - Se não souber algo, diga que não tem essa informação e oriente a digitar *menu*
 
 FRETE E PRAZOS (use SEMPRE "prazo estimado" ao mencionar entrega):
-- Despacho: até 48 horas úteis após confirmação do pagamento
-- Prazos estimados de entrega por região (dias úteis, contados a partir do despacho):
-  Sudeste: 2 a 5 dias úteis | Sul: 3 a 5 dias úteis | Centro-Oeste: 4 a 6 dias úteis
-  Nordeste: 5 a 8 dias úteis | Norte: 7 a 10 dias úteis
+- Postagem: até 3 dias úteis após confirmação do pagamento (atacado: até 6 dias úteis)
+- Prazos estimados de entrega por estado (dias úteis, contados a partir da postagem):
+  Sudeste: SP e RJ 1 a 6 | MG 2 a 6 | ES 2 a 8 — Sul: PR 2 a 6 | SC 2 a 7 | RS 2 a 5
+  Centro-Oeste: DF 3 a 6 | GO 2 a 6 | MS 4 a 8 | MT 4 a 9 — Nordeste: BA 3 a 10 | demais estados 5 a 11 — Norte: 7 a 11
 - Transportadoras disponíveis: Jadlog, J&T Express e Loggi
 - Modalidades: PAC, SEDEX (Correios) e Transportadora
 - Recomende sempre a Transportadora — inclui seguro grátis contra apreensão e extravio
@@ -2925,8 +2928,9 @@ const STATUS_INFO = {
 };
 // ── PREVISÃO DE ENTREGA (dias úteis a partir da data de confirmação) ──────────
 // Se mudar a política, ajuste só estes números. Prazo total = despacho + entrega da região.
-const PRAZO_DESPACHO_DU = 2; // dias úteis pra postar (até 48h úteis)
-const PRAZO_REGIAO_DU = { SE: 5, S: 5, CO: 6, NE: 8, N: 10 }; // entrega máx por região (dias úteis)
+const PRAZO_DESPACHO_DU = 3; // v82: dias úteis pra postar (varejo)
+const PRAZO_REGIAO_DU = { SE: 6, S: 7, CO: 8, NE: 11, N: 11 }; // v82: entrega máx da região (vale pro estado sem prazo próprio)
+const PRAZO_UF_DU = { SP: 6, RJ: 6, MG: 6, ES: 8, DF: 6, PR: 6, SC: 7, RS: 5, GO: 6, BA: 10, MT: 9 }; // v82: entrega máx por estado
 const UF_REGIAO = {
   SP:'SE', RJ:'SE', MG:'SE', ES:'SE',
   PR:'S', SC:'S', RS:'S',
@@ -2994,9 +2998,10 @@ function _ddmm(d) { return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMo
 // Previsão de entrega a partir da data de confirmação + região. dentroPrazo = hoje <= data-limite.
 function calcularPrazo(dataConf, estado) {
   const base = _parseDataBR(dataConf);
-  const reg = UF_REGIAO[String(estado || '').toUpperCase()];
+  const uf = String(estado || '').toUpperCase();
+  const reg = UF_REGIAO[uf];
   if (!base || !reg) return null;
-  const totalDU = PRAZO_DESPACHO_DU + (PRAZO_REGIAO_DU[reg] || 8);
+  const totalDU = PRAZO_DESPACHO_DU + (PRAZO_UF_DU[uf] || PRAZO_REGIAO_DU[reg] || 11); // v82: estado → região
   const deadline = _addDiasUteis(base, totalDU);
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
   return { dataLimite: _ddmm(deadline), dentroPrazo: hoje.getTime() <= deadline.getTime() };
@@ -5738,14 +5743,14 @@ exports.handler = async (event) => {
         `🚚 ${frete.label} — ${session.estadoCliente}\n` +
         `💰 R$ ${total.toFixed(2).replace('.',',')}\n\n` +
         `🧾 *Seu recibo completo:*\n${linkRecibo}\n\n` +
-        `⏱️ *Prazo de postagem:* até 48 horas úteis após a confirmação do pagamento.\n\n` +
-        `📦 *Prazos de entrega por região (após a postagem):*\n` +
-        `• Sudeste: 2 a 5 dias úteis\n` +
-        `• Sul: 3 a 5 dias úteis\n` +
-        `• Centro-Oeste: 4 a 6 dias úteis\n` +
-        `• Nordeste: 5 a 8 dias úteis\n` +
-        `• Norte: 7 a 10 dias úteis\n\n` +
-        `🏭 *Atacado:* despacho em até *5 dias úteis* após a confirmação do pagamento. Após a postagem, os prazos de entrega por região são os mesmos do varejo (acima).\n` +
+        `⏱️ *Prazo de postagem:* até 3 dias úteis após a confirmação do pagamento.\n\n` +
+        `📦 *Prazos de entrega depois da postagem (dias úteis):*\n` +
+        `• Sudeste: SP e RJ 1 a 6 · MG 2 a 6 · ES 2 a 8\n` +
+        `• Sul: PR 2 a 6 · SC 2 a 7 · RS 2 a 5\n` +
+        `• Centro-Oeste: DF 3 a 6 · GO 2 a 6 · MS 4 a 8 · MT 4 a 9\n` +
+        `• Nordeste: BA 3 a 10 · demais estados 5 a 11\n` +
+        `• Norte: 7 a 11\n\n` +
+        `🏭 *Atacado:* postagem em até *6 dias úteis* após a confirmação do pagamento. Depois da postagem, valem os mesmos prazos de entrega (acima).\n` +
         `_*Estimativas, podem variar conforme distância e condições._\n\n` +
         `🔍 *Rastreie seu pedido em tempo real:*\nvitaflowoficial.com/pages/rastrear-pedido\n` +
         `Use qualquer uma dessas informações para rastrear:\n` +

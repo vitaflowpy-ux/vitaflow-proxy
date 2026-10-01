@@ -406,7 +406,7 @@ DILUÍDO (AQ / líquido / pronto pra usar) x LIOFILIZADO (em pó): fale MUITO BE
 - O LIOFILIZADO (em pó) também é excelente: rende bem, você reconstitui na hora com água bacteriostática, e é ótimo pra quem quer estocar por mais tempo antes de diluir.
 - Resumo pra passar ao cliente: as duas entregam o mesmo resultado; diluído = praticidade e modernidade, liofilizado = flexibilidade de estoque. A escolha é preferência, não qualidade. Recomende com confiança a que fizer sentido pro cliente (e temos ótimas opções diluídas).
 
-PRAZOS OFICIAIS (use sempre "prazo estimado"): despacho em até 48h úteis após o pagamento; entrega estimada — Sudeste 2 a 5, Sul 3 a 5, Centro-Oeste 4 a 6, Nordeste 5 a 8, Norte 7 a 10 dias úteis. A Transportadora inclui seguro grátis; Correios (PAC/SEDEX) não têm seguro.`;
+PRAZOS OFICIAIS (use sempre "prazo estimado"): postagem em até 3 dias úteis após o pagamento (atacado: até 6 dias úteis); entrega estimada depois da postagem, em dias úteis — SP e RJ 1 a 6, MG 2 a 6, ES 2 a 8, PR 2 a 6, SC 2 a 7, RS 2 a 5, DF 3 a 6, GO 2 a 6, MS 4 a 8, MT 4 a 9, BA 3 a 10, demais estados do Nordeste 5 a 11, Norte 7 a 11. A Transportadora inclui seguro grátis; Correios (PAC/SEDEX) não têm seguro.`;
 
 // Pergunta pra própria API da Anthropic QUAIS modelos essa chave pode usar (resolve o 404 de vez).
 async function modelosDisponiveis(){

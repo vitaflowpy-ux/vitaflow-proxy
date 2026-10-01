@@ -1,9 +1,11 @@
 'use strict';
 /* =============================================================================
-   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v2  ·  01/10/2026
+   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v3  ·  01/10/2026
    Netlify Function no repo vitaflow-proxy → netlify/functions/rastreio-consulta.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/rastreio-consulta
 
+   v3 (01/10/2026): PRAZOS NOVOS — tabela por ESTADO aprovada em 29/09 (PRAZOS_ENTREGA.estados), postagem varejo 3 dias
+   úteis e atacado 6. A MESMA tabela está no GAS v52 (o consultar_status de reserva). O resto do código = v2.
    v2 (01/10/2026): CALCULA A RESPOSTA AQUI, lendo o Firebase direto. Na v1 ela só entregava a resposta
    que o GAS v50 deixava pronta (vitaflow_rastreio_pub). Esse pré-cálculo, feito no Apps Script, gastava
    4-6 chamadas UrlFetch POR PEDIDO e estourou a cota diária do Google na madrugada de 01/10 (00:08-00:19).
@@ -154,10 +156,11 @@ function _ddmm(ts) { if (!ts) return ''; var p = _partes(ts); return p.day + '/'
 
 /* ---- prazos (CÓPIA do PRAZOS_ENTREGA do GAS v50 — mudar nos dois) ---- */
 var PRAZOS_ENTREGA = {
-  varejo_postagem_du: 2,
-  atacado_postagem_du: 5,
-  regioes: { 'Sudeste': [2, 5], 'Sul': [3, 5], 'Centro-Oeste': [4, 6], 'Nordeste': [5, 8], 'Norte': [7, 10] },
-  estados: {}
+  varejo_postagem_du: 3,
+  atacado_postagem_du: 6,
+  /* Sudeste e Sul não são usados: todos os estados deles têm prazo próprio em 'estados' */
+  regioes: { 'Sudeste': [2, 6], 'Sul': [3, 7], 'Centro-Oeste': [4, 8], 'Nordeste': [5, 11], 'Norte': [7, 11] },
+  estados: { SP: [1, 6], RJ: [1, 6], MG: [2, 6], ES: [2, 8], DF: [3, 6], PR: [2, 6], SC: [2, 7], RS: [2, 5], GO: [2, 6], BA: [3, 10], MT: [4, 9] }
 };
 var _UF_REGIAO = { SP:'Sudeste', RJ:'Sudeste', MG:'Sudeste', ES:'Sudeste', PR:'Sul', SC:'Sul', RS:'Sul',
   DF:'Centro-Oeste', GO:'Centro-Oeste', MT:'Centro-Oeste', MS:'Centro-Oeste', BA:'Nordeste', SE:'Nordeste', AL:'Nordeste',
@@ -434,6 +437,13 @@ exports.handler = async function (event) {
     return usarGas('erro: ' + String(e && e.message || e));
   }
 };
+
+/* v3: as mesmas peças usadas por outras funções do site (logistica-painel / logistica-atrasos), pra que o prazo
+   do painel e do e-mail de atraso seja EXATAMENTE o da página de rastreio, da Athena e do bot. */
+exports.lib = { fbGet: fbGet, fbGetOu: fbGetOu, histKey: _histKey, semAcentoUp: _semAcentoUp, naoPagou: _rastNaoPagou,
+  baseDaLinha: _rastBaseDaLinha, enriquecer: _rastreioEnriquecer, origemEnvio: _origemEnvio, linkTransp: _linkRastreioPub,
+  duEntre: _duEntre, somaDU: _somaDU, ddmm: _ddmm, diaBR: _diaBR, diaUtilBR: _diaUtilBR,
+  PRAZOS_ENTREGA: PRAZOS_ENTREGA, UF_REGIAO: _UF_REGIAO, ETAPA_ORDEM: _ETAPA_ORDEM };
 
 /* só pra teste local (node) */
 exports._t = { _rastBaseDaLinha: _rastBaseDaLinha, _cidadeDoEndereco: _cidadeDoEndereco, _duEntre: _duEntre, _somaDU: _somaDU,

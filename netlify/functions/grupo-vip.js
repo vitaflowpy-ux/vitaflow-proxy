@@ -1,6 +1,12 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v5  ·  21/09/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v7  ·  01/10/2026
+   v7: texto padrão do !prazo com os PRAZOS NOVOS (tabela por estado aprovada em 29/09; postagem
+       varejo 3 dias úteis, atacado 6). O texto que vale no grupo é o do Firebase (painel VIP, aba Textos).
+   v6: LINKS LIBERADOS pelo painel (aba Exceções) — grupo_vip/config/links_liberados.
+       Cada item e um dominio ("instagram.com" = qualquer link do Instagram) ou
+       dominio + caminho ("instagram.com/perfil" = so aquele perfil). Vale na hora,
+       sem deploy. Le junto com o config que o bot ja busca — nenhuma leitura a mais.
    Netlify Function no repo vitaflow-proxy → netlify/functions/grupo-vip.js
    Webhook "Ao receber" da instancia Z-API `grupo-vip` aponta pra ca.
 
@@ -14,6 +20,7 @@
        * 3o strike           -> REMOVE o numero do grupo
        * admin               -> passa direto, nada e apagado nem contado
      Link do proprio VitaFlow, convite deste grupo e os wa.me oficiais sao liberados.
+     (v6) + os links cadastrados no painel, aba Exceções > Links liberados.
    - Responde por comando (!) e por palavra-chave: atacado, frete, prazo,
      transportadora, site, sorteio, origem, telegram. 1x por assunto a cada 10min.
      ADMIN so dispara por COMANDO. Em 21/09 o VitaFlow postou a promo do atacado e o
@@ -284,11 +291,12 @@ var T = {
 
   prazo:
 '⏱️ *PRAZOS DE ENVIO E ENTREGA*\n⠀\n' +
-'📦 *Postagem:* até *2 dias úteis* depois que o pagamento é confirmado — o mesmo prazo pra todo envio do varejo, saindo de SP ou de MS.\n⠀\n' +
-'🚚 *Entrega, a partir da postagem:*\n' +
-'• Sudeste — *2 a 5* dias úteis\n• Sul — *3 a 5* dias úteis\n• Centro-Oeste — *4 a 6* dias úteis\n' +
-'• Nordeste — *5 a 8* dias úteis\n• Norte — *7 a 10* dias úteis\n⠀\n' +
-'🏭 *Atacado:* despacho em até *5 dias úteis* após a confirmação. Depois disso, valem os prazos por região acima.\n⠀\n' +
+'📦 *Postagem:* até *3 dias úteis* depois que o pagamento é confirmado — o mesmo prazo pra todo envio do varejo, saindo de SP ou de MS. Com o aumento das fiscalizações, as postagens saem em lotes controlados por dia.\n⠀\n' +
+'🚚 *Entrega, a partir da postagem (dias úteis):*\n' +
+'• Sudeste — SP e RJ *1 a 6* · MG *2 a 6* · ES *2 a 8*\n• Sul — PR *2 a 6* · SC *2 a 7* · RS *2 a 5*\n' +
+'• Centro-Oeste — DF *3 a 6* · GO *2 a 6* · MS *4 a 8* · MT *4 a 9*\n' +
+'• Nordeste — BA *3 a 10* · demais estados *5 a 11*\n• Norte — *7 a 11*\n⠀\n' +
+'🏭 *Atacado:* postagem em até *6 dias úteis* após a confirmação. Depois disso, valem os prazos de entrega acima.\n⠀\n' +
 '🔎 Acompanhe o seu em *vitaflowoficial.com/pages/rastrear-pedido*\n⠀\n' +
 '_Estimativas em dias úteis; variam com distância e condições de entrega._',
 
@@ -498,14 +506,57 @@ function acharLinks(texto) {
   return String(texto || '').match(RE_LINKS) || [];
 }
 
-function linkPermitido(link) {
+/* ---- v6: LINKS LIBERADOS PELO PAINEL -----------------------------------------
+   grupo_vip/config/links_liberados = { <chave>: { dominio: 'instagram.com', nome, t } }
+   Tira protocolo, www. e barra do fim, tudo minusculo. */
+function normalizarLiberado(v) {
+  return String(v || '').trim().toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[\/?#]+$/, '');
+}
+
+/* Le a lista do config que o handler ja buscou. Config ausente/corrompido = lista vazia
+   (fica valendo so o que e fixo no codigo, como ate a v5). */
+function listaLiberados(cfg) {
+  var n = cfg && cfg.links_liberados, out = [], k, d;
+  if (!n || typeof n !== 'object') return out;
+  for (k in n) {
+    if (!Object.prototype.hasOwnProperty.call(n, k)) continue;
+    d = normalizarLiberado(n[k] && typeof n[k] === 'object' ? n[k].dominio : n[k]);
+    if (d && d.indexOf('.') > 0) out.push(d);
+  }
+  return out;
+}
+
+/* "instagram.com"          -> instagram.com, www.instagram.com, m.instagram.com, com qualquer caminho
+   "instagram.com/vitaflow" -> so instagram.com/vitaflow e o que vem depois (/vitaflow/reel/...) */
+function naListaLiberada(link, liberados) {
+  if (!liberados || !liberados.length) return false;
+  var s = normalizarLiberado(limparFim(link));
+  var host = s.split(/[\/?#]/)[0];
+  var resto = s.slice(host.length);
+  var i, e, eHost, ePath;
+  for (i = 0; i < liberados.length; i++) {
+    e = liberados[i];
+    eHost = e.split('/')[0];
+    ePath = e.slice(eHost.length);
+    if (host !== eHost && host.slice(-(eHost.length + 1)) !== '.' + eHost) continue;
+    if (!ePath) return true;
+    if (resto === ePath || resto.indexOf(ePath + '/') === 0 ||
+        resto.indexOf(ePath + '?') === 0 || resto.indexOf(ePath + '#') === 0) return true;
+  }
+  return false;
+}
+
+function linkPermitido(link, liberados) {
   var l = limparFim(link).toLowerCase();
+  /* convite de grupo NUNCA passa pela lista do painel — so o nosso */
   if (/^(https?:\/\/)?(www\.)?chat\.whatsapp\.com\//.test(l)) {
     return limparFim(link).indexOf(CONVITE_NOSSO) >= 0;   /* convite e case-sensitive */
   }
   if (/^(https?:\/\/)?(www\.)?([a-z0-9-]+\.)*vitaflowoficial\.com(\/|\?|$)/.test(l)) return true;
   if (/^(https?:\/\/)?(www\.)?t\.me\/referencias_vitaflow\/?$/.test(l)) return true;
   if (new RegExp('^(https?:\\/\\/)?(www\\.)?wa\\.me\\/(' + WA_OFICIAIS + ')\\/?$').test(l)) return true;
+  if (naListaLiberada(l, liberados)) return true;
   return false;
 }
 
@@ -520,11 +571,11 @@ function linkDuro(link) {
 
 /* Devolve o link de fora mais grave da mensagem, ou null se estiver tudo liberado.
    Duro ganha de mole: "vitaflowoficial.com e tambem https://outraloja.com/x" apaga. */
-function linkDeFora(texto) {
+function linkDeFora(texto, liberados) {
   var achados = acharLinks(texto), i, l, mole = null;
   for (i = 0; i < achados.length; i++) {
     l = limparFim(achados[i]);
-    if (linkPermitido(l)) continue;
+    if (linkPermitido(l, liberados)) continue;
     if (linkDuro(l)) return { link: l, duro: true };
     if (!mole) mole = { link: l, duro: false };
   }
@@ -664,7 +715,7 @@ exports.handler = async function (event) {
      Ordem: golpe > link duro > link mole. Admin nunca e apagado nem contado.     */
   if (!ehAdmin) {
     var motivo = ehGolpe(paraModerar);
-    var fora = linkDeFora(paraModerar);
+    var fora = linkDeFora(paraModerar, listaLiberados(cfg));   /* v6: + lista do painel */
     var apagar = !!motivo || !!(fora && fora.duro);
 
     if (apagar) {
@@ -765,6 +816,8 @@ exports._acharLinks = acharLinks;
 exports._linkPermitido = linkPermitido;
 exports._linkDuro = linkDuro;
 exports._linkDeFora = linkDeFora;
+exports._listaLiberados = listaLiberados;
+exports._naListaLiberada = naListaLiberada;
 exports._ehGolpe = ehGolpe;
 exports._rotear = rotear;
 exports._limparFim = limparFim;

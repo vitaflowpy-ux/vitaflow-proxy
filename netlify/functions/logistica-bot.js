@@ -1,6 +1,13 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v4  ·  30/09/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v6  ·  01/10/2026
+   v6 (OK do Thiago, 01/10): (1) UMA MENSAGEM POR VEZ por conversa — trava em vitaflow_sync/logistica/travas/<tel>
+       (gravação condicional com ETag; some sozinha em 25 s). No teste de 01/10 o vídeo (que a Z-API só repassa
+       depois de baixar, ~1 min para 7 MB) e o "Enviei" chegaram no MESMO segundo e foram processados juntos.
+       (2) Aviso no pedido do vídeo (op6_pedir e op6_falta_video): vídeo pesado leva 1–2 min para chegar.
+   v5 (pedidos do Thiago depois do teste de 01/10): (1) PRODUTOS do cartão um por linha, no formato do WhatsApp
+       ("• 1x Nome · R$ 1.049,00"), em vez da linha corrida do pedido; (2) o número do protocolo do dia começa em
+       011 (LOG-DDMM-011, 012…), não mais em 001 — o contador do Firebase continua igual (1, 2, 3…), só soma 10.
    v4: se NENHUMA mensagem do bot foi entregue (Z-API recusou/fora do ar), a conversa VOLTA ao ponto em que estava.
        Caso real 30/09: com o token errado, o 1º "Teste" gravou "esperando o pedido" sem as boas-vindas chegarem;
        no 2º "Teste" o cliente recebeu direto o "preciso localizar o pedido". Protocolo aberto nunca é desfeito.
@@ -58,7 +65,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v4';
+var VERSAO = 'v6';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -177,6 +184,41 @@ async function proximoDoContador(caminho) {
     return novo;
   }
   throw new Error('contador disputado demais');
+}
+
+/* v6: UMA MENSAGEM POR VEZ por conversa. Vídeo + texto chegando no mesmo segundo eram processados em paralelo e um podia
+   gravar por cima do outro. A trava é gravada com ETag (só um consegue) e vale 25 s (se a função morrer, some sozinha).
+   Espera até 12 s pela vez; passou disso, processa assim mesmo (melhor responder do que perder a mensagem). */
+var TRAVA_VALE = 25000, TRAVA_ESPERA = 12000;
+async function pegarTrava(k) {
+  var caminho = RAIZ + '/travas/' + k, id = Date.now() + '-' + Math.random().toString(36).slice(2, 8), ini = Date.now();
+  while (Date.now() - ini < TRAVA_ESPERA) {
+    try {
+      var r = await fetchT(fbUrl(caminho), { headers: { 'X-Firebase-ETag': 'true' } }, 4000);
+      if (!r.ok) return null;
+      var etag = r.headers.get('etag') || r.headers.get('ETag'), txt = await r.text();
+      var atual = (txt === '' || txt === 'null') ? null : JSON.parse(txt);
+      if (!atual || !atual.ts || Date.now() - atual.ts > TRAVA_VALE) {
+        var w = await fetchT(fbUrl(caminho), { method: 'PUT', headers: { 'Content-Type': 'application/json', 'if-match': etag },
+          body: JSON.stringify({ ts: Date.now(), id: id }) }, 4000);
+        if (w.ok) return id;
+        if (w.status !== 412) return null;
+      }
+    } catch (e) { return null; }
+    await new Promise(function (ok) { setTimeout(ok, 600); });
+  }
+  console.error('[logistica] trava da conversa ' + k + ' ocupada por mais de ' + (TRAVA_ESPERA / 1000) + ' s — processando assim mesmo');
+  return null;
+}
+async function soltarTrava(k, id) {
+  if (!id) return;
+  try {
+    var caminho = RAIZ + '/travas/' + k;
+    var r = await fetchT(fbUrl(caminho), { headers: { 'X-Firebase-ETag': 'true' } }, 4000);
+    var etag = r.headers.get('etag') || r.headers.get('ETag'), txt = await r.text();
+    var atual = (txt === '' || txt === 'null') ? null : JSON.parse(txt);
+    if (atual && atual.id === id) await fetchT(fbUrl(caminho), { method: 'DELETE', headers: { 'if-match': etag } }, 4000);
+  } catch (e) { /* vence sozinha em 25 s */ }
 }
 
 /* Envio pela instância da logística. Erro SEMPRE no log (lição do grupo-vip de 19/09). */
@@ -378,7 +420,7 @@ function resumo(it) {
   var ev = (it.eventos || []).slice(-12).map(function (e) { return { d: e.d || '', h: e.h || '', s: String(e.s || '').slice(0, 160), c: e.c || '', ts: e.ts || 0 }; });
   var hi = (it.historico || []).slice(-12).map(function (e) { return { status: e.status || '', ts: e.ts || 0 }; });
   return {
-    pedido: it.pedido || '', nome: it.nome || '', produtos: String(it.produtos || '').slice(0, 400),
+    pedido: it.pedido || '', nome: it.nome || '', produtos: String(it.produtos || '').slice(0, 1500),
     status: it.status || '', status_exibido: it.status_exibido || it.status || '',
     transportadora: it.transportadora || '', codigo: it.codigo || '', link_transp: it.link_transp || '',
     data: it.data || '', estado: it.estado || '', cidade: it.cidade || '', origem: it.origem || '',
@@ -659,10 +701,11 @@ var T_PADRAO = {
 '📦 *Recebi com problema — pedido {PEDIDO}*\n⠀\nPara a logística analisar, preciso de *duas coisas*:\n' +
 '1. Uma mensagem contando *o que aconteceu* (avaria, item faltando, produto errado...)\n' +
 '2. O *vídeo da abertura* da embalagem\n⠀\n' +
-'_Sem o vídeo da abertura não conseguimos abrir a análise — é ele que mostra como o pacote chegou._\n⠀\n_*0* cancela._',
+'_Sem o vídeo da abertura não conseguimos abrir a análise — é ele que mostra como o pacote chegou._\n⠀\n' +
+'_Vídeo pesado pode levar 1 ou 2 minutos para chegar até mim. Depois de enviar, é só aguardar — não precisa mandar de novo._\n⠀\n_*0* cancela._',
 
   op6_falta_video:
-'👍 Anotado. Agora envie o *vídeo da abertura* da embalagem.',
+'👍 Anotado. Agora envie o *vídeo da abertura* da embalagem.\n⠀\n_Vídeo pesado pode levar 1 ou 2 minutos para chegar até mim. Depois de enviar, é só aguardar — não precisa mandar de novo._',
 
   op6_falta_texto:
 '🎬 Vídeo recebido! Agora me conte *em uma mensagem* o que aconteceu.',
@@ -758,11 +801,47 @@ function primeiroNome(s) {
   return n.length >= 2 ? n.charAt(0).toUpperCase() + n.slice(1).toLowerCase() : '';
 }
 
+/* v5: "Nome (R$ 1049,00 un.) x1, Outro (R$ 649,00 un.) x2" → ["• 1x Nome · R$ 1.049,00", "• 2x Outro · R$ 649,00 cada"].
+   Formato da coluna PRODUTOS (site, Athena e Orçamento: descrição + "(R$ x un.)" + " xN", separados por vírgula).
+   Se o texto não estiver nesse formato, separa pelas vírgulas que não estão dentro de parênteses e mostra como veio. */
+function reaisBR(v) {
+  var n = Number(String(v).replace(/\./g, '').replace(',', '.'));
+  if (!isFinite(n)) return String(v);
+  var s = n.toFixed(2).split('.'), i = s[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return i + ',' + s[1];
+}
+function produtosLinhas(txt, max) {
+  max = max || 10;
+  var t = String(txt || '').replace(/\s+/g, ' ').trim(), itens = [], m;
+  var re = /\s*(.+?)\s*(?:\(R\$\s*([\d.]*\d(?:,\d{1,2})?)\s*un\.?\))?\s*x\s?(\d+)\s*(?:,|$)/g, cobriu = 0;
+  while ((m = re.exec(t)) !== null) {
+    if (m.index !== cobriu && t.slice(cobriu, m.index).trim()) break;
+    var q = Number(m[3]) || 1, nome = m[1].replace(/^[,\s]+|[,\s]+$/g, '');
+    itens.push('• ' + q + 'x ' + nome + (m[2] ? ' · R$ ' + reaisBR(m[2]) + (q > 1 ? ' cada' : '') : ''));
+    cobriu = re.lastIndex;
+    if (re.lastIndex === m.index) break;
+  }
+  if (!itens.length || t.slice(cobriu).trim()) {
+    /* fora do formato: vírgula fora de parênteses separa os itens */
+    itens = []; var nivel = 0, atual = '';
+    for (var i = 0; i < t.length; i++) {
+      var ch = t.charAt(i);
+      if (ch === '(') nivel++;
+      if (ch === ')' && nivel > 0) nivel--;
+      if (ch === ',' && nivel === 0) { if (atual.trim()) itens.push('• ' + atual.trim()); atual = ''; continue; }
+      atual += ch;
+    }
+    if (atual.trim()) itens.push('• ' + atual.trim());
+  }
+  if (itens.length > max) { var resto = itens.length - (max - 1); itens = itens.slice(0, max - 1); itens.push('• _+' + resto + ' itens_'); }
+  return itens;
+}
+
 function cartao(snap, T) {
   var s = statusDe(snap), cat = categoria(snap), L = [];
   L.push('📦 *Pedido ' + snap.pedido + '*');
   if (snap.nome) L.push('👤 ' + snap.nome);
-  if (snap.produtos) L.push('🧾 ' + String(snap.produtos).slice(0, 220));
+  if (snap.produtos) { L.push('🧾 *Produtos:*'); produtosLinhas(snap.produtos).forEach(function (x) { L.push(x); }); }   /* v5 */
   L.push('⠀');
   if (cat === 'entregue') {
     var ei = entregaInfo(snap);
@@ -853,8 +932,10 @@ async function regraAlteracao(snap, cfg, agora) {
 }
 
 /* ------------------------------------------------------------------ protocolo */
+var PROTOCOLO_INICIO = 11;   /* v5: o 1º protocolo do dia é o 011 (pedido do Thiago, 01/10/2026) */
 function chaveDoProtocolo(agora, n) {
-  var p = partesBR(agora), nn = ('00' + n).slice(-3);
+  n = n + PROTOCOLO_INICIO - 1;
+  var p = partesBR(agora), nn = n < 1000 ? ('00' + n).slice(-3) : String(n);
   return { chave: p.y + p.m + p.d + '-' + nn, id: 'LOG-' + p.d + p.m + '-' + nn };
 }
 
@@ -1360,6 +1441,12 @@ exports.handler = async function (event) {
   if (cfg.modo === 'teste' && !numeroNaLista(phone, cfg.numeros_teste)) return resp(200, 'modo teste — numero fora da lista');
   if (chaveNumero(phone) === chaveNumero(cfg.ana_whatsapp) && !numeroNaLista(phone, cfg.numeros_teste)) return resp(200, 'numero da Ana — ignorado');
 
+  var trava = await pegarTrava(k);   /* v6: uma mensagem por vez nesta conversa */
+  try { return await atenderCliente(body, cfg, k, phone); }
+  finally { await soltarTrava(k, trava); }
+};
+
+async function atenderCliente(body, cfg, k, phone) {
   var agora = Date.now();
   var conv = await fbGet(RAIZ + '/conversas/' + k) || {};
   var mid = String(body.messageId || '');
@@ -1419,7 +1506,7 @@ exports.handler = async function (event) {
   }
   for (var j = 0; j < ctx.depois.length; j++) { try { await ctx.depois[j](); } catch (e3) { console.error('[logistica] depois: ' + e3.message); } }
   return resp(200, 'ok ' + (conv.estado || '') + ' · ' + ctx.msgs.length + ' msg');
-};
+}
 
 /* exportado só pro teste local (node) — não usado pela Netlify */
 exports._t = {
