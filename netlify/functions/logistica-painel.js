@@ -1,6 +1,10 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v1  ·  01/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v2  ·  01/10/2026
+   v2 (Thiago, 01/10): PEDIDO DE REVENDEDOR (prefixo V, ex. VF-2309-V002) NÃO RECEBE E-MAIL NOSSO — mesma regra do
+       e-mail de compra e do de recompra no GAS. Continua na lista de atrasados (pra cobrar o fornecedor), marcado
+       'revendedor: true', mas o decidirEnvio devolve null (nem 1º aviso nem lembrete) e o e-mail de teste nunca
+       usa pedido V como exemplo. A logistica-atrasos.js usa este mesmo decidirEnvio.
    Netlify Function no repo vitaflow-proxy → netlify/functions/logistica-painel.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/logistica-painel
 
@@ -280,14 +284,18 @@ async function calcularAtrasos(base, peds, agora) {
     lista.push({ k: p.k, pedido: p.pedido, nome: p.nome, email: p.email, uf: p.uf, cidade: p.cidade, data: p.data, status: p.status,
       fornecedor: p.forn, fornecedor_txt: p.fornTxt, transportadora: p.transpTxt, codigo: p.codigo, atacado: p.atacado,
       dias: dias, prazo_postagem: pd, postagem_ate: R.ddmm(R.somaDU(p.tConf, pd)), conf_ts: p.tConf,
-      emails: Number(env.n) || 0, email_ultimo: Number(env.ultimo) || 0 });
+      emails: Number(env.n) || 0, email_ultimo: Number(env.ultimo) || 0, revendedor: ehRevendedor(p.pedido) });
   });
   lista.sort(function (a, b) { return b.dias - a.dias; });
   return lista;
 }
 
+/* v2: pedido de REVENDEDOR = letra V depois da data (VF-DDMM-V###, VF-DDMM-VX…). Revendedor NÃO recebe e-mail nosso. */
+function ehRevendedor(pedido) { return /^VF-\d{4}-V/i.test(String(pedido || '').trim()); }
+
 /* quem recebe e-mail hoje (1º aviso ou lembrete) */
 function decidirEnvio(a, cfg, agora) {
+  if (ehRevendedor(a.pedido)) return null;   /* v2: revendedor nunca recebe */
   var max = Math.max(1, Number(cfg.email_atraso_max) || 3), inter = Math.max(1, Number(cfg.email_atraso_intervalo_du) || 3);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(a.email || ''))) return null;
   if (!a.emails) return 'primeiro';
@@ -351,7 +359,7 @@ exports.handler = async function (event) {
       var para = String(cfg.email_atraso_teste || '').trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(para)) return resp({ ok: false, erro: 'Preencha o e-mail de teste na aba Atrasos e salve.' });
       /* exemplo = o 1º atrasado que tem e-mail (senão, um pedido fictício) */
-      var ex = lista.filter(function (a) { return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(a.email || '')); })[0] ||
+      var ex = lista.filter(function (a) { return !ehRevendedor(a.pedido) && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(a.email || '')); })[0] ||
         { nome: 'Cliente Exemplo', pedido: 'VF-0110-S001', data: '01/10/2026', dias: 5, prazo_postagem: 3 };
       var tipo = d.tipo === 'lembrete' ? 'lembrete' : 'primeiro';
       var m = montarEmail(ex, tipo, b2.txt);
@@ -367,5 +375,5 @@ exports.handler = async function (event) {
 
 /* usado pela logistica-atrasos.js (agendada) e pelos testes */
 exports.lib = { lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros: calcularNumeros, calcularAtrasos: calcularAtrasos,
-  decidirEnvio: decidirEnvio, montarEmail: montarEmail, enviarBrevo: enviarBrevo, htmlEmail: htmlEmail, conferirAdmin: conferirAdmin,
+  decidirEnvio: decidirEnvio, ehRevendedor: ehRevendedor, montarEmail: montarEmail, enviarBrevo: enviarBrevo, htmlEmail: htmlEmail, conferirAdmin: conferirAdmin,
   EMAIL_PADRAO: EMAIL_PADRAO, EMAIL_CFG_PADRAO: EMAIL_CFG_PADRAO, transpNome: transpNome, fornNome: fornNome, RAIZ: RAIZ };
