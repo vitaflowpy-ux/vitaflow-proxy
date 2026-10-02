@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v8  ·  02/10/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v9  ·  02/10/2026
+   v9 (ordem do Thiago, 02/10: "pode retirar o modo teste do bot, deixe apenas ligado ou desligado"): o bot só tem dois
+       modos — 'ligado' (atende todo mundo) e 'desligado' (não responde ninguém). Saíram o modo 'teste' e a lista de números
+       de teste. Config antiga com modo 'teste' (ou qualquer valor estranho) vale como DESLIGADO — nunca liga sozinho.
+       O WhatsApp que recebe os avisos de protocolo (ana_whatsapp) é sempre ignorado como cliente (antes a lista de teste
+       abria exceção).
    v8 (ordem do Thiago, 01-02/10: "o bot avisa a mesma coisa que está na página de rastreio"): o cartão do pedido e a opção 1
        (rastreio) mostram o MESMO AVISO que a página mostra para aquele pedido (campo `aviso` da rastreio-consulta v7 — textos
        do Thiago, sem mudar uma palavra; só negrito/itálico do WhatsApp e uma frase por linha). Com o aviso 1 ou 2 (pedido
@@ -54,12 +59,12 @@
      opção "outro assunto" (compra/produto → Athena).
    - SILÊNCIO: quando alguém responde À MÃO pelo celular da logística (fromMe que não foi o bot),
      o bot fica calado naquela conversa por 6 h (config). O protocolo aberto passa a "em atendimento".
-   - MODO TESTE: só responde aos números da lista (config). Os outros números ficam como hoje (humano).
+   - MODO (v9): 'ligado' atende todo mundo; 'desligado' não responde ninguém. (O modo teste saiu na v9.)
    - Textos e config no Firebase (vitaflow_sync/logistica/textos e /config), editáveis no painel da
      logística. Os padrões abaixo só valem enquanto o nó não existir. GET ?defaults=1 devolve os padrões.
 
    ONDE GRAVA (RTDB pricehub-f0236) — FILHO de vitaflow_sync de propósito (nó de topo é negado ao painel):
-     vitaflow_sync/logistica/config                   modo, números de teste, WhatsApp da Ana, horário...
+     vitaflow_sync/logistica/config                   modo (ligado/desligado), WhatsApp da Ana, horário...
      vitaflow_sync/logistica/textos/<chave>           textos editados no painel
      vitaflow_sync/logistica/conversas/<telefone>     estado da conversa (PATCH, nunca PUT)
      vitaflow_sync/logistica/protocolos/<aaaammdd-NNN> protocolo (id LOG-DDMM-NNN)
@@ -77,7 +82,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v8';
+var VERSAO = 'v9';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -99,12 +104,7 @@ var MIN = 60000, HORA = 3600000, DIA = 86400000;
 /* ------------------------------------------------------------------ config padrão
    Vale enquanto vitaflow_sync/logistica/config não existir (ou faltar a chave).          */
 var CFG_PADRAO = {
-  modo: 'teste',                       /* 'teste' | 'ligado' | 'desligado' */
-  numeros_teste: {
-    '447537155723': { nome: 'Ana Clara' },
-    '5511911338515': { nome: 'Teste 11 91133-8515' },
-    '5521998367319': { nome: 'Teste 21 99836-7319' }
-  },
+  modo: 'desligado',                   /* v9: 'ligado' | 'desligado' (o modo teste saiu) */
   ana_whatsapp: '447537155723',        /* recebe o aviso de protocolo novo */
   painel_url: '',                      /* link do painel da logística (vai no aviso) */
   silencio_horas: 6,                   /* bot calado depois de resposta humana */
@@ -775,7 +775,7 @@ async function carregarCfg() {
   var c = JSON.parse(JSON.stringify(CFG_PADRAO));
   if (b && typeof b === 'object') {
     for (var k in b) if (Object.prototype.hasOwnProperty.call(b, k) && b[k] !== null && b[k] !== undefined) c[k] = b[k];
-    if (['teste', 'ligado', 'desligado'].indexOf(c.modo) < 0) c.modo = 'teste';   /* valor estranho = modo seguro */
+    if (c.modo !== 'ligado') c.modo = 'desligado';   /* v9: só 'ligado' liga; 'teste' antigo ou valor estranho = desligado */
   }
   if (!c.horario || !c.horario.semana) c.horario = CFG_PADRAO.horario;
   _cache.cfg = c; _cache.cfgT = Date.now();
@@ -1383,7 +1383,6 @@ async function coletarAvaria(ctx) {
 function ehComandoBot(t) { return /^#\s*bot[\s.!]*$/i.test(String(t || '').trim()); }
 async function tratarFromMe(body, cfg, k, phone) {
   if (chaveNumero(phone) === chaveNumero(cfg.ana_whatsapp)) return 'fromMe para a Ana — ignorado';
-  if (cfg.modo === 'teste' && !numeroNaLista(phone, cfg.numeros_teste)) return 'fromMe fora do teste — ignorado';
   if (body.fromApi === true) return 'fromMe do bot (fromApi)';
   var conv = await fbGet(RAIZ + '/conversas/' + k) || {};
   var texto = (body.text && body.text.message) ? String(body.text.message) : '';
@@ -1493,8 +1492,7 @@ exports.handler = async function (event) {
 
   if (body.fromMe) return resp(200, await tratarFromMe(body, cfg, k, phone));
 
-  if (cfg.modo === 'teste' && !numeroNaLista(phone, cfg.numeros_teste)) return resp(200, 'modo teste — numero fora da lista');
-  if (chaveNumero(phone) === chaveNumero(cfg.ana_whatsapp) && !numeroNaLista(phone, cfg.numeros_teste)) return resp(200, 'numero da Ana — ignorado');
+  if (chaveNumero(phone) === chaveNumero(cfg.ana_whatsapp)) return resp(200, 'numero da Ana — ignorado');   /* v9: sem exceção da lista de teste */
 
   var trava = await pegarTrava(k);   /* v6: uma mensagem por vez nesta conversa */
   try { return await atenderCliente(body, cfg, k, phone); }
