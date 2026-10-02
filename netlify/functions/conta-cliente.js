@@ -78,12 +78,17 @@
        minha_conta → dados.cadastro {salvo, telefone, enderecos, principal} (nunca salvou: sugestão tirada dos pedidos, salvo:false).
        dados_compra → o cadastro salvo vale primeiro; devolve também `enderecos` e `principal` para o carrinho oferecer a escolha.
        Pedidos já feitos não mudam.
+   v9 (02/10/2026 — pedido do Thiago: ver a conta como o cliente vê): PRÉVIA DO ATENDIMENTO.
+       adm_previa_link {idToken, termo}  → (só admin) acha o e-mail do cliente pelo pedido/CPF/e-mail e devolve um link da Minha Conta
+                                           com um código de prévia que vale 15 min. Guarda só o hash em previas/<sha256> {email, exp, uid}.
+       previa {token}                    → a mesma montagem do minha_conta, SÓ LEITURA, marcada com previa:true. Não cria conta, não
+                                           abre sessão, não grava nada do cliente. Não serve para salvar_dados, avaliar nem dados_compra.
    Variáveis: FIREBASE_SECRET · BREVO_API_KEY · TELEGRAM_TOKEN/TELEGRAM_CHAT (já existem) · COMPRAS_KEY (NOVA, só pra trocar e-mail)
    ============================================================================= */
 var crypto = require('crypto');
 var R = require('./rastreio-consulta.js').lib;
 
-var VERSAO = 'v8';
+var VERSAO = 'v9';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_contas';
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
@@ -931,6 +936,31 @@ async function conferirAdmin(token) {
     return (await r.json()) === true ? uid : null;
   } catch (e) { return null; }
 }
+var PREVIA_VALE = 15 * 60000;
+async function admPreviaLink(uid, termo, agora) {
+  termo = String(termo || '').trim();
+  var b = await admBuscar(termo), email = '';
+  var ps = (b.pedidos || []).filter(function (p) { return p.email && !p.revendedor; });
+  if (termo.indexOf('@') >= 0) email = normEmail(termo);
+  else {
+    var alvo = termo.toUpperCase().replace(/\s+/g, '');
+    var doPedido = ps.filter(function (p) { return String(p.pedido).toUpperCase() === alvo; })[0];
+    /* e-mail do pedido informado; senão o e-mail que mais aparece nos pedidos do CPF */
+    if (doPedido) email = doPedido.email;
+    else { var cont = {}; ps.forEach(function (p) { cont[p.email] = (cont[p.email] || 0) + 1; }); email = Object.keys(cont).sort(function (x, y) { return cont[y] - cont[x]; })[0] || ''; }
+  }
+  if (!email || !emailValido(email)) return { ok: false, erro: 'sem_email', msg: 'Não achei um e-mail de cliente para esse pedido/CPF. Sem e-mail não existe conta.' };
+  var tok = tokenNovo();
+  await fbPut(RAIZ + '/previas/' + sha(tok), { email: email, exp: agora + PREVIA_VALE, uid: uid, criado: agora });
+  return { ok: true, link: PAGINA + '#previa=' + tok, email: mascararEmail(email), vale_min: Math.round(PREVIA_VALE / 60000) };
+}
+async function previaDoToken(tok, agora) {
+  tok = String(tok || '');
+  if (tok.length < 30 || tok.length > 80) return null;
+  var p = await fbGetOu(RAIZ + '/previas/' + sha(tok));
+  if (!p || !p.email || !(p.exp > agora)) return null;
+  return p;
+}
 async function admBuscar(termo) {
   termo = String(termo || '').trim();
   var hdr = await lerHdr(), I = indices(hdr), linhas = {};
@@ -1148,6 +1178,16 @@ exports.handler = async function (event) {
       return resp({ ok: true });
     }
 
+    /* ---------- v9: prévia do atendimento (só leitura, com o código gerado por um admin) ---------- */
+    if (acao === 'previa') {
+      var pv = await previaDoToken(d.token, agora);
+      if (!pv) return erro('previa', 'Esta prévia venceu. Gere outra no painel.');
+      var uPv = (await fbGetOu(RAIZ + '/usuarios/' + emailKey(pv.email))) || {};
+      var contaPv = await montarConta(Object.assign({}, uPv, { email: pv.email }), agora);
+      contaPv.previa = true;
+      return resp(contaPv);
+    }
+
     /* ---------- atendimento (admin) ---------- */
     if (acao.indexOf('adm_') === 0) {
       var uid = await conferirAdmin(d.idToken);
@@ -1161,6 +1201,7 @@ exports.handler = async function (event) {
         return resp(envR.ok ? { ok: true, para: emR } : { ok: false, erro: 'envio', msg: envR.erro });
       }
       if (acao === 'adm_painel') return resp(await admPainel());
+      if (acao === 'adm_previa_link') return resp(await admPreviaLink(uid, d.termo, agora));   /* v9 */
     }
     return erro('acao', 'Ação desconhecida.');
   } catch (e) {
