@@ -1,6 +1,14 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v5  ·  01/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v6  ·  02/10/2026
+   v6 (ordem do Thiago, 01-02/10): O E-MAIL DE ATRASO VIROU E-MAIL DE AVISO DE POSTAGEM. Sai para o pedido que a LOGÍSTICA marcou
+       como POSTADO na planilha e a transportadora ainda não leu — a mesma regra do aviso da página de rastreio (rastreio-consulta
+       v7) — e leva o MESMO texto da página (texto 1 = sem código; texto 2 = com código; os textos do Thiago, sem mudar palavra,
+       lidos de textos/rastreio_aviso_*). UM e-mail por pedido (o pedido dividido em pacotes recebe um só), sem lembrete.
+       Revendedor (V) nunca recebe. Entrega por MOTOBOY não recebe. Chave PRÓPRIA: email_postagem_modo (desligado é o padrão —
+       a chave antiga email_atraso_modo não liga nada). acao 'postagens' (fila + configuração) · enviar_teste tipo
+       'postagem_sem_codigo' / 'postagem_objeto_criado'. Contador: vitaflow_sync/logistica/email_postagem/<pedido>.
+       O e-mail antigo ("ainda está em separação") não é mais enviado; a lista Atrasos (cobrança do fornecedor) continua igual.
    v5 (Thiago, 01/10, noite): (1) VISTO — parados e atrasos de envio ganham o campo `visto` (vitaflow_sync/logistica/vistos/<pedido>,
        gravado pelo painel): o pedido sai da lista, do placar e do resumo do WhatsApp até mudar de status. Em pedido em trânsito, o
        visto liga o aviso "equipe acompanhando" na página de rastreio (rastreio-consulta v6). (2) CUPOM: nasce sozinho, mas o
@@ -120,6 +128,14 @@ var EMAIL_PADRAO = {
     'Acompanhe cada pacote em vitaflowoficial.com/pages/rastrear-pedido (use o número do pedido, o CPF ou o e-mail).\n\n' +
     'Se precisar, fale com a nossa logística pelo WhatsApp +44 7537 155718.\n\n' +
     'Equipe VitaFlow',
+  /* v6: E-MAIL DE AVISO DE POSTAGEM. {AVISO} = o MESMO aviso da página de rastreio (texto do Thiago, inteiro); {TITULO} = a 1ª frase dele */
+  email_postagem_assunto: '{TITULO} — pedido {PEDIDO}',
+  email_postagem_texto:
+    'Olá, {NOME}!\n\n' +
+    '{AVISO}\n\n' +
+    'Acompanhe em vitaflowoficial.com/pages/rastrear-pedido (use o número do pedido, o CPF ou o e-mail).\n\n' +
+    'Se precisar, fale com a nossa logística pelo WhatsApp +44 7537 155718.\n\n' +
+    'Equipe VitaFlow',
   /* v4: cupom de atraso na entrega ({CUPOM}, {PCT}, {VALIDADE} e {PREVISAO} são preenchidos pelo sistema) */
   email_cupom_assunto: 'Um cupom de {PCT}% para você — pedido {PEDIDO}',
   email_cupom_texto:
@@ -134,6 +150,7 @@ var EMAIL_PADRAO = {
     'Equipe VitaFlow'
 };
 var EMAIL_CFG_PADRAO = { email_atraso_modo: 'desligado', email_atraso_max: 3, email_atraso_intervalo_du: 3, email_atraso_janela_dias: 45,
+  email_postagem_modo: 'desligado', email_postagem_janela_dias: 45,   /* v6 */
   email_pacotes_modo: 'ligado', codigos_janela_dias: 45, codigos_duvida_dias: 15,   /* v3 */
   /* v4 */ cupom_atraso_modo: 'desligado', cupom_atraso_pct: 5, cupom_atraso_dias: 45, cupom_atraso_prefixo: 'DESCULPA', cupom_atraso_janela_dias: 60,
   cupom_atraso_desde: 0, cupom_atraso_max_rodada: 12, parados_dias: 3, parados_janela_dias: 60, parados_whatsapp: 'ligado' };
@@ -142,7 +159,21 @@ function preencher(t, v) { return String(t || '').replace(/\{([A-Z_]+)\}/g, func
 function escH(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 /* texto → HTML no padrão do e-mail "Pedido confirmado" (fundo cinza, cartão branco, logo no topo) */
-function htmlEmail(texto) {
+/* v6: destaques do aviso no e-mail de postagem (os mesmos da página de rastreio v9 / bot v8) — só negrito, itálico e cor; nenhuma palavra muda */
+var AV_EMOJI = '(?:[\\uD83C-\\uDBFF][\\uDC00-\\uDFFF]|[\\u2190-\\u2BFF\\uFE0F\\u200D])';
+var AV_FIM = new RegExp('([.!?](?:\\s*' + AV_EMOJI + ')*)\\s+(?=[A-ZÀ-Ý])', 'g');
+var AV_ATENCAO = ['o código de rastreamento ainda não está disponível', 'o status detalhado ainda não foi alterado'];
+var AV_FORTE = ['o seu código aparecerá aqui!', 'as informações serão atualizadas automaticamente aqui', 'transporte 100% seguro', 'a postagem ocorrerá logo em seguida',
+  'já abriu um chamado junto à transportadora'];
+var AV_ITALICO = ['Fique tranquilo', 'fique tranquilo', 'Agradecemos a compreensão'];
+function frasesAviso(t) {
+  var frases = [];
+  String(t || '').split(/\n+/).forEach(function (bloco) {
+    bloco.replace(AV_FIM, '$1\n').split('\n').forEach(function (f) { f = f.replace(/^\s+|\s+$/g, ''); if (f) frases.push(f); });
+  });
+  return frases;
+}
+function htmlEmail(texto, destaque) {
   var pars = String(texto || '').split(/\n{2,}/).map(function (p) {
     var h = escH(p).replace(/\n/g, '<br>').replace(/vitaflowoficial\.com\/pages\/rastrear-pedido/g,
       '<a href="' + RASTREIO_URL + '" style="color:#0280CD;font-weight:700">vitaflowoficial.com/pages/rastrear-pedido</a>');
@@ -154,6 +185,12 @@ function htmlEmail(texto) {
       '<div style="font-size:12px;color:#7a6a45;letter-spacing:1px;text-transform:uppercase">Seu cupom</div>' +
       '<div style="font-size:26px;font-weight:800;color:#0D1B2E;letter-spacing:2px;margin:6px 0">' + mC[1] + '</div>' +
       (mC[2] ? '<div style="font-size:13px;color:#41506a">' + mC[2] + '</div>' : '') + '</div>';
+    if (destaque) {   /* v6: e-mail de aviso de postagem — 1ª frase em destaque, negrito nos pontos principais e itálico no "Fique tranquilo" */
+      if (p === destaque) return '<p style="margin:0 0 14px;font-size:17px;font-weight:800;color:#12804f;line-height:1.45">' + h + '</p>';
+      AV_ATENCAO.forEach(function (x) { h = h.split(escH(x)).join('<b style="color:#b86e00">' + escH(x) + '</b>'); });
+      AV_FORTE.forEach(function (x) { h = h.split(escH(x)).join('<b style="color:#0D1B2E">' + escH(x) + '</b>'); });
+      AV_ITALICO.forEach(function (x) { h = h.split(x).join('<i>' + x + '</i>'); });
+    }
     return '<p style="margin:0 0 14px;font-size:15px;color:#41506a;line-height:1.65">' + h + '</p>';
   }).join('');
   return '<div style="background:#eceff3;padding:20px 10px;font-family:Arial,Helvetica,sans-serif">' +
@@ -167,7 +204,7 @@ function htmlEmail(texto) {
 }
 
 /* Brevo (API transacional) — a mesma conta/remetente do Apps Script */
-async function enviarBrevo(para, nome, assunto, texto) {
+async function enviarBrevo(para, nome, assunto, texto, destaque) {
   var chave = process.env.BREVO_API_KEY || '';
   if (!chave) return { ok: false, erro: 'falta a variável BREVO_API_KEY no Netlify' };
   try {
@@ -175,7 +212,7 @@ async function enviarBrevo(para, nome, assunto, texto) {
       method: 'POST',
       headers: { 'api-key': chave, 'accept': 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({ sender: { name: 'VitaFlow', email: 'contato@vitaflowoficial.com' },
-        to: [{ email: para, name: nome || undefined }], subject: assunto, htmlContent: htmlEmail(texto), textContent: texto })
+        to: [{ email: para, name: nome || undefined }], subject: assunto, htmlContent: htmlEmail(texto, destaque), textContent: texto })
     });
     if (r.status >= 200 && r.status < 300) return { ok: true };
     return { ok: false, erro: 'Brevo HTTP ' + r.status + ' ' + String(await r.text()).slice(0, 200) };
@@ -217,9 +254,10 @@ async function lerBase(comEmails) {
   var lidos = await Promise.all([
     R.fbGet('vitaflow_pedidos_hdr'), R.fbGet('vitaflow_pedidos'), R.fbGet('vitaflow_historico_status'),
     R.fbGetOu(RAIZ + '/config'), R.fbGetOu(RAIZ + '/textos'), comEmails ? R.fbGetOu(RAIZ + '/email_atraso') : Promise.resolve(null),
-    R.fbGetOu(RAIZ + '/vistos')   /* v5 */
+    R.fbGetOu(RAIZ + '/vistos'),   /* v5 */
+    comEmails ? R.fbGetOu(RAIZ + '/email_postagem') : Promise.resolve(null)   /* v6 */
   ]);
-  return { hdr: lidos[0] || [], esp: lidos[1] || {}, hist: lidos[2] || {}, cfg: lidos[3] || {}, txt: lidos[4] || {}, env: lidos[5] || {}, vistos: lidos[6] || {} };
+  return { hdr: lidos[0] || [], esp: lidos[1] || {}, hist: lidos[2] || {}, cfg: lidos[3] || {}, txt: lidos[4] || {}, env: lidos[5] || {}, vistos: lidos[6] || {}, envPost: lidos[7] || {} };
 }
 
 /* um pedido do espelho → dados de tempo (ts em ms) */
@@ -394,6 +432,57 @@ async function calcularAtrasos(base, peds, agora) {
   });
   lista.sort(function (a, b) { return b.dias - a.dias; });
   return lista;
+}
+
+/* ============================ v6: E-MAIL DE AVISO DE POSTAGEM ============================
+   Pedido que a LOGÍSTICA marcou como POSTADO e a transportadora ainda não leu (a mesma regra do aviso da página de rastreio).
+   tipo = 'sem_codigo' (sem código na planilha → texto 1) ou 'objeto_criado' (com código → texto 2). */
+async function calcularPostagens(base, peds, agora) {
+  agora = agora || Date.now();
+  var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
+  var janela = Math.max(7, Number(cfg.email_postagem_janela_dias) || 45);
+  var cand = peds.filter(function (p) {
+    return p.st === 'POSTADO' && !p.naoPagou && !p.final && p.tConf && p.tConf >= agora - janela * DIA && String(p.cod || '') !== 'MOTOBOY';
+  });
+  var evos = await Promise.all(cand.map(function (p) { return R.fbGetOu('vitaflow_sync/rastreio_eventos/' + p.k); }));
+  var porK = {}; peds.forEach(function (p) { porK[p.k] = p; });   /* a linha do pacote (D) nem sempre tem o e-mail: vale o do pedido original */
+  var lista = [];
+  cand.forEach(function (p, i) {
+    var evo = evos[i];
+    if (evo && evo.cod && p.codigo && String(evo.cod).replace(/\.0$/, '') !== String(p.codigo).replace(/\.0$/, '')) evo = null;
+    if (evo && evo.primeira) return;   /* a transportadora já leu: o cliente vê o rastreio de verdade, não precisa do aviso */
+    var kf = R.histKey(p.pai || p.pedido), env = (base.envPost || {})[kf] || {}, orig = p.pai ? (porK[kf] || null) : null;
+    lista.push({ k: p.k, k_email: kf, pedido: p.pedido, pedido_email: p.pai || p.pedido, pacote_de: p.pai || '', nome: p.nome || (orig && orig.nome) || '', email: p.email || (orig && orig.email) || '', uf: p.uf, cidade: p.cidade,
+      data: p.data, tipo: p.cod ? 'objeto_criado' : 'sem_codigo', atacado: p.atacado, postado_ts: p.tStatus || p.tPost || 0,
+      emails: Number(env.n) || 0, email_ultimo: Number(env.ultimo) || 0, revendedor: ehRevendedor(p.pai || p.pedido) });
+  });
+  /* UM e-mail por pedido: se o pedido foi dividido em pacotes, responde por ele o pedido original (se estiver na lista) ou o 1º pacote */
+  var porFam = {};
+  lista.forEach(function (a) { (porFam[a.k_email] = porFam[a.k_email] || []).push(a); });
+  Object.keys(porFam).forEach(function (kf) {
+    var g = porFam[kf], lider = g.filter(function (a) { return !a.pacote_de; })[0] || g.slice().sort(function (x, y) { return x.pedido < y.pedido ? -1 : 1; })[0];
+    g.forEach(function (a) { a.lider = (a === lider); });
+  });
+  lista.sort(function (a, b) { return (b.postado_ts || 0) - (a.postado_ts || 0); });
+  return lista;
+}
+/* recebe o e-mail de postagem na próxima rodada? (um só por pedido; revendedor nunca) */
+function decidirPostagem(a) {
+  if (ehRevendedor(a.pedido_email || a.pedido)) return null;
+  if (a.lider === false) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(a.email || ''))) return null;
+  if (a.emails) return null;
+  return 'postagem';
+}
+/* o e-mail = o MESMO aviso da página de rastreio (texto editado na aba Textos, senão o padrão do Thiago), uma frase por parágrafo */
+function montarEmailPostagem(a, textos) {
+  var T = Object.assign({}, EMAIL_PADRAO);
+  Object.keys(EMAIL_PADRAO).forEach(function (k) { if (textos && textos[k] && String(textos[k]).trim()) T[k] = String(textos[k]); });
+  var ch = 'rastreio_aviso_' + (a.tipo === 'objeto_criado' ? 'objeto_criado' : 'sem_codigo');
+  var aviso = (textos && typeof textos[ch] === 'string' && textos[ch].trim()) ? textos[ch] : (R.AVISOS_PADRAO || {})[ch];
+  var fr = frasesAviso(aviso);
+  var v = { NOME: String(a.nome || '').split(' ')[0] || 'cliente', PEDIDO: a.pedido_email || a.pedido, TITULO: fr[0] || '', AVISO: fr.join('\n\n') };
+  return { assunto: preencher(T.email_postagem_assunto, v), texto: preencher(T.email_postagem_texto, v), destaque: fr[0] || '' };
 }
 
 /* v2: pedido de REVENDEDOR = letra V depois da data (VF-DDMM-V###, VF-DDMM-VX…). Revendedor NÃO recebe e-mail nosso. */
@@ -1544,12 +1633,26 @@ exports.handler = async function (event) {
       _cache[ck] = { t: agora, v: v };
       return resp({ ok: true, numeros: v });
     }
+    if (acao === 'postagens' || (acao === 'enviar_teste' && /^postagem_/.test(String(d.tipo || '')))) {   /* v6: e-mail de aviso de postagem */
+      var b6 = await lerBase(true), cfg6 = Object.assign({}, EMAIL_CFG_PADRAO, b6.cfg || {});
+      var teste6 = String(cfg6.email_postagem_teste || cfg6.email_atraso_teste || '').trim();
+      if (acao === 'postagens') {
+        var l6 = await calcularPostagens(b6, montarPedidos(b6), agora);
+        l6.forEach(function (a) { a.recebe = decidirPostagem(a); });
+        return resp({ ok: true, postagens: l6, gerado_ts: agora, brevo: !!process.env.BREVO_API_KEY,
+          config: { modo: cfg6.email_postagem_modo || 'desligado', teste: teste6, janela_dias: cfg6.email_postagem_janela_dias } });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(teste6)) return resp({ ok: false, erro: 'Preencha o e-mail de teste e salve.' });
+      var m6 = montarEmailPostagem({ nome: 'Cliente Exemplo', pedido: 'VF-0110-S001', tipo: d.tipo === 'postagem_objeto_criado' ? 'objeto_criado' : 'sem_codigo' }, b6.txt);
+      var r6 = await enviarBrevo(teste6, '', '[TESTE] ' + m6.assunto, m6.texto, m6.destaque);
+      return resp(r6.ok ? { ok: true, enviado_para: teste6, pedido_exemplo: 'VF-0110-S001' } : { ok: false, erro: r6.erro });
+    }
     if (acao === 'atrasos' || acao === 'enviar_teste') {
       var b2 = await lerBase(true);
       var lista = await calcularAtrasos(b2, montarPedidos(b2), agora);
       var cfg = Object.assign({}, EMAIL_CFG_PADRAO, b2.cfg || {});
       if (acao === 'atrasos') {
-        lista.forEach(function (a) { a.recebe_hoje = decidirEnvio(a, cfg, agora); });
+        lista.forEach(function (a) { a.recebe_hoje = null; });   /* v6: o e-mail de atraso não existe mais (virou o e-mail de aviso de postagem — acao 'postagens') */
         return resp({ ok: true, atrasos: lista, gerado_ts: agora, brevo: !!process.env.BREVO_API_KEY,
           config: { modo: cfg.email_atraso_modo, teste: cfg.email_atraso_teste || '', max: cfg.email_atraso_max, intervalo_du: cfg.email_atraso_intervalo_du, janela_dias: cfg.email_atraso_janela_dias } });
       }
@@ -1595,4 +1698,5 @@ exports.lib = { lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros:
   /* v4 */
   cuponsAtraso: cuponsAtraso, foraDoPrazo: foraDoPrazo, prazoMaximo: prazoMaximo, montarEmailCupom: montarEmailCupom, cuponsGerados: cuponsGerados,
   cupomSituacao: cupomSituacao, cfgCupom: cfgCupom, calcularParados: calcularParados, avisoParados: avisoParados, textoParados: textoParados,
-  codigoCupomNovo: codigoCupomNovo, fsLerCupom: fsLerCupom, cuponsEnviar: cuponsEnviar, vistoVale: vistoVale /* v5 */ };
+  codigoCupomNovo: codigoCupomNovo, fsLerCupom: fsLerCupom, cuponsEnviar: cuponsEnviar, vistoVale: vistoVale /* v5 */,
+  calcularPostagens: calcularPostagens, decidirPostagem: decidirPostagem, montarEmailPostagem: montarEmailPostagem, frasesAviso: frasesAviso /* v6 */ };

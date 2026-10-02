@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   logistica-atrasos.js — ROTINA DIÁRIA DA LOGÍSTICA: e-mail de atraso, pacotes, cupom de atraso e parados (VitaFlow)  ·  v3  ·  01/10/2026
+   logistica-atrasos.js — ROTINA DIÁRIA DA LOGÍSTICA: e-mail de aviso de postagem, pacotes, cupom de atraso e parados (VitaFlow)  ·  v4  ·  02/10/2026
+   v4 (ordem do Thiago, 01-02/10): O E-MAIL DE ATRASO VIROU E-MAIL DE AVISO DE POSTAGEM (logistica-painel v6). Todo dia útil, o pedido
+       que a logística marcou como POSTADO e a transportadora ainda não leu recebe UM e-mail com o mesmo aviso da página de
+       rastreio (texto 1 sem código, texto 2 com código). Sem lembrete. Chave: email_postagem_modo (desligado é o padrão).
+       GRAVA: vitaflow_sync/logistica/email_postagem/<pedido> = { n, ultimo, pedido, tipo } e email_postagem_log/<aaaammdd>.
+       O e-mail antigo ("ainda está em separação", com lembretes) não é mais enviado. O resto (pacotes, cupom, parados) = v3.
    v3 (01/10/2026): todo dia útil, além do que já fazia, (3) gera os CUPONS DE ATRASO dos pedidos que passaram da previsão
        máxima de entrega e manda o e-mail do cupom (logistica-painel v4 → cuponsAtraso; chave própria: cupom_atraso_modo) e
        (4) manda no WhatsApp da logística o resumo dos PEDIDOS PARADOS há mais de 3 dias úteis no mesmo status
@@ -15,7 +20,7 @@
    Agenda no netlify.toml: [functions."logistica-atrasos"] schedule = "0 13 * * 1-5"  (10h de Brasília, seg a sex)
    (função agendada não abre por URL — o teste manual é o botão "Enviar e-mail de teste" no painel)
 
-   REGRA (decisão do Thiago, 01/10/2026 — "1 + lembretes"):
+   REGRA ANTIGA DO E-MAIL DE ATRASO (até a v3 — NÃO VALE MAIS desde a v4; fica só como história):
      - pedido PAGO que passou do prazo de POSTAGEM (3 dias úteis no varejo, 6 no atacado — PRAZOS_ENTREGA da
        rastreio-consulta v3) e ainda não foi postado → 1º e-mail;
      - continua sem postar → lembrete a cada 3 dias úteis; no máximo 3 e-mails por pedido;
@@ -23,11 +28,11 @@
      - feriado nacional: não roda.
    Pós-compra é só por e-mail (Regra 7). Remetente e conta: os mesmos do Apps Script (Brevo, contato@).
 
-   MODO (aba Atrasos do painel → vitaflow_sync/logistica/config/email_atraso_modo):
+   MODO (v4: aba Atrasos do painel → vitaflow_sync/logistica/config/email_postagem_modo):
      desligado (padrão) → não manda nada · teste → manda só 1 e-mail (o 1º da fila) para o e-mail de teste, sem
      contar · ligado → manda para os clientes.
-   GRAVA: vitaflow_sync/logistica/email_atraso/<pedido> = { n, ultimo, envios:{<ts>:'primeiro'|'lembrete'} }
-          vitaflow_sync/logistica/email_atraso_log/<aaaammdd> = { ts, modo, elegiveis, enviados, falhas, erros }
+   GRAVA (v4): vitaflow_sync/logistica/email_postagem/<pedido> = { n, ultimo, pedido, tipo }
+          vitaflow_sync/logistica/email_postagem_log/<aaaammdd> = { ts, modo, postados, elegiveis, enviados, falhas, erros }
    Variáveis de ambiente: FIREBASE_SECRET · BREVO_API_KEY (a mesma do Apps Script: Configurações do projeto →
    Propriedades do script → BREVO_API_KEY) · TELEGRAM_TOKEN/TELEGRAM_CHAT (aviso só quando algum envio falha).
    ============================================================================= */
@@ -68,19 +73,19 @@ async function rodar(agora) {
   if (cupons && cupons.lista) delete cupons.lista;   /* o log não precisa da lista */
   if (cupons && (cupons.erro || cupons.falhas)) await telegram('⚠️ CUPOM DE ATRASO: ' + (cupons.erro || (cupons.falhas + ' falha(s)\n' + (cupons.erros || []).slice(0, 3).join('\n'))));
   if (parados && parados.erro) await telegram('⚠️ PEDIDOS PARADOS: o resumo no WhatsApp falhou — ' + parados.erro);
+  /* v4: e-mail de AVISO DE POSTAGEM (substitui o e-mail de atraso) */
   var cfg = Object.assign({}, P.EMAIL_CFG_PADRAO, base.cfg || {});
-  var modo = cfg.email_atraso_modo || 'desligado';
+  var modo = cfg.email_postagem_modo || 'desligado';
   if (modo === 'desligado') return { ok: true, modo: modo, pacotes: pacotes, cupons: cupons, parados: parados };
-  var lista = await P.calcularAtrasos(base, peds, agora);
-  var fila = [];
-  lista.forEach(function (a) { var tipo = P.decidirEnvio(a, cfg, agora); if (tipo) fila.push({ a: a, tipo: tipo }); });
-  var log = { ts: agora, modo: modo, atrasados: lista.length, elegiveis: fila.length, enviados: 0, falhas: 0, erros: [] };
+  var lista = await P.calcularPostagens(base, peds, agora);
+  var fila = lista.filter(function (x) { return !!P.decidirPostagem(x); });
+  var log = { ts: agora, modo: modo, postados: lista.length, elegiveis: fila.length, enviados: 0, falhas: 0, erros: [] };
 
   if (modo === 'teste') {
-    var para = String(cfg.email_atraso_teste || '').trim();
+    var para = String(cfg.email_postagem_teste || cfg.email_atraso_teste || '').trim();
     if (fila.length && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(para)) {
-      var m0 = P.montarEmail(fila[0].a, fila[0].tipo, base.txt);
-      var r0 = await P.enviarBrevo(para, '', '[TESTE] ' + m0.assunto, m0.texto);
+      var m0 = P.montarEmailPostagem(fila[0], base.txt);
+      var r0 = await P.enviarBrevo(para, '', '[TESTE] ' + m0.assunto, m0.texto, m0.destaque);
       if (r0.ok) log.enviados = 1; else { log.falhas = 1; log.erros.push(r0.erro); }
     } else if (fila.length) { log.erros.push('modo teste sem e-mail de teste válido'); }
   } else if (modo === 'ligado') {
@@ -88,27 +93,23 @@ async function rodar(agora) {
     for (var i = 0; i < fila.length; i += 5) {
       var lote = fila.slice(i, i + 5);
       var rs = await Promise.all(lote.map(function (x) {
-        var m = P.montarEmail(x.a, x.tipo, base.txt);
-        return P.enviarBrevo(x.a.email, x.a.nome, m.assunto, m.texto);
+        var m = P.montarEmailPostagem(x, base.txt);
+        return P.enviarBrevo(x.email, x.nome, m.assunto, m.texto, m.destaque);
       }));
       for (var j = 0; j < lote.length; j++) {
         var x = lote[j];
         if (rs[j].ok) {
           log.enviados++;
-          var envios = {}; envios[agora + j] = x.tipo;
-          try {
-            var kE = x.a.k_email || x.a.k;   /* v2: pacote (linha D) conta no pedido original */
-            await fbPatch(P.RAIZ + '/email_atraso/' + kE, { n: (x.a.emails || 0) + 1, ultimo: agora, pedido: x.a.pedido_email || x.a.pedido });
-            await fbPatch(P.RAIZ + '/email_atraso/' + kE + '/envios', envios);
-          } catch (eG) { log.erros.push(x.a.pedido + ': enviado, mas não gravou (' + eG.message + ')'); }
-        } else { log.falhas++; if (log.erros.length < 10) log.erros.push(x.a.pedido + ': ' + rs[j].erro); }
+          try { await fbPatch(P.RAIZ + '/email_postagem/' + x.k_email, { n: 1, ultimo: agora, pedido: x.pedido_email || x.pedido, tipo: x.tipo }); }
+          catch (eG) { log.erros.push(x.pedido + ': enviado, mas não gravou (' + eG.message + ')'); }
+        } else { log.falhas++; if (log.erros.length < 10) log.erros.push(x.pedido + ': ' + rs[j].erro); }
       }
     }
   }
   var dia = R.diaBR(agora).replace(/-/g, '');
-  try { await fbPatch(P.RAIZ + '/email_atraso_log', (function () { var o = {}; o[dia] = log; return o; })()); } catch (eL) { console.error(eL.message); }
+  try { await fbPatch(P.RAIZ + '/email_postagem_log', (function () { var o = {}; o[dia] = log; return o; })()); } catch (eL) { console.error(eL.message); }
   if (log.falhas) {   /* Telegram só quando falha (o resumo do dia fica no log, visível no painel) */
-    await telegram('⚠️ E-MAIL DE ATRASO (' + modo + '): ' + log.falhas + ' falha(s) de ' + log.elegiveis + '\n' + log.erros.slice(0, 3).join('\n'));
+    await telegram('⚠️ E-MAIL DE AVISO DE POSTAGEM (' + modo + '): ' + log.falhas + ' falha(s) de ' + log.elegiveis + '\n' + log.erros.slice(0, 3).join('\n'));
   }
   return { ok: true, log: log, pacotes: pacotes, cupons: cupons, parados: parados };
 }
@@ -120,7 +121,7 @@ exports.handler = async function () {
     return { statusCode: 200, body: JSON.stringify(r) };
   } catch (e) {
     console.error('[logistica-atrasos] erro: ' + (e && e.message || e));
-    await telegram('⚠️ E-MAIL DE ATRASO: a rotina deu erro — ' + String(e && e.message || e).slice(0, 200));
+    await telegram('⚠️ ROTINA DA LOGÍSTICA: deu erro — ' + String(e && e.message || e).slice(0, 200));
     return { statusCode: 500, body: JSON.stringify({ ok: false, erro: String(e && e.message || e) }) };
   }
 };
