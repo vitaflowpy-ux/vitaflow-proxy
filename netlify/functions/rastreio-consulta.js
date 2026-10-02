@@ -1,9 +1,18 @@
 'use strict';
 /* =============================================================================
-   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v6  ·  01/10/2026
+   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v7  ·  02/10/2026
    Netlify Function no repo vitaflow-proxy → netlify/functions/rastreio-consulta.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/rastreio-consulta
 
+   v7 (02/10/2026 — regra do Thiago: "os textos de acordo com o STATUS do pedido; quem marca Postado é a logística"):
+     · aviso 'sem_codigo' / 'objeto_criado' (textos 1 e 2 do Thiago) = pedido com o status POSTADO na planilha (colocado pela
+       logística) e AINDA SEM leitura da transportadora: sem código na planilha → texto 1; com código → texto 2. Vale para
+       varejo e atacado, na hora em que o status vira Postado (não espera mais o prazo de postagem).
+     · pedido que ainda NÃO está como Postado não recebe esses dois textos (antes recebia sozinho depois do prazo de postagem,
+       mesmo com o status em "em separação" — o texto dizia uma coisa e o status/mapa outra).
+     · aviso 'atacado' = atacado ainda não postado, depois do prazo de postagem (6 dias úteis) — igual à v6.
+     · aviso 'transferencia' (visto da logística), prazo_total e nota_prazo = v6. Os TEXTOS não mudaram uma palavra.
+     A página v9 mostra etapa/mapa de "Postado" sempre que o status é Postado.
    v6 (01/10/2026 — pedidos do Thiago): cada pedido ganha 3 campos novos para a página de rastreio v7:
      · prazo_total { dias, max, pct, ate, passou } — a BARRA ÚNICA: do pagamento até a previsão MÁXIMA de entrega
        (a mesma conta do cupom de atraso da logistica-painel).
@@ -383,7 +392,9 @@ async function _rastreioEnriquecer(rr, fornTxt, rastCel, emRota, evo, comp) {
       var temCod = !!rastCel && String(rastCel).toUpperCase().indexOf('AVISO_ABANDONO') === -1;
       var motoboy = temCod && String(rastCel).toUpperCase().replace(/\s/g, '') === 'MOTOBOY';
       var tipoAv = '';
-      if (semLeitura && !motoboy && tConf && _duEntre(tConf, agora) > postDU) tipoAv = rr.atacado ? 'atacado' : (temCod ? 'objeto_criado' : 'sem_codigo');   /* atacado tem texto próprio (Thiago, 01/10) */
+      /* v7: os textos 1 e 2 seguem o STATUS — Postado na planilha (quem marca é a logística) e a transportadora ainda não leu */
+      if (semLeitura && !motoboy && rs === 4) tipoAv = temCod ? 'objeto_criado' : 'sem_codigo';
+      else if (semLeitura && !motoboy && rr.atacado && tConf && _duEntre(tConf, agora) > postDU) tipoAv = 'atacado';   /* atacado ainda não postado: texto próprio (Thiago, 01/10) */
       else if (!semLeitura && ordemEx >= 4 && ordemEx <= 7) {   /* em trânsito: só com o VISTO da logística (e enquanto o status não mudar) */
         var vst = await fbGetOu(LOG_RAIZ + '/vistos/' + _histKey(rr.pedido));
         if (vst && vst.st && vst.st === _semAcentoUp(rr.status)) tipoAv = 'transferencia';
