@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v6  ·  02/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v7  ·  02/10/2026
+   v7 (OK do Thiago, 02/10): o RESUMO DAS 10h no WhatsApp da logística (avisoParados) passa a trazer também QUEM PASSOU DO PRAZO DE
+       POSTAGEM (3 dias úteis no varejo, 6 no atacado) — a mesma lista da aba Atrasos, sem os marcados com ✔ Visto: pedido, fornecedor,
+       dias úteis e até quando era. O resumo sai quando há parados OU atrasados na postagem. Mesma chave (parados_whatsapp). Resto = v6.
    v6 (ordem do Thiago, 01-02/10): O E-MAIL DE ATRASO VIROU E-MAIL DE AVISO DE POSTAGEM. Sai para o pedido que a LOGÍSTICA marcou
        como POSTADO na planilha e a transportadora ainda não leu — a mesma regra do aviso da página de rastreio (rastreio-consulta
        v7) — e leva o MESMO texto da página (texto 1 = sem código; texto 2 = com código; os textos do Thiago, sem mudar palavra,
@@ -1499,6 +1502,17 @@ async function whats(telefone, texto) {
     return r.ok ? { ok: true } : { ok: false, erro: 'Z-API HTTP ' + r.status };
   } catch (e) { return { ok: false, erro: 'Z-API: ' + e.message }; }
 }
+/* v7: quem passou do prazo de postagem, para o resumo das 10h (os mesmos da aba Atrasos, sem os vistos) */
+function textoAtrasosPostagem(atr, painelUrl) {
+  var nAtk = atr.filter(function (a) { return a.atacado; }).length;
+  var L = ['⏰ *Logística — passaram do prazo de postagem* (' + atr.length + ')', 'Varejo (3 dias úteis): ' + (atr.length - nAtk) + ' · Atacado (6 dias úteis): ' + nAtk, '⠀'];
+  atr.slice(0, 20).forEach(function (a) {
+    L.push('• ' + a.pedido + ((a.atacado && String(a.fornecedor || '').toLowerCase().indexOf('atacado') < 0) ? ' (atacado)' : '') + ' — ' + (a.fornecedor || 'sem fornecedor') + ' — ' + a.dias + ' dias úteis (era até ' + a.postagem_ate + ')');
+  });
+  if (atr.length > 20) L.push('… e mais ' + (atr.length - 20));
+  L.push('⠀'); L.push('A lista por fornecedor, para cobrar, está na aba *Atrasos* do painel' + (painelUrl ? ': ' + painelUrl : '.'));
+  return L.join('\n');
+}
 function textoParados(lista, novos, lim, painelUrl) {
   var L = ['⏱️ *Logística — pedidos parados há mais de ' + lim + ' dias úteis no mesmo status* (' + lista.length + ')', '⠀'];
   if (novos.length) {
@@ -1521,16 +1535,23 @@ async function avisoParados(op) {
   var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
   var todosP = calcularParados(base, op.peds || montarPedidos(base), agora);
   var lista = todosP.filter(function (a) { return !a.visto; });   /* v5: os vistos ficam fora do resumo */
-  var out = { ok: true, parados: lista.length, vistos: todosP.length - lista.length, novos: 0, enviado: false };
+  /* v7: atrasados na postagem (aba Atrasos), fora os vistos. Falha aqui não derruba o resumo dos parados. */
+  var atr = [];
+  try { atr = (await calcularAtrasos(base, op.peds || montarPedidos(base), agora)).filter(function (a) { return !a.visto; }); } catch (eA) { atr = []; }
+  var out = { ok: true, parados: lista.length, vistos: todosP.length - lista.length, novos: 0, enviado: false, atrasos_postagem: atr.length };
   if (cfg.parados_whatsapp === 'desligado') { out.pulou = 'aviso desligado'; return out; }
   var av = (await fbLerOu(RAIZ + '/parados_avisados')) || {};
   var novos = lista.filter(function (a) { return !(av[a.k] && av[a.k].st === a.st); });
   out.novos = novos.length;
-  if (!lista.length) return out;
+  if (!lista.length && !atr.length) return out;
   var tel = String(cfg.ana_whatsapp || '').replace(/\D/g, '');
   if (!tel) { out.ok = false; out.erro = 'sem o WhatsApp da logística na configuração (ana_whatsapp)'; return out; }
-  if (op.simular) { out.texto = textoParados(lista, novos, Math.max(1, Number(cfg.parados_dias) || 3), cfg.painel_url || ''); return out; }
-  var r = await whats(tel, textoParados(lista, novos, Math.max(1, Number(cfg.parados_dias) || 3), cfg.painel_url || ''));
+  var partes = [];
+  if (atr.length) partes.push(textoAtrasosPostagem(atr, cfg.painel_url || ''));
+  if (lista.length) partes.push(textoParados(lista, novos, Math.max(1, Number(cfg.parados_dias) || 3), cfg.painel_url || ''));
+  var textoResumo = partes.join('\n⠀\n━━━━━━━━━━\n⠀\n');
+  if (op.simular) { out.texto = textoResumo; return out; }
+  var r = await whats(tel, textoResumo);
   if (!r.ok) { out.ok = false; out.erro = r.erro; return out; }
   out.enviado = true;
   var mapa = {};
@@ -1698,5 +1719,5 @@ exports.lib = { lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros:
   /* v4 */
   cuponsAtraso: cuponsAtraso, foraDoPrazo: foraDoPrazo, prazoMaximo: prazoMaximo, montarEmailCupom: montarEmailCupom, cuponsGerados: cuponsGerados,
   cupomSituacao: cupomSituacao, cfgCupom: cfgCupom, calcularParados: calcularParados, avisoParados: avisoParados, textoParados: textoParados,
-  codigoCupomNovo: codigoCupomNovo, fsLerCupom: fsLerCupom, cuponsEnviar: cuponsEnviar, vistoVale: vistoVale /* v5 */,
+  codigoCupomNovo: codigoCupomNovo, fsLerCupom: fsLerCupom, cuponsEnviar: cuponsEnviar, vistoVale: vistoVale /* v5 */, textoAtrasosPostagem: textoAtrasosPostagem /* v7 */,
   calcularPostagens: calcularPostagens, decidirPostagem: decidirPostagem, montarEmailPostagem: montarEmailPostagem, frasesAviso: frasesAviso /* v6 */ };
