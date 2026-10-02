@@ -70,12 +70,14 @@
        dados_compra / Meus dados: telefone = o do pedido mais recente que tem telefone; endereço = o do pedido mais recente, separado
        nos dois formatos que a planilha grava (carrinho do site e Athena/Orçamento). Pedido mais recente sem endereço separável:
        usa o endereço separável mais recente do MESMO CEP (ou, se o mais recente nem CEP tem, o separável mais recente).
+   v7 (02/10/2026): cada produto de "Produtos que já comprei" leva o `pid` (id do produto no site — o vfId gravado pelo Compras),
+       para a página achar o produto certo mesmo quando o nome dele mudou no site. Sem vfId no Compras: pid vazio.
    Variáveis: FIREBASE_SECRET · BREVO_API_KEY · TELEGRAM_TOKEN/TELEGRAM_CHAT (já existem) · COMPRAS_KEY (NOVA, só pra trocar e-mail)
    ============================================================================= */
 var crypto = require('crypto');
 var R = require('./rastreio-consulta.js').lib;
 
-var VERSAO = 'v6';
+var VERSAO = 'v7';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_contas';
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
@@ -634,7 +636,7 @@ async function montarConta(u, agora, soCompra) {
   var avDe = {}; pks.forEach(function (pk, j) { avDe[pk] = avs[j]; });
 
   var danCods = await codigosDoDaniel();
-  var saidaGrupos = [], produtos = {}, totalGasto = 0, nPedidos = 0, primeiroData = 0;
+  var saidaGrupos = [], produtos = {}, pidPorNome = {}, totalGasto = 0, nPedidos = 0, primeiroData = 0;
   pks.forEach(function (pk) {
     var g = grupos[pk];
     var comp = compras[g.principal.k] || null;
@@ -658,7 +660,10 @@ async function montarConta(u, agora, soCompra) {
         var nome = String(it.nome || it.textoOriginal || '').trim(); if (!nome || ehFrete(nome)) return;
         var de = String(it._dePed || g.principal.pedido).trim();
         if (!meusKs[de.toUpperCase()] && !(de.toUpperCase() === g.principal.pedido.toUpperCase() && !g.principal.alheio)) return;  /* item de pedido que não é do cliente */
-        itens.push({ qtd: Number(it.qtd) || 1, nome: nome.replace(/\s+x\s*\d+\s*$/i, ''), de: de, _forn: familiaForn(it.fornecedor) });
+        var nomeIt = nome.replace(/\s+x\s*\d+\s*$/i, '');
+        var pidIt = soDig(String(it.vfId == null ? '' : it.vfId).replace(/^.*\//, ''));   /* v7 */
+        if (pidIt.length >= 6 && !pidPorNome[up(nomeIt)]) pidPorNome[up(nomeIt)] = pidIt;
+        itens.push({ qtd: Number(it.qtd) || 1, nome: nomeIt, de: de, _forn: familiaForn(it.fornecedor) });
       });
     }
     if (!itens.length) {
@@ -749,7 +754,7 @@ async function montarConta(u, agora, soCompra) {
   var lista = saidaGrupos.concat(saidaReenvios).sort(function (a, b) { return b.data_num - a.data_num || (a.principal < b.principal ? 1 : -1); });
   lista.forEach(function (g) { delete g.data_num; });
   var listaProd = Object.keys(produtos).map(function (k) {
-    var p = produtos[k]; return { nome: p.nome, unidades: p.unidades, vezes: Object.keys(p.pedidos).length, ultima: p.ultima_txt, _o: p.ultima, tags: p.tags };
+    var p = produtos[k]; return { nome: p.nome, pid: pidPorNome[k] || '', unidades: p.unidades, vezes: Object.keys(p.pedidos).length, ultima: p.ultima_txt, _o: p.ultima, tags: p.tags };
   }).sort(function (a, b) { return b._o - a._o || b.vezes - a.vezes; });
   listaProd.forEach(function (p) { delete p._o; });
 
