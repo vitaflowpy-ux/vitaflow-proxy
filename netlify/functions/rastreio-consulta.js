@@ -1,9 +1,12 @@
 'use strict';
 /* =============================================================================
-   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v4  ·  01/10/2026
+   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v5  ·  01/10/2026
    Netlify Function no repo vitaflow-proxy → netlify/functions/rastreio-consulta.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/rastreio-consulta
 
+   v5 (01/10/2026): ORIGEM NOVA 'CP' = Campinas/SP. A fornecedora VITAFLOW devolve 'CP' (antes 'SP', que no mapa é a
+   rota da capital). A coluna ORIGEM da planilha também aceita CP. Quem lê a origem: página de rastreio v6 (rota de
+   Campinas), bot da logística v7 e logistica-painel v4 (nome 'Campinas/SP'). Igual ao GAS v54.
    v4 (01/10/2026): COLUNA ORIGEM + LINHA D (pacote). A coluna nova ORIGEM da planilha (MS/SP/RJ/PY — gravada pela rodada
    de códigos, a partir do site do Daniel, ou à mão), quando preenchida, MANDA na origem do mapa. A linha D criada pelo
    Compras traz PEDIDO_ORIGINAL: a regra do produto do Daniel lê o vitaflow_compras do pedido original. Igual ao GAS v53.
@@ -187,7 +190,7 @@ function _origemEnvio(pedido, fornTxt) {
     if (/\bSP\b/.test(trechoD)) return 'SP';
     return 'DANIEL';
   }
-  if (f && f.replace(/[^A-Z]/g, '').indexOf('VITAFLOW') === 0) return 'SP';   /* v4 (Thiago, 01/10): fornecedora VitaFlow sai de Campinas/SP — nunca do RJ */
+  if (f && f.replace(/[^A-Z]/g, '').indexOf('VITAFLOW') === 0) return 'CP';   /* v5: fornecedora VitaFlow sai de Campinas/SP — nunca do RJ (Thiago, 01/10) */
   return 'SP';
 }
 function _danNomeCompatGAS(a, b) {
@@ -296,7 +299,7 @@ async function _rastreioEnriquecer(rr, fornTxt, rastCel, emRota, evo, comp) {
     }
     rr.atacado = /VF-\d{4}-W/i.test(String(rr.pedido)) || _semAcentoUp(fornTxt).indexOf('CAMILA') >= 0;
     if (rr.atacado) rr.origem = 'PY';
-    if (rr._orig === 'MS' || rr._orig === 'SP' || rr._orig === 'RJ' || rr._orig === 'PY') rr.origem = rr._orig;   /* v4: coluna ORIGEM manda */
+    if (rr._orig === 'MS' || rr._orig === 'SP' || rr._orig === 'RJ' || rr._orig === 'PY' || rr._orig === 'CP') rr.origem = rr._orig;   /* v4: coluna ORIGEM manda (v5: + CP) */
 
     var tConf = 0, tPostHist = 0;
     (rr.historico || []).forEach(function (h) {

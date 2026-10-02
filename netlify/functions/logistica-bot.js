@@ -1,6 +1,12 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v6  ·  01/10/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v7  ·  01/10/2026
+   v7 (Thiago, 01/10): (1) COMANDO #bot — quando a logística manda "#bot" pelo celular numa conversa em que o bot está
+       calado, o bot VOLTA NA HORA naquela conversa (sem esperar as 6 h). Só vale vindo do celular da logística (fromMe):
+       se o CLIENTE escrever #bot, é uma mensagem qualquer — não reativa nada. (2) LISTA "BOT CALADO": cada silêncio fica
+       anotado em vitaflow_sync/logistica/silencio/<telefone> (até quando, desde quando, nome, pedido) pro painel mostrar
+       TODAS as conversas em silêncio com o botão "Devolver ao bot" (antes só dava pelo cartão do protocolo).
+       (3) Origem 'CP' = Campinas/SP (fornecedora VitaFlow — rastreio-consulta v5) no "Sai de:" do cartão.
    v6 (OK do Thiago, 01/10): (1) UMA MENSAGEM POR VEZ por conversa — trava em vitaflow_sync/logistica/travas/<tel>
        (gravação condicional com ETag; some sozinha em 25 s). No teste de 01/10 o vídeo (que a Z-API só repassa
        depois de baixar, ~1 min para 7 MB) e o "Enviei" chegaram no MESMO segundo e foram processados juntos.
@@ -55,6 +61,7 @@
      vitaflow_sync/logistica/por_pedido/<pedido>      protocolo aberto daquele pedido (trava 1 por pedido)
      vitaflow_sync/logistica/seq/<aaaammdd>           contador do dia (ETag / if-match)
      vitaflow_sync/logistica/fila_aviso/<chave>       protocolos abertos fora do horário (aviso na abertura)
+     vitaflow_sync/logistica/silencio/<telefone>      (v7) conversas com o bot calado — espelho pro painel
    LÊ: rastreio-consulta (função deste site) → GAS consultar_status (reserva) · vitaflow_compras/<pedido>
 
    VARIÁVEIS DE AMBIENTE (Netlify vitaflow-proxy)
@@ -65,7 +72,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v6';
+var VERSAO = 'v7';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -372,7 +379,7 @@ var EXPLIC = {
   'REEMBOLSO REALIZADO': 'O reembolso do pedido foi efetuado.',
   'PEDIDO CANCELADO': 'O pedido foi cancelado.'
 };
-var ORIGEM = { SP: 'São Paulo', MS: 'Mato Grosso do Sul', PY: 'Paraguai (atacado)', RJ: 'Rio de Janeiro' };
+var ORIGEM = { SP: 'São Paulo', CP: 'Campinas/SP', MS: 'Mato Grosso do Sul', PY: 'Paraguai (atacado)', RJ: 'Rio de Janeiro' };   /* v7: CP */
 
 function statusDe(snap) { return up((snap && (snap.status_exibido || snap.status)) || ''); }
 function rotuloStatus(s) { var u = up(s); return ROTULO[u] || (String(s || '').charAt(0) + low(s).slice(1)) || '—'; }
@@ -1340,12 +1347,20 @@ async function coletarAvaria(ctx) {
 }
 
 /* ------------------------------------------------------------------ mensagem que o celular da logística MANDOU (fromMe) */
+/* v7: "#bot" (com ou sem espaço, maiúscula ou minúscula) e mais nada na mensagem */
+function ehComandoBot(t) { return /^#\s*bot[\s.!]*$/i.test(String(t || '').trim()); }
 async function tratarFromMe(body, cfg, k, phone) {
   if (chaveNumero(phone) === chaveNumero(cfg.ana_whatsapp)) return 'fromMe para a Ana — ignorado';
   if (cfg.modo === 'teste' && !numeroNaLista(phone, cfg.numeros_teste)) return 'fromMe fora do teste — ignorado';
   if (body.fromApi === true) return 'fromMe do bot (fromApi)';
   var conv = await fbGet(RAIZ + '/conversas/' + k) || {};
   var texto = (body.text && body.text.message) ? String(body.text.message) : '';
+  /* v7: "#bot" mandado pelo celular da logística = devolver a conversa ao bot AGORA */
+  if (ehComandoBot(texto)) {
+    await fbPatch(RAIZ + '/conversas/' + k, { silencio_ate: 0, silencio_desde: 0, bot_volta_ts: Date.now(), telefone: phone });
+    try { await fbDelete(RAIZ + '/silencio/' + k); } catch (eD) { /* a lista do painel é só um espelho */ }
+    return 'bot reativado (#bot)';
+  }
   if (texto) {
     var h = impressao(texto), agora = Date.now();
     var lista = conv.bot_txt || [];
@@ -1353,7 +1368,15 @@ async function tratarFromMe(body, cfg, k, phone) {
   }
   /* foi gente respondendo pelo celular da logística → silêncio */
   var agora2 = Date.now(), horas = Number(cfg.silencio_horas) || 6;
-  await fbPatch(RAIZ + '/conversas/' + k, { silencio_ate: agora2 + horas * HORA, humano_ts: agora2, telefone: phone });
+  var desde = (conv.silencio_ate && conv.silencio_ate > agora2 && conv.silencio_desde) ? conv.silencio_desde : agora2;
+  await fbPatch(RAIZ + '/conversas/' + k, { silencio_ate: agora2 + horas * HORA, silencio_desde: desde, humano_ts: agora2, telefone: phone });
+  /* v7: espelho pro painel listar as conversas com o bot calado (apagado no #bot e no botão "Devolver ao bot") */
+  try {
+    await fbPut(RAIZ + '/silencio/' + k, { ate: agora2 + horas * HORA, desde: desde, telefone: phone,
+      nome: String(conv.nome_whatsapp || body.chatName || '').slice(0, 80),
+      pedido: (typeof conv.pedido === 'string') ? conv.pedido : ((conv.snap && conv.snap.pedido) ? String(conv.snap.pedido) : ''),
+      protocolo: conv.protocolo ? String(conv.protocolo) : '' });
+  } catch (eS) { console.error('[logistica] silencio (espelho): ' + eS.message); }
   if (conv.protocolo) {
     var pr = await fbGet(RAIZ + '/protocolos/' + conv.protocolo);
     if (pr && pr.status === 'aberto') {

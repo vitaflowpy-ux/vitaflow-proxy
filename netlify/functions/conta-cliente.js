@@ -1,6 +1,10 @@
 'use strict';
 /* =============================================================================
-   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v1  ·  01/10/2026
+   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v3  ·  01/10/2026
+   v3 (01/10/2026): MEUS CUPONS. A resposta de 'minha_conta' ganha a lista `cupons`: o cupom de atraso na entrega que a
+       logistica-painel v4 gera (vitaflow_sync/logistica/cupons_atraso/<pedido>) para os pedidos DESTA conta — código,
+       desconto, validade e situação (disponível / usado / vencido, lida da coleção cupons_vitaflow, a mesma do carrinho).
+       Só pedidos da conta dos últimos 200 dias; revendedor (V) e reenvio (R) nunca têm cupom.
    v2 (01/10/2026): PACOTES AUTOMÁTICOS. A linha D criada pelo Compras (GAS v53) traz a coluna PEDIDO_ORIGINAL e o
        fornecedor do pacote: (1) a linha D é ligada ao pedido pelo PEDIDO_ORIGINAL (sem adivinhar por nome/dia);
        (2) cada envio cuja linha tem UM fornecedor só na coluna COMPRADO_FORNECEDORES fica com os itens daquele
@@ -58,7 +62,7 @@
 var crypto = require('crypto');
 var R = require('./rastreio-consulta.js').lib;
 
-var VERSAO = 'v2';
+var VERSAO = 'v3';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_contas';
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
@@ -68,6 +72,10 @@ var DIA = 86400000;
 var LINK_VALIDADE = 30 * 60000;
 var SESSAO_MANTER = 90 * DIA, SESSAO_CURTA = DIA;
 var MAX_PEDIDOS = 150;
+/* v3: cupom de atraso (gravado pela logistica-painel v4) */
+var LOG_CUPONS = 'vitaflow_sync/logistica/cupons_atraso';
+var FS_PROJETO = 'pricehub-f0236';
+var FS_KEY = process.env.FIRESTORE_KEY || 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';   /* chave web do Firebase — a mesma (pública) do carrinho do site */
 var COMO_OPCOES = ['Instagram', 'Google', 'Indicação de amigo', 'Grupo de WhatsApp', 'Telegram', 'YouTube', 'TikTok', 'Outro'];
 var MARCADORES = ['Prazo de entrega', 'Atendimento', 'Produto', 'Embalagem', 'Preço'];
 
@@ -416,6 +424,39 @@ function envioPublico(rr, n) {
   return e;
 }
 
+/* ---- v3: MEUS CUPONS ---- */
+function fsNum(c) { return c ? Number(c.integerValue != null ? c.integerValue : (c.doubleValue != null ? c.doubleValue : 0)) || 0 : 0; }
+/* estado do cupom na coleção cupons_vitaflow: null = não existe mais · undefined = não deu pra saber */
+async function fsCupomEstado(docId) {
+  try {
+    var r = await fetch('https://firestore.googleapis.com/v1/projects/' + FS_PROJETO + '/databases/(default)/documents/cupons_vitaflow/' + encodeURIComponent(docId) + '?key=' + FS_KEY);
+    if (r.status === 404) return null;
+    if (!r.ok) return undefined;
+    var f = ((await r.json()) || {}).fields || {};
+    return { usos: fsNum(f.usosAtual), ativo: f.ativo ? f.ativo.booleanValue !== false : true,
+      expira: (f.expira && f.expira.timestampValue) ? new Date(f.expira.timestampValue).getTime() : 0 };
+  } catch (e) { return undefined; }
+}
+function ddmmaaaa(ts) { var d = new Date(Number(ts) - 3 * 3600000); return ('0' + d.getUTCDate()).slice(-2) + '/' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '/' + d.getUTCFullYear(); }
+async function cuponsDoCliente(pedidos, agora) {
+  var rec = pedidos.filter(function (x) { var t = dataTs(x.data); return t && t >= agora - 200 * DIA; })
+    .sort(function (a, b) { return dataNum(b.data) - dataNum(a.data); }).slice(0, 40);
+  var regs = await Promise.all(rec.map(function (x) { return fbGetOu(LOG_CUPONS + '/' + R.histKey(x.pedido)); }));
+  var achados = [];
+  regs.forEach(function (g, i) { if (g && typeof g === 'object' && g.codigo) achados.push({ g: g, pedido: rec[i].pedido, k: R.histKey(rec[i].pedido) }); });
+  var fss = await Promise.all(achados.map(function (a) { return fsCupomEstado(a.g.doc || ('atraso_' + a.k)); }));
+  var ordemSit = { disponivel: 0, usado: 1, vencido: 2 };
+  return achados.map(function (a, i) {
+    var fs = fss[i];
+    if (fs === null || (fs && fs.ativo === false)) return null;          /* apagado ou desativado na Gestão de Cupons: não aparece */
+    var exp = (fs && fs.expira) || Number(a.g.expira) || 0;
+    var sit = (fs && fs.usos >= 1) ? 'usado' : (exp && exp < agora ? 'vencido' : 'disponivel');
+    return { codigo: String(a.g.codigo), pct: Number(a.g.pct) || 0, validade: exp ? ddmmaaaa(exp) : '', situacao: sit, pedido: a.pedido,
+      motivo: 'atraso', _o: exp };
+  }).filter(Boolean).sort(function (x, y) { return (ordemSit[x.situacao] - ordemSit[y.situacao]) || (y._o - x._o); })
+    .map(function (c) { delete c._o; return c; });
+}
+
 /* D → pedido original. cands = pedidos do cliente no mesmo dia (inclusive V, pra descartar D de pedido de revendedor) */
 function notaSeq(dSeq, oSeq) {
   if (!dSeq || !oSeq) return 0;
@@ -694,6 +735,8 @@ async function montarConta(u, agora) {
     .map(function (e, j) { return { texto: e.texto, n: e.n, ultimo: j === 0 }; });
 
   var sorteio = await sorteioDoCliente(conta.cpfs, agora);
+  var cupons = [];   /* v3: falha na leitura dos cupons nunca derruba a conta */
+  try { cupons = await cuponsDoCliente(normais, agora); } catch (eCp) { console.error('[conta] cupons: ' + (eCp && eCp.message || eCp)); }
   var nomeConta = (ult && cel(ult, I.nome)) || u.nome || '';
   var dDesde = primeiroData ? new Date(primeiroData - 3 * 3600000) : null;
   return {
@@ -701,7 +744,7 @@ async function montarConta(u, agora) {
     conta: { nome: nomeBonito(nomeConta), primeiro_nome: primeiroNome(nomeConta), email: conta.email,
       desde: dDesde ? (MESES[dDesde.getUTCMonth()] + ' de ' + dDesde.getUTCFullYear()) : '', como_respondido: !!(u.como && u.como.opcao) },
     kpis: { pedidos: nPedidos, total: Math.round(totalGasto * 100) / 100, numeros: sorteio ? sorteio.atual.numeros.length : 0 },
-    grupos: lista, produtos: listaProd, sorteio: sorteio,
+    grupos: lista, produtos: listaProd, sorteio: sorteio, cupons: cupons,
     dados: { nome: nomeBonito(nomeConta), email: conta.email, cpf: mascararCpf(ult ? cel(ult, I.cpf) : ''),
       telefone: ult ? cel(ult, I.tel) : '', enderecos: listaEnd }
   };

@@ -1,6 +1,17 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v3  ·  01/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v4  ·  01/10/2026
+   v4 (Thiago, 01/10): CUPOM DE ATRASO + PEDIDOS PARADOS + CAMPINAS.
+       · cupom de atraso: o pedido que passa da PREVISÃO MÁXIMA de entrega (a mesma conta da página de rastreio) e ainda não
+         chegou ganha UM cupom (padrão 5%, uso único, 45 dias), gravado na coleção cupons_vitaflow (a mesma da Gestão de
+         Cupons, do carrinho e da Athena — formato do cupom de boas-vindas). 1 por pedido, mesmo dividido em pacotes.
+         O cliente recebe por e-mail e vê em "Meus cupons" na Minha Conta (conta-cliente v3 lê cupons_atraso/<pedido>).
+         Fora: revendedor (V), reenvio (R), cancelado, não pago, entregue e pedido com ocorrência.
+         acao 'cupons' (lista + simulação) · 'cupons_rodar' · enviar_teste tipo 'cupom'. Roda todo dia útil pela logistica-atrasos v3.
+         Chave: cupom_atraso_modo (desligado é o padrão) · cupom_atraso_desde (só previsão vencida a partir desta data).
+       · parados: pedido com mais de 3 DIAS ÚTEIS no mesmo status (menos entregue, cancelado e não pago) — acao 'parados'
+         (aba Parados do painel) e resumo de manhã no WhatsApp da logística (avisoParados, chamado pela logistica-atrasos v3).
+       · origem 'CP' = Campinas/SP (fornecedora VitaFlow — rastreio-consulta v5).
    v3 (Thiago, 01/10 — férias da Ana Clara): RODADA DE CÓDIGOS + PACOTES.
        · codigos_pendentes / codigos_ticket / codigos_fila / codigos_entrada / codigos_casar / codigos_aplicar / codigos_ignorar:
          o Claude lê o site do Daniel (códigos, CPF do cliente e ORIGEM MS/SP) e a Onlog (por CPF: AA + código real da
@@ -40,10 +51,13 @@
 
    LÊ: vitaflow_pedidos_hdr · vitaflow_pedidos · vitaflow_historico_status · vitaflow_sync/rastreio_eventos/<k>
        vitaflow_sync/logistica/{config,textos,email_atraso}
-   GRAVA: (v3) vitaflow_sync/logistica/codigos/{ticket,entrada,rodada_atual,ultima,rodadas,ignorados} e
+   GRAVA: (v4) vitaflow_sync/logistica/{cupons_atraso,cupons_atraso_log,parados_avisados} e o documento atraso_<pedido> na coleção
+          cupons_vitaflow do Firestore.
+          (v3) vitaflow_sync/logistica/codigos/{ticket,entrada,rodada_atual,ultima,rodadas,ignorados} e
           vitaflow_sync/logistica/{email_pacotes,email_pacotes_fila}. O e-mail de ATRASO de verdade continua na logistica-atrasos.js.
           A PLANILHA só é alterada pelo Apps Script (aplicar_codigos).
-   Variáveis de ambiente: FIREBASE_SECRET · BREVO_API_KEY · COMPRAS_KEY (as três já existem no site vitaflow-proxy).
+   Variáveis de ambiente: FIREBASE_SECRET · BREVO_API_KEY · COMPRAS_KEY · (v4) LOG_ZAPI_INSTANCE · LOG_ZAPI_TOKEN · ZAPI_CLIENT_TOKEN
+   (todas já existem no site vitaflow-proxy; as três da Z-API são as do bot da logística).
    ============================================================================= */
 var R = require('./rastreio-consulta.js').lib;
 
@@ -99,10 +113,24 @@ var EMAIL_PADRAO = {
     '{PACOTES}\n\n' +
     'Acompanhe cada pacote em vitaflowoficial.com/pages/rastrear-pedido (use o número do pedido, o CPF ou o e-mail).\n\n' +
     'Se precisar, fale com a nossa logística pelo WhatsApp +44 7537 155718.\n\n' +
+    'Equipe VitaFlow',
+  /* v4: cupom de atraso na entrega ({CUPOM}, {PCT}, {VALIDADE} e {PREVISAO} são preenchidos pelo sistema) */
+  email_cupom_assunto: 'Um cupom de {PCT}% para você — pedido {PEDIDO}',
+  email_cupom_texto:
+    'Olá, {NOME}!\n\n' +
+    'Seu pedido {PEDIDO} passou da previsão de entrega que informamos (até {PREVISAO}). Pedimos desculpas pela demora. A nossa logística continua acompanhando o envio até ele chegar.\n\n' +
+    'Para compensar a espera, você ganhou um cupom de {PCT}% de desconto para a sua próxima compra:\n\n' +
+    'Cupom: {CUPOM}\nVálido até {VALIDADE} · uso único\n\n' +
+    'É só digitar o código no carrinho do site. Ele não se soma a outras promoções: em cada produto vale o maior desconto.\n\n' +
+    'O cupom também fica guardado na sua conta, em vitaflowoficial.com/pages/minha-conta (área "Meus cupons").\n\n' +
+    'Acompanhe o pedido em vitaflowoficial.com/pages/rastrear-pedido.\n\n' +
+    'Se precisar, fale com a nossa logística pelo WhatsApp +44 7537 155718.\n\n' +
     'Equipe VitaFlow'
 };
 var EMAIL_CFG_PADRAO = { email_atraso_modo: 'desligado', email_atraso_max: 3, email_atraso_intervalo_du: 3, email_atraso_janela_dias: 45,
-  email_pacotes_modo: 'ligado', codigos_janela_dias: 45, codigos_duvida_dias: 15 };   /* v3 */
+  email_pacotes_modo: 'ligado', codigos_janela_dias: 45, codigos_duvida_dias: 15,   /* v3 */
+  /* v4 */ cupom_atraso_modo: 'desligado', cupom_atraso_pct: 5, cupom_atraso_dias: 45, cupom_atraso_prefixo: 'DESCULPA', cupom_atraso_janela_dias: 60,
+  cupom_atraso_desde: 0, cupom_atraso_max_rodada: 12, parados_dias: 3, parados_janela_dias: 60, parados_whatsapp: 'ligado' };
 
 function preencher(t, v) { return String(t || '').replace(/\{([A-Z_]+)\}/g, function (a, k) { return (v[k] != null) ? String(v[k]) : a; }); }
 function escH(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -113,6 +141,13 @@ function htmlEmail(texto) {
     var h = escH(p).replace(/\n/g, '<br>').replace(/vitaflowoficial\.com\/pages\/rastrear-pedido/g,
       '<a href="' + RASTREIO_URL + '" style="color:#0280CD;font-weight:700">vitaflowoficial.com/pages/rastrear-pedido</a>');
     h = h.replace(/^(Pacote \d+[^<]*)/, '<b style="color:#0D1B2E">$1</b>');   /* v3: título de cada pacote */
+    /* v4: link da Minha Conta e o cupom em destaque (parágrafo que começa com "Cupom: ") */
+    h = h.replace(/vitaflowoficial\.com\/pages\/minha-conta/g, '<a href="https://vitaflowoficial.com/pages/minha-conta" style="color:#0280CD;font-weight:700">vitaflowoficial.com/pages/minha-conta</a>');
+    var mC = h.match(/^Cupom: ([A-Z0-9-]+)(?:<br>(.*))?$/);
+    if (mC) return '<div style="margin:0 0 16px;padding:16px 12px;border:2px dashed #F5A623;border-radius:12px;background:#fff8ea;text-align:center">' +
+      '<div style="font-size:12px;color:#7a6a45;letter-spacing:1px;text-transform:uppercase">Seu cupom</div>' +
+      '<div style="font-size:26px;font-weight:800;color:#0D1B2E;letter-spacing:2px;margin:6px 0">' + mC[1] + '</div>' +
+      (mC[2] ? '<div style="font-size:13px;color:#41506a">' + mC[2] + '</div>' : '') + '</div>';
     return '<p style="margin:0 0 14px;font-size:15px;color:#41506a;line-height:1.65">' + h + '</p>';
   }).join('');
   return '<div style="background:#eceff3;padding:20px 10px;font-family:Arial,Helvetica,sans-serif">' +
@@ -198,6 +233,10 @@ function montarPedidos(base) {
         .sort(function (a, z) { return a.ts - z.ts; });
     }
     var tConf = 0, tPost = 0, tEnt = 0, oco = false, extr = false, apre = false;
+    /* v4: desde quando o pedido está no status ATUAL (o começo da última sequência desse status no histórico) */
+    var tStatus = 0;
+    for (var iE = evs.length - 1; iE >= 0; iE--) { if (R.semAcentoUp(evs[iE].status) === st) tStatus = evs[iE].ts; else break; }
+    if (!tStatus && evs.length) tStatus = evs[evs.length - 1].ts;   /* o status mudou sem passar pelo histórico: vale a última anotação */
     evs.forEach(function (e) {
       var su = R.semAcentoUp(e.status), o = R.ETAPA_ORDEM.hasOwnProperty(su) ? R.ETAPA_ORDEM[su] : -1;
       if (!tConf && su.indexOf('CONFIRMADO') >= 0) tConf = e.ts;
@@ -215,7 +254,7 @@ function montarPedidos(base) {
     out.push({ k: R.histKey(b.pedido), pedido: b.pedido, nome: b.nome, email: String(l[2] || '').trim(), uf: b.estado, cidade: b.cidade,
       status: b.status, st: st, naoPagou: R.naoPagou(b.status, l[12]), final: !!FINAL[st], data: b.data,
       transp: transpNome(b.transportadora), transpTxt: b.transportadora, codigo: b._rast, forn: fornNome(b._forn), fornTxt: b._forn,
-      atacado: atacado, tConf: tConf, tPost: tPost, tEnt: tEnt, oco: oco, extr: extr, apre: apre,
+      atacado: atacado, tConf: tConf, tPost: tPost, tEnt: tEnt, oco: oco, extr: extr, apre: apre, tStatus: tStatus,
       /* v3: o que a rodada de códigos e os pacotes usam */
       cpf: cpf11(l[3]), cep: cepDe(l[8]), pai: b._pai, origCol: b._orig, produtos: b.produtos,
       cod: (String(b._rast || '').toUpperCase().indexOf('AVISO_ABANDONO') >= 0) ? '' : limparCod(b._rast),
@@ -383,7 +422,7 @@ var LOTE_GAS = 8;                  /* itens por chamada ao Apps Script. Na 1ª r
 var ENTRADA_VALE_MS = 60 * 60000;  /* o que veio do site do Daniel / da Onlog vale 1 h */
 var TICKET_VALE_MS = 30 * 60000;
 var MAX_DIAS_PAR = 20;             /* código criado até 20 dias depois da confirmação do pedido */
-var ORIGEM_NOME = { SP: 'São Paulo/SP', MS: 'Ponta Porã/MS', RJ: 'Rio de Janeiro/RJ', PY: 'Ciudad del Este (Paraguai)' };
+var ORIGEM_NOME = { SP: 'São Paulo/SP', CP: 'Campinas/SP', MS: 'Ponta Porã/MS', RJ: 'Rio de Janeiro/RJ', PY: 'Ciudad del Este (Paraguai)' };   /* v4: CP */
 
 /* ---- Firebase com escrita (o R.fbGet só lê) ---- */
 function fbUrlW(caminho, query) {
@@ -1111,6 +1150,297 @@ function fonteColetor(qual) {
 }
 
 /* ============================ login (só admin) ============================ */
+
+/* =====================================================================================================================
+   v4 (01/10/2026) — CUPOM DE ATRASO NA ENTREGA · PEDIDOS PARADOS (mais de 3 dias úteis no mesmo status)
+   ===================================================================================================================== */
+var MINHA_CONTA_URL = 'https://vitaflowoficial.com/pages/minha-conta';
+var FS_PROJETO = 'pricehub-f0236';
+var FS_KEY = process.env.FIRESTORE_KEY || 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';   /* chave web do Firebase — a mesma (pública) que o carrinho do site e a Athena usam pra ler os cupons */
+var CUPONS = RAIZ + '/cupons_atraso';
+
+/* ---------- Firestore (coleção cupons_vitaflow — a mesma da Gestão de Cupons, do carrinho e da Athena) ---------- */
+function fsUrl(caminho, extra) {
+  return 'https://firestore.googleapis.com/v1/projects/' + FS_PROJETO + '/databases/(default)/documents' + caminho + '?key=' + FS_KEY + (extra || '');
+}
+function fsNum(c) { return c ? Number(c.integerValue != null ? c.integerValue : (c.doubleValue != null ? c.doubleValue : 0)) || 0 : 0; }
+function fsCupom(doc) {
+  var f = (doc && doc.fields) || {};
+  return { codigo: f.codigo ? String(f.codigo.stringValue || '') : '', ativo: f.ativo ? f.ativo.booleanValue !== false : true,
+    usos: fsNum(f.usosAtual), valor: fsNum(f.valor), expira: (f.expira && f.expira.timestampValue) ? new Date(f.expira.timestampValue).getTime() : 0 };
+}
+/* null = não existe · undefined = não deu pra saber (erro de rede) */
+async function fsLerCupom(docId) {
+  try {
+    var r = await fetch(fsUrl('/cupons_vitaflow/' + encodeURIComponent(docId)));
+    if (r.status === 404) return null;
+    if (!r.ok) return undefined;
+    return fsCupom(await r.json());
+  } catch (e) { return undefined; }
+}
+/* true/false · undefined = não deu pra saber */
+async function fsCodigoExiste(codigo) {
+  try {
+    var r = await fetch('https://firestore.googleapis.com/v1/projects/' + FS_PROJETO + '/databases/(default)/documents:runQuery?key=' + FS_KEY, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'cupons_vitaflow' }],
+        where: { fieldFilter: { field: { fieldPath: 'codigo' }, op: 'EQUAL', value: { stringValue: codigo } } }, limit: 1 } }) });
+    if (!r.ok) return undefined;
+    var d = await r.json();
+    return (d || []).some(function (x) { return x && x.document; });
+  } catch (e) { return undefined; }
+}
+/* cria o cupom no MESMO formato do cupom de boas-vindas da Athena (tipo 'pct' · tipoVal 'unico_prazo' = uso único + validade):
+   o carrinho do site e a Athena já entendem, e o Apps Script já soma o uso (usosAtual) quando o pedido é confirmado. */
+async function fsCriarCupom(docId, c) {
+  var corpo = { fields: {
+    codigo: { stringValue: c.codigo }, ativo: { booleanValue: true }, tipo: { stringValue: 'pct' }, valor: { doubleValue: c.pct },
+    tipoVal: { stringValue: 'unico_prazo' }, expira: { timestampValue: new Date(c.expira).toISOString() },
+    maxUsos: { integerValue: 1 }, usosAtual: { integerValue: 0 }, minPedido: { doubleValue: 0 }, maxDesc: { doubleValue: 0 },
+    /* rastreabilidade na Gestão de Cupons (sem dado pessoal: a coleção é lida pelo site) */
+    origem: { stringValue: 'atraso-entrega' }, pedido: { stringValue: c.pedido }, criadoEm: { stringValue: new Date(c.criado).toISOString() } } };
+  try {
+    var r = await fetch(fsUrl('/cupons_vitaflow', '&documentId=' + encodeURIComponent(docId)), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+    if (r.status === 409) return { ok: false, existe: true };
+    if (!r.ok) return { ok: false, erro: 'Firestore HTTP ' + r.status + ' ' + String(await r.text()).slice(0, 160) };
+    return { ok: true };
+  } catch (e) { return { ok: false, erro: 'Firestore: ' + e.message }; }
+}
+var ALFA_CUPOM = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   /* sem I, O, 0 e 1 — o cliente digita isso */
+function codigoCupomNovo(prefixo) {
+  var s = '';
+  for (var i = 0; i < 5; i++) s += ALFA_CUPOM.charAt(crypto.randomInt(ALFA_CUPOM.length));
+  return prefixo + '-' + s;
+}
+function cfgCupom(cfgBase) {
+  var c = Object.assign({}, EMAIL_CFG_PADRAO, cfgBase || {});
+  var pref = String(c.cupom_atraso_prefixo || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'DESCULPA';
+  return { modo: c.cupom_atraso_modo === 'ligado' ? 'ligado' : 'desligado',
+    pct: Math.min(50, Math.max(1, Number(c.cupom_atraso_pct) || 5)), dias: Math.min(365, Math.max(1, Number(c.cupom_atraso_dias) || 45)),
+    prefixo: pref, janela: Math.max(7, Number(c.cupom_atraso_janela_dias) || 60), desde: Number(c.cupom_atraso_desde) || 0,
+    max: Math.min(40, Math.max(1, Number(c.cupom_atraso_max_rodada) || 12)) };
+}
+function ehReenvio(pedido) { return /^VF-\d{4}-R/i.test(String(pedido || '').trim()); }
+
+/* a MESMA conta da página de rastreio (rastreio-consulta → prazo): a previsão máxima é
+   pago + postagem + o maior prazo do estado; depois de postado, 1ª leitura + o maior prazo do estado. */
+function prazoMaximo(p, primeira, agora) {
+  var faixa = faixaUF(p.uf); if (!faixa || !p.tConf) return null;
+  var tPost = primeira || p.tPost || 0, base = tPost || p.tConf, n = faixa[1] + (tPost ? 0 : postDU(p));
+  var dias = R.duEntre(base, agora);
+  return { n: n, dias: dias, passou: dias > n, ate_ts: R.somaDU(base, n), postado: !!tPost };
+}
+/* pedidos (por FAMÍLIA = pedido original + pacotes D) que passaram da previsão MÁXIMA de entrega e ainda não chegaram.
+   Fora: não pago, cancelado/reembolsado, entregue, com ocorrência (ausente, endereço, fiscalização, extraviado, apreendido —
+   nesses a página nem mostra previsão), revendedor (V) e reenvio (R). */
+async function foraDoPrazo(base, peds, agora, janelaDias) {
+  var cand = peds.filter(function (p) {
+    if (p.naoPagou || p.final || p.st === 'ENTREGUE' || p.tEnt || EXCECAO[p.st] || p.extr || p.apre) return false;
+    if (!p.tConf || p.tConf < agora - janelaDias * DIA) return false;
+    if (ehRevendedor(p.pai || p.pedido) || ehReenvio(p.pedido) || ehReenvio(p.pai)) return false;
+    var pm = prazoMaximo(p, 0, agora);
+    return !!(pm && pm.passou);
+  });
+  var evos = await Promise.all(cand.map(function (p) { return R.fbGetOu('vitaflow_sync/rastreio_eventos/' + p.k); }));
+  var porFam = {};
+  cand.forEach(function (p, i) {
+    var evo = evos[i];
+    if (evo && evo.cod && p.codigo && String(evo.cod).replace(/\.0$/, '') !== String(p.codigo).replace(/\.0$/, '')) evo = null;
+    var pm = prazoMaximo(p, (evo && evo.primeira) ? Number(evo.primeira) || 0 : 0, agora);   /* a 1ª leitura da transportadora manda, igual à página */
+    if (!pm || !pm.passou) return;
+    var kf = R.histKey(p.pai || p.pedido);
+    var item = { kf: kf, pedido: p.pai || p.pedido, linha: p.pedido, nome: p.nome, email: p.email, uf: p.uf, status: p.status,
+      ate_ts: pm.ate_ts, previsao_ate: R.ddmm(pm.ate_ts), dias_alem: pm.dias - pm.n, postado: pm.postado };
+    var ja = porFam[kf];
+    /* 1 por pedido: fica o pacote que estourou primeiro; o e-mail e o nome vêm de preferência da linha do pedido original */
+    if (!ja) { porFam[kf] = item; return; }
+    if (item.ate_ts < ja.ate_ts) { ja.ate_ts = item.ate_ts; ja.previsao_ate = item.previsao_ate; ja.dias_alem = item.dias_alem; ja.status = item.status; ja.linha = item.linha; ja.postado = item.postado; }
+    if (!p.pai) { ja.nome = p.nome || ja.nome; ja.email = p.email || ja.email; ja.uf = p.uf || ja.uf; }
+    if (!emailOk(ja.email) && emailOk(p.email)) ja.email = p.email;
+  });
+  return Object.keys(porFam).map(function (k) { return porFam[k]; }).sort(function (a, b) { return a.ate_ts - b.ate_ts; });
+}
+function montarEmailCupom(reg, textos) {
+  var T = Object.assign({}, EMAIL_PADRAO);
+  Object.keys(EMAIL_PADRAO).forEach(function (k) { if (textos && textos[k] && String(textos[k]).trim()) T[k] = String(textos[k]); });
+  var v = { NOME: String(reg.nome || '').split(' ')[0] || 'cliente', PEDIDO: reg.pedido, CUPOM: reg.codigo, PCT: reg.pct,
+    VALIDADE: ddmmaa(reg.expira), PREVISAO: reg.previsao_ate || '', DIAS: reg.dias_validade || '' };
+  return { assunto: preencher(T.email_cupom_assunto, v), texto: preencher(T.email_cupom_texto, v) };
+}
+function cupomSituacao(reg, fs, agora) {
+  if (fs && fs.usos >= 1) return 'usado';
+  if (fs && fs.ativo === false) return 'inativo';
+  if ((fs && fs.expira ? fs.expira : reg.expira) < agora) return 'vencido';
+  return 'disponivel';
+}
+/* gera os cupons que faltam (modo ligado) e manda o e-mail. op.simular = só diz o que faria. */
+async function cuponsAtraso(op) {
+  var agora = op.agora || Date.now();
+  var base = op.base || await lerBase(false);
+  var peds = op.peds || montarPedidos(base);
+  var cfg = cfgCupom(base.cfg);
+  var fora = await foraDoPrazo(base, peds, agora, cfg.janela);
+  var regs = (await fbLerOu(CUPONS)) || {};
+  var novos = fora.filter(function (c) { return !regs[c.kf] && (!cfg.desde || c.ate_ts >= cfg.desde); });
+  var antigos = fora.filter(function (c) { return !regs[c.kf] && cfg.desde && c.ate_ts < cfg.desde; }).length;
+  var out = { ok: true, modo: cfg.modo, fora_do_prazo: fora.length, ja_tem_cupom: fora.filter(function (c) { return !!regs[c.kf]; }).length,
+    antes_do_inicio: antigos, a_gerar: novos.length, gerados: 0, emails: 0, sem_email: 0, falhas: 0, erros: [],
+    lista: novos.map(function (c) { return { pedido: c.pedido, nome: c.nome, uf: c.uf, status: c.status, previsao_ate: c.previsao_ate, dias_alem: c.dias_alem, tem_email: emailOk(c.email) }; }) };
+  if (op.simular || cfg.modo !== 'ligado') return out;
+
+  /* e-mails que ficaram pendentes de uma rodada anterior (cupom criado, e-mail falhou): até 3 tentativas */
+  var pend = Object.keys(regs).filter(function (k) { var g = regs[k]; return g && g.codigo && !g.email_ts && !g.sem_email && (Number(g.email_tent) || 0) < 3 && emailOk(g.email) && g.expira > agora; });
+  for (var ip = 0; ip < pend.length && ip < 20; ip++) {
+    var g = regs[pend[ip]], mp = montarEmailCupom(g, base.txt), rp = await enviarBrevo(g.email, g.nome, mp.assunto, mp.texto);
+    try { await fbReq('PATCH', CUPONS + '/' + pend[ip], rp.ok ? { email_ts: agora } : { email_tent: (Number(g.email_tent) || 0) + 1, email_erro: txt(rp.erro, 160) }); } catch (eP) { /* tenta de novo amanhã */ }
+    if (rp.ok) out.emails++; else { out.falhas++; if (out.erros.length < 10) out.erros.push(g.pedido + ': ' + rp.erro); }
+  }
+
+  var fila = novos.slice(0, cfg.max);
+  function falha(c, msg) { out.falhas++; if (out.erros.length < 10) out.erros.push(c.pedido + ': ' + msg); }
+  async function gerarUm(c) {
+    var docId = 'atraso_' + c.kf, reg = null;
+    var ja = await fsLerCupom(docId);
+    if (ja === undefined) return falha(c, 'não consegui consultar os cupons');
+    if (ja && ja.codigo) {   /* o cupom já existe (o registro daqui se perdeu): reaproveita, nunca cria dois */
+      reg = { codigo: ja.codigo, pct: ja.valor || cfg.pct, expira: ja.expira || (agora + cfg.dias * DIA) };
+    } else {
+      var codigo = '';
+      for (var t = 0; t < 4 && !codigo; t++) { var tent = codigoCupomNovo(cfg.prefixo); if ((await fsCodigoExiste(tent)) === false) codigo = tent; }
+      if (!codigo) return falha(c, 'não consegui conferir o código do cupom');
+      reg = { codigo: codigo, pct: cfg.pct, expira: agora + cfg.dias * DIA };
+      var cr = await fsCriarCupom(docId, { codigo: codigo, pct: cfg.pct, expira: reg.expira, pedido: c.pedido, criado: agora });
+      if (!cr.ok) return falha(c, cr.erro || 'o cupom já existia');
+    }
+    reg.pedido = c.pedido; reg.nome = txt(c.nome, 80); reg.email = emailOk(c.email) ? String(c.email).trim() : ''; reg.uf = c.uf || '';
+    reg.criado = agora; reg.previsao_ate = c.previsao_ate; reg.dias_validade = cfg.dias; reg.doc = docId;
+    if (!reg.email) reg.sem_email = true;
+    try { await fbReq('PUT', CUPONS + '/' + c.kf, reg); }
+    catch (eG) { return falha(c, 'cupom criado, mas não gravou o registro (' + eG.message + ')'); }
+    out.gerados++;
+    if (!reg.email) { out.sem_email++; return; }
+    var m = montarEmailCupom(reg, base.txt), re = await enviarBrevo(reg.email, reg.nome, m.assunto, m.texto);
+    try { await fbReq('PATCH', CUPONS + '/' + c.kf, re.ok ? { email_ts: Date.now() } : { email_tent: 1, email_erro: txt(re.erro, 160) }); } catch (eE) { /* fica pendente */ }
+    if (re.ok) out.emails++; else falha(c, 'cupom criado, e-mail falhou (' + re.erro + ')');
+  }
+  for (var i = 0; i < fila.length; i += 4) await Promise.all(fila.slice(i, i + 4).map(gerarUm));   /* 4 por vez: cabe no tempo da função */
+  out.faltaram = Math.max(0, novos.length - fila.length);
+  try { var lg = {}; lg[R.diaBR(agora).replace(/-/g, '') + '_' + agora] = { ts: agora, fora: out.fora_do_prazo, gerados: out.gerados, emails: out.emails, sem_email: out.sem_email, falhas: out.falhas, erros: out.erros.slice(0, 5) };
+    await fbReq('PATCH', RAIZ + '/cupons_atraso_log', lg); } catch (eL) { /* log é só registro */ }
+  return out;
+}
+/* lista pro painel: os cupons já gerados, com a situação de cada um (disponível / usado / vencido) */
+async function cuponsGerados(agora, max) {
+  var regs = (await fbLerOu(CUPONS)) || {};
+  var ks = Object.keys(regs).filter(function (k) { return regs[k] && regs[k].codigo; }).sort(function (a, b) { return (regs[b].criado || 0) - (regs[a].criado || 0); }).slice(0, max || 80);
+  var fss = await Promise.all(ks.map(function (k) { return fsLerCupom(regs[k].doc || ('atraso_' + k)); }));
+  return ks.map(function (k, i) {
+    var g = regs[k];
+    return { pedido: g.pedido, nome: g.nome || '', codigo: g.codigo, pct: g.pct, criado: ddmmaa(g.criado), expira: ddmmaa(g.expira), previsao_ate: g.previsao_ate || '',
+      situacao: fss[i] === null ? 'apagado' : cupomSituacao(g, fss[i], agora), email: g.email_ts ? 'enviado' : (g.sem_email ? 'sem e-mail' : 'pendente') };
+  });
+}
+
+/* ---------- PEDIDOS PARADOS: mais de N dias úteis no MESMO status (menos entregue, cancelado e não pago) ---------- */
+var ROTULO_ST = { 'PEDIDO CONFIRMADO': 'Pedido confirmado', 'PAGO': 'Pedido confirmado', 'EM SEPARACAO': 'Em separação', 'DESPACHADO': 'Despachado', 'POSTADO': 'Postado',
+  'EM TRANSFERENCIA': 'Em transferência', 'EM SEPARACAO NO CENTRO LOGISTICO': 'No centro logístico', 'CHEGOU A UNIDADE DE DESTINO': 'Chegou à unidade de destino',
+  'SAIU PARA ENTREGA': 'Saiu para entrega', 'ENCAMINHADO PARA FISCALIZACAO': 'Encaminhado para fiscalização', 'FISCALIZACAO FINALIZADA': 'Fiscalização finalizada',
+  'DESTINATARIO AUSENTE': 'Destinatário ausente', 'ENDERECO INCORRETO': 'Endereço incorreto', 'AREA COM DISTRIBUICAO': 'Área com distribuição especial',
+  'PEDIDO EXTRAVIADO': 'Pedido extraviado', 'PEDIDO APREENDIDO': 'Pedido apreendido' };   /* os mesmos nomes do painel */
+function nomeStatus(s) { var u = R.semAcentoUp(s); if (ROTULO_ST[u]) return ROTULO_ST[u]; s = String(s || '').toLowerCase(); return s.charAt(0).toUpperCase() + s.slice(1); }
+function calcularParados(base, peds, agora) {
+  var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
+  var lim = Math.max(1, Number(cfg.parados_dias) || 3), janela = Math.max(7, Number(cfg.parados_janela_dias) || 60);
+  var out = [];
+  peds.forEach(function (p) {
+    if (p.naoPagou || p.final || !p.st || p.st === 'ENTREGUE') return;
+    if (!p.tConf || p.tConf < agora - janela * DIA) return;
+    var t = p.tStatus || p.tConf, dias = R.duEntre(t, agora);
+    if (dias <= lim) return;
+    out.push({ k: p.k, pedido: p.pedido, pacote_de: p.pai || '', nome: p.nome, uf: p.uf, cidade: p.cidade, data: p.data, status: p.status, st: p.st,
+      dias: dias, desde: R.ddmm(t), fornecedor: p.forn, transportadora: p.transpTxt, codigo: p.codigo, revendedor: ehRevendedor(p.pai || p.pedido),
+      desde_incerto: !p.tStatus });
+  });
+  out.sort(function (a, b) { return b.dias - a.dias || (a.pedido < b.pedido ? -1 : 1); });
+  return out;
+}
+/* WhatsApp pela Z-API da logística (as mesmas variáveis do bot da logística) */
+async function whats(telefone, texto) {
+  var inst = process.env.LOG_ZAPI_INSTANCE || '', tok = process.env.LOG_ZAPI_TOKEN || '', cli = process.env.ZAPI_CLIENT_TOKEN || '';
+  if (!inst || !tok) return { ok: false, erro: 'faltam LOG_ZAPI_INSTANCE / LOG_ZAPI_TOKEN no Netlify' };
+  try {
+    var r = await fetch('https://api.z-api.io/instances/' + inst + '/token/' + tok + '/send-text', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Client-Token': cli }, body: JSON.stringify({ phone: telefone, message: texto }) });
+    return r.ok ? { ok: true } : { ok: false, erro: 'Z-API HTTP ' + r.status };
+  } catch (e) { return { ok: false, erro: 'Z-API: ' + e.message }; }
+}
+function textoParados(lista, novos, lim, painelUrl) {
+  var L = ['⏱️ *Logística — pedidos parados há mais de ' + lim + ' dias úteis no mesmo status* (' + lista.length + ')', '⠀'];
+  if (novos.length) {
+    L.push('🆕 *Entraram na lista hoje* (' + novos.length + '):');
+    novos.slice(0, 20).forEach(function (a) { L.push('• ' + a.pedido + ' — ' + nomeStatus(a.status) + ' — ' + a.dias + ' dias úteis' + (a.uf ? ' — ' + a.uf : '')); });
+    if (novos.length > 20) L.push('… e mais ' + (novos.length - 20));
+  } else L.push('Nenhum pedido novo na lista hoje.');
+  var porSt = {}, ordem = [];
+  lista.forEach(function (a) { var n = nomeStatus(a.status); if (!porSt[n]) { porSt[n] = 0; ordem.push(n); } porSt[n]++; });
+  ordem.sort(function (a, b) { return porSt[b] - porSt[a]; });
+  L.push('⠀'); L.push('*Por status:*');
+  ordem.forEach(function (n) { L.push('• ' + n + ': ' + porSt[n]); });
+  L.push('⠀'); L.push('A lista completa está na aba *Parados* do painel' + (painelUrl ? ': ' + painelUrl : '.'));
+  return L.join('\n');
+}
+/* resumo do dia no WhatsApp da logística (o número ana_whatsapp da configuração do bot) */
+async function avisoParados(op) {
+  var agora = op.agora || Date.now();
+  var base = op.base || await lerBase(false);
+  var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
+  var lista = calcularParados(base, op.peds || montarPedidos(base), agora);
+  var out = { ok: true, parados: lista.length, novos: 0, enviado: false };
+  if (cfg.parados_whatsapp === 'desligado') { out.pulou = 'aviso desligado'; return out; }
+  var av = (await fbLerOu(RAIZ + '/parados_avisados')) || {};
+  var novos = lista.filter(function (a) { return !(av[a.k] && av[a.k].st === a.st); });
+  out.novos = novos.length;
+  if (!lista.length) return out;
+  var tel = String(cfg.ana_whatsapp || '').replace(/\D/g, '');
+  if (!tel) { out.ok = false; out.erro = 'sem o WhatsApp da logística na configuração (ana_whatsapp)'; return out; }
+  if (op.simular) { out.texto = textoParados(lista, novos, Math.max(1, Number(cfg.parados_dias) || 3), cfg.painel_url || ''); return out; }
+  var r = await whats(tel, textoParados(lista, novos, Math.max(1, Number(cfg.parados_dias) || 3), cfg.painel_url || ''));
+  if (!r.ok) { out.ok = false; out.erro = r.erro; return out; }
+  out.enviado = true;
+  var mapa = {};
+  lista.forEach(function (a) { mapa[a.k] = { st: a.st, ts: (av[a.k] && av[a.k].st === a.st) ? av[a.k].ts : agora }; });
+  try { await fbReq('PUT', RAIZ + '/parados_avisados', mapa); } catch (e) { out.erro = 'avisou, mas não gravou a lista (' + e.message + ')'; }
+  return out;
+}
+
+async function acaoAdminV4(acao, d, uid, agora) {
+  if (acao === 'parados') {
+    var bP = await lerBase(false), cfgP = Object.assign({}, EMAIL_CFG_PADRAO, bP.cfg || {});
+    return resp({ ok: true, parados: calcularParados(bP, montarPedidos(bP), agora), gerado_ts: agora,
+      config: { dias: Math.max(1, Number(cfgP.parados_dias) || 3), whatsapp: cfgP.parados_whatsapp === 'desligado' ? 'desligado' : 'ligado' } });
+  }
+  if (acao === 'cupons') {
+    var bC = await lerBase(false);
+    var sim = await cuponsAtraso({ agora: agora, base: bC, simular: true });
+    var cc = cfgCupom(bC.cfg);
+    return resp({ ok: true, gerado_ts: agora, brevo: !!process.env.BREVO_API_KEY, resumo: sim, gerados: await cuponsGerados(agora, 80),
+      config: { modo: cc.modo, pct: cc.pct, dias: cc.dias, prefixo: cc.prefixo, desde: cc.desde } });
+  }
+  if (acao === 'cupons_rodar') return resp(await cuponsAtraso({ agora: agora, simular: d.simular === true }));
+  if (acao === 'placar') {   /* os contadores do topo do painel (cache de 2 min na instância quente) */
+    if (!d.forcar && _cache.placar && agora - _cache.placar.t < 120000) return resp(_cache.placar.v);
+    var bL = await lerBase(true), pL = montarPedidos(bL);
+    var atr = await calcularAtrasos(bL, pL, agora), par = calcularParados(bL, pL, agora);
+    var vL = { ok: true, gerado_ts: agora,
+      envio: { total: atr.length, varejo: atr.filter(function (a) { return !a.atacado; }).length, atacado: atr.filter(function (a) { return a.atacado; }).length, maior: atr.length ? atr[0].dias : 0 },
+      parados: { total: par.length, maior: par.length ? par[0].dias : 0 } };
+    _cache.placar = { t: agora, v: vL };
+    return resp(vL);
+  }
+  return null;
+}
+
 async function conferirAdmin(token) {
   token = String(token || '');
   var partes = token.split('.');
@@ -1159,6 +1489,10 @@ exports.handler = async function (event) {
       var rV3 = await acaoAdminV3(acao, d, uid, agora);
       if (rV3) return rV3;
     }
+    if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'placar') {   /* v4 */
+      var rV4 = await acaoAdminV4(acao, d, uid, agora);
+      if (rV4) return rV4;
+    }
     if (acao === 'numeros') {
       var dias = [30, 60, 90, 180, 365].indexOf(Number(d.dias)) >= 0 ? Number(d.dias) : 90;
       var ck = 'n' + dias;
@@ -1188,6 +1522,13 @@ exports.handler = async function (event) {
         var rp = await enviarBrevo(para, '', '[TESTE] ' + mp.assunto, mp.texto);
         return resp(rp.ok ? { ok: true, enviado_para: para, pedido_exemplo: 'VF-0110-S001' } : { ok: false, erro: rp.erro });
       }
+      if (d.tipo === 'cupom') {   /* v4: exemplo do e-mail do cupom de atraso (não cria cupom nenhum) */
+        var cq = cfgCupom(b2.cfg);
+        var mq = montarEmailCupom({ nome: 'Cliente Exemplo', pedido: 'VF-0110-S001', codigo: cq.prefixo + '-TESTE', pct: cq.pct, expira: agora + cq.dias * DIA,
+          previsao_ate: R.ddmm(agora - 2 * DIA), dias_validade: cq.dias }, b2.txt);
+        var rq = await enviarBrevo(para, '', '[TESTE] ' + mq.assunto, mq.texto);
+        return resp(rq.ok ? { ok: true, enviado_para: para, pedido_exemplo: 'VF-0110-S001' } : { ok: false, erro: rq.erro });
+      }
       var tipo = d.tipo === 'lembrete' ? 'lembrete' : 'primeiro';
       var m = montarEmail(ex, tipo, b2.txt);
       var r = await enviarBrevo(para, '', '[TESTE] ' + m.assunto, m.texto);
@@ -1208,4 +1549,8 @@ exports.lib = { lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros:
   casarCodigos: casarCodigos, parear: parear, pendentesCodigo: pendentesCodigo, filaOnlog: filaOnlog, rodadaCodigos: rodadaCodigos,
   emailPacotes: emailPacotes, enviarPacotesPendentes: enviarPacotesPendentes, montarEmailPacotes: montarEmailPacotes, lerPacotes: lerPacotes,
   itensDoPacote: itensDoPacote, transpPorFormato: transpPorFormato, transpOnlog: transpOnlog, familia: familia, limparEntrada: limparEntrada,
-  limparCod: limparCod, codigoValido: codigoValido, novoTicket: novoTicket, conferirTicket: conferirTicket, fonteColetor: fonteColetor };
+  limparCod: limparCod, codigoValido: codigoValido, novoTicket: novoTicket, conferirTicket: conferirTicket, fonteColetor: fonteColetor,
+  /* v4 */
+  cuponsAtraso: cuponsAtraso, foraDoPrazo: foraDoPrazo, prazoMaximo: prazoMaximo, montarEmailCupom: montarEmailCupom, cuponsGerados: cuponsGerados,
+  cupomSituacao: cupomSituacao, cfgCupom: cfgCupom, calcularParados: calcularParados, avisoParados: avisoParados, textoParados: textoParados,
+  codigoCupomNovo: codigoCupomNovo, fsLerCupom: fsLerCupom };

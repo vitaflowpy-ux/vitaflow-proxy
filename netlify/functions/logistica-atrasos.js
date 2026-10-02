@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   logistica-atrasos.js — E-MAIL AUTOMÁTICO DE ATRASO NA POSTAGEM (VitaFlow)  ·  v2  ·  01/10/2026
+   logistica-atrasos.js — ROTINA DIÁRIA DA LOGÍSTICA: e-mail de atraso, pacotes, cupom de atraso e parados (VitaFlow)  ·  v3  ·  01/10/2026
+   v3 (01/10/2026): todo dia útil, além do que já fazia, (3) gera os CUPONS DE ATRASO dos pedidos que passaram da previsão
+       máxima de entrega e manda o e-mail do cupom (logistica-painel v4 → cuponsAtraso; chave própria: cupom_atraso_modo) e
+       (4) manda no WhatsApp da logística o resumo dos PEDIDOS PARADOS há mais de 3 dias úteis no mesmo status
+       (logistica-painel v4 → avisoParados; chave: parados_whatsapp). Os dois rodam mesmo com o e-mail de atraso desligado,
+       e a falha de um não para os outros (vai aviso no Telegram).
    v2 (01/10/2026): PACOTES. (1) O pedido dividido em pacotes (linhas D com PEDIDO_ORIGINAL) recebe UM e-mail de atraso por
        pedido: o contador fica na chave do pedido ORIGINAL (k_email da logistica-painel v3) e o texto fala no número original.
        (2) Todo dia útil, antes do e-mail de atraso, manda os e-mails "seu pedido vai em N pacotes" que ficaram esperando a
@@ -55,10 +60,18 @@ async function rodar(agora) {
   var pacotes = null;
   try { pacotes = await P.enviarPacotesPendentes(agora); } catch (eP) { pacotes = { erro: String(eP && eP.message || eP) }; }
   var base = await P.lerBase(true);
+  var peds = P.montarPedidos(base);
+  /* v3: cupom de atraso na entrega e resumo dos parados (cada um com a sua chave; falha vira aviso e a rotina segue) */
+  var cupons = null, parados = null;
+  try { cupons = await P.cuponsAtraso({ agora: agora, base: base, peds: peds }); } catch (eC) { cupons = { ok: false, erro: String(eC && eC.message || eC) }; }
+  try { parados = await P.avisoParados({ agora: agora, base: base, peds: peds }); } catch (eS) { parados = { ok: false, erro: String(eS && eS.message || eS) }; }
+  if (cupons && cupons.lista) delete cupons.lista;   /* o log não precisa da lista */
+  if (cupons && (cupons.erro || cupons.falhas)) await telegram('⚠️ CUPOM DE ATRASO: ' + (cupons.erro || (cupons.falhas + ' falha(s)\n' + (cupons.erros || []).slice(0, 3).join('\n'))));
+  if (parados && parados.erro) await telegram('⚠️ PEDIDOS PARADOS: o resumo no WhatsApp falhou — ' + parados.erro);
   var cfg = Object.assign({}, P.EMAIL_CFG_PADRAO, base.cfg || {});
   var modo = cfg.email_atraso_modo || 'desligado';
-  if (modo === 'desligado') return { ok: true, modo: modo, pacotes: pacotes };
-  var lista = await P.calcularAtrasos(base, P.montarPedidos(base), agora);
+  if (modo === 'desligado') return { ok: true, modo: modo, pacotes: pacotes, cupons: cupons, parados: parados };
+  var lista = await P.calcularAtrasos(base, peds, agora);
   var fila = [];
   lista.forEach(function (a) { var tipo = P.decidirEnvio(a, cfg, agora); if (tipo) fila.push({ a: a, tipo: tipo }); });
   var log = { ts: agora, modo: modo, atrasados: lista.length, elegiveis: fila.length, enviados: 0, falhas: 0, erros: [] };
@@ -97,7 +110,7 @@ async function rodar(agora) {
   if (log.falhas) {   /* Telegram só quando falha (o resumo do dia fica no log, visível no painel) */
     await telegram('⚠️ E-MAIL DE ATRASO (' + modo + '): ' + log.falhas + ' falha(s) de ' + log.elegiveis + '\n' + log.erros.slice(0, 3).join('\n'));
   }
-  return { ok: true, log: log, pacotes: pacotes };
+  return { ok: true, log: log, pacotes: pacotes, cupons: cupons, parados: parados };
 }
 
 exports.handler = async function () {
