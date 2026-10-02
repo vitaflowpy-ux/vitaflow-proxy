@@ -1,9 +1,25 @@
 'use strict';
 /* =============================================================================
-   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v5  ·  01/10/2026
+   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v6  ·  01/10/2026
    Netlify Function no repo vitaflow-proxy → netlify/functions/rastreio-consulta.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/rastreio-consulta
 
+   v6 (01/10/2026 — pedidos do Thiago): cada pedido ganha 3 campos novos para a página de rastreio v7:
+     · prazo_total { dias, max, pct, ate, passou } — a BARRA ÚNICA: do pagamento até a previsão MÁXIMA de entrega
+       (a mesma conta do cupom de atraso da logistica-painel).
+     · aviso { tipo, texto } — aviso ao cliente:
+         'sem_codigo'    = passou do prazo de POSTAGEM (3 dias úteis; 6 no atacado), sem leitura da transportadora e SEM
+                           código na planilha;
+         'objeto_criado' = idem, mas a planilha JÁ tem código (só o objeto criado, a transportadora ainda não leu);
+         'atacado'       = pedido de ATACADO que passou do prazo de postagem (6 dias úteis) sem leitura — texto próprio;
+         'transferencia' = pedido em trânsito que a logística marcou com o VISTO no painel (lista Parados).
+       Entrega por MOTOBOY não recebe aviso. Os textos são os do Thiago (01/10) e podem ser editados na aba Textos do
+       painel da logística (vitaflow_sync/logistica/textos/rastreio_aviso_*).
+     · nota_prazo { tipo, texto } — com o cupom de atraso LIGADO: 'promessa' (se passar do prazo máximo, o cliente
+       ganha um cupom) e, depois que passou E o cupom já foi gerado, 'cupom' (está em Meus cupons — o código NÃO sai
+       aqui: a página abre só com o número do pedido). Revendedor (V) e reenvio (R) não têm nota.
+     O GAS (reserva) não devolve esses campos: sem eles a página v7 mostra a barra antiga e nenhum aviso.
+     LÊ a mais: vitaflow_sync/logistica/{config,textos} (cache de 3 min) · vistos/<pedido> · cupons_atraso/<pedido>.
    v5 (01/10/2026): ORIGEM NOVA 'CP' = Campinas/SP. A fornecedora VITAFLOW devolve 'CP' (antes 'SP', que no mapa é a
    rota da capital). A coluna ORIGEM da planilha também aceita CP. Quem lê a origem: página de rastreio v6 (rota de
    Campinas), bot da logística v7 e logistica-painel v4 (nome 'Campinas/SP'). Igual ao GAS v54.
@@ -84,6 +100,29 @@ async function fbGetCache(caminho, segs) {
   var v = await fbGetOu(caminho);
   _mem[caminho] = { t: Date.now(), v: v };
   return v;
+}
+
+/* ---- v6: avisos da página de rastreio (textos do Thiago, 01/10; editáveis no painel da logística → aba Textos) ---- */
+var LOG_RAIZ = 'vitaflow_sync/logistica';
+var AVISOS_PADRAO = {
+  rastreio_aviso_sem_codigo:
+    '🎉 Boas notícias: seu pedido já foi despachado com sucesso e está a caminho! 📦🚚💨 Devido ao limite diário de processamento do sistema da transportadora, o código de rastreamento ainda não está disponível. ⏳ Fique tranquilo, assim que o sistema atualizar, o seu código aparecerá aqui! 📲✨',
+  rastreio_aviso_objeto_criado:
+    'Seu pedido já foi despachado e encontra-se em trânsito! 🚚\nDevido a um atraso na atualização dos dados por parte da transportadora, o status detalhado ainda não foi alterado. Fique tranquilo: assim que a encomenda for processada no próximo ponto de checagem, as informações serão atualizadas automaticamente aqui.',
+  rastreio_aviso_atacado:
+    'Acompanhamento Logístico - Atacado 📦\n\nPara garantir o transporte 100% seguro da sua mercadoria, a postagem do seu pedido será realizada assim que for concluída a fiscalização no trajeto de entrada do país. Aguardamos a liberação total da rota para efetuar o envio com máxima segurança. Agradecemos a compreensão e informamos que a postagem ocorrerá logo em seguida.',
+  rastreio_aviso_transferencia:
+    'Seu pedido está a caminho e sendo monitorado! 📦 Notamos que seu pacote está nesta etapa há um pouco mais de tempo que o habitual. Fique tranquilo: nossa equipe de logística já abriu um chamado junto à transportadora e está acompanhando a entrega de perto para garantir a sua segurança.',
+  rastreio_aviso_prazo:
+    'Sua satisfação é nossa prioridade! ⏱️\nAcompanhamos cada etapa da sua entrega de perto. Mas fique tranquilo: se o seu pedido extrapolar o prazo máximo informado, enviaremos automaticamente um cupom de desconto para você 🎁. Queremos garantir que você sempre tenha a melhor experiência conosco!',
+  rastreio_aviso_cupom:
+    'Seu pedido passou do prazo máximo informado. Para compensar a espera, você ganhou um cupom de {PCT}% de desconto 🎁\nEle está na sua conta, em vitaflowoficial.com/pages/minha-conta (área "Meus cupons").'
+};
+async function _logistica() {
+  var lidos = await Promise.all([fbGetCache(LOG_RAIZ + '/config', 180), fbGetCache(LOG_RAIZ + '/textos', 180)]);
+  var T = {}, b = lidos[1];
+  Object.keys(AVISOS_PADRAO).forEach(function (k) { T[k] = (b && typeof b[k] === 'string' && b[k].trim()) ? b[k] : AVISOS_PADRAO[k]; });
+  return { cfg: (lidos[0] && typeof lidos[0] === 'object') ? lidos[0] : {}, txt: T };
 }
 
 /* ============================ helpers iguais ao GAS ============================ */
@@ -330,6 +369,34 @@ async function _rastreioEnriquecer(rr, fornTxt, rastCel, emRota, evo, comp) {
       if (base && faixa) { p.previsao_de = _ddmm(_somaDU(base, faixa[0] + extra)); p.previsao_ate = _ddmm(_somaDU(base, faixa[1] + extra)); }
     }
     rr.prazo = p;
+
+    /* ---- v6: barra única (pagamento → previsão máxima), avisos ao cliente e nota do cupom de atraso ---- */
+    try {
+      var revend = /^VF-\d{4}-V/i.test(String(rr._pai || rr.pedido)), reenv = /^VF-\d{4}-R/i.test(String(rr.pedido)) || /^VF-\d{4}-R/i.test(String(rr._pai || ''));
+      if (ordemEx >= 1 && ordemEx <= 7 && tConf && faixa) {
+        var baseT = tPost || tConf, nT = faixa[1] + (tPost ? 0 : postDU), fimT = _somaDU(baseT, nT);
+        var maxT = Math.max(1, _duEntre(tConf, fimT)), diasT = _duEntre(tConf, agora);
+        rr.prazo_total = { dias: diasT, max: maxT, pct: Math.min(100, Math.round(100 * diasT / maxT)), ate: _ddmm(fimT), passou: _duEntre(baseT, agora) > nT };
+      }
+      var lg = await _logistica();
+      var semLeitura = !rr.primeira_leitura && ordemEx >= 1 && ordemEx <= 4;
+      var temCod = !!rastCel && String(rastCel).toUpperCase().indexOf('AVISO_ABANDONO') === -1;
+      var motoboy = temCod && String(rastCel).toUpperCase().replace(/\s/g, '') === 'MOTOBOY';
+      var tipoAv = '';
+      if (semLeitura && !motoboy && tConf && _duEntre(tConf, agora) > postDU) tipoAv = rr.atacado ? 'atacado' : (temCod ? 'objeto_criado' : 'sem_codigo');   /* atacado tem texto próprio (Thiago, 01/10) */
+      else if (!semLeitura && ordemEx >= 4 && ordemEx <= 7) {   /* em trânsito: só com o VISTO da logística (e enquanto o status não mudar) */
+        var vst = await fbGetOu(LOG_RAIZ + '/vistos/' + _histKey(rr.pedido));
+        if (vst && vst.st && vst.st === _semAcentoUp(rr.status)) tipoAv = 'transferencia';
+      }
+      if (tipoAv) rr.aviso = { tipo: tipoAv, texto: lg.txt['rastreio_aviso_' + tipoAv] };
+      if (lg.cfg.cupom_atraso_modo === 'ligado' && !revend && !reenv && rr.prazo_total) {
+        if (!rr.prazo_total.passou) rr.nota_prazo = { tipo: 'promessa', texto: lg.txt.rastreio_aviso_prazo };
+        else {
+          var cg = await fbGetOu(LOG_RAIZ + '/cupons_atraso/' + _histKey(rr._pai || rr.pedido));
+          if (cg && cg.codigo) rr.nota_prazo = { tipo: 'cupom', texto: String(lg.txt.rastreio_aviso_cupom).replace(/\{PCT\}/g, String(cg.pct || lg.cfg.cupom_atraso_pct || 5)) };
+        }
+      }
+    } catch (eA) { console.error('[rastreio] avisos ' + rr.pedido + ': ' + eA.message); }
   } catch (eR) { console.error('[rastreio] enriquecer ' + rr.pedido + ': ' + eR.message); }
   return rr;
 }
@@ -476,7 +543,7 @@ exports.handler = async function (event) {
 exports.lib = { fbGet: fbGet, fbGetOu: fbGetOu, histKey: _histKey, semAcentoUp: _semAcentoUp, naoPagou: _rastNaoPagou,
   baseDaLinha: _rastBaseDaLinha, enriquecer: _rastreioEnriquecer, origemEnvio: _origemEnvio, origemDaniel: _origemDaniel, linkTransp: _linkRastreioPub,
   duEntre: _duEntre, somaDU: _somaDU, ddmm: _ddmm, diaBR: _diaBR, diaUtilBR: _diaUtilBR,
-  PRAZOS_ENTREGA: PRAZOS_ENTREGA, UF_REGIAO: _UF_REGIAO, ETAPA_ORDEM: _ETAPA_ORDEM };
+  PRAZOS_ENTREGA: PRAZOS_ENTREGA, UF_REGIAO: _UF_REGIAO, ETAPA_ORDEM: _ETAPA_ORDEM, AVISOS_PADRAO: AVISOS_PADRAO /* v6 */ };
 
 /* só pra teste local (node) */
 exports._t = { _rastBaseDaLinha: _rastBaseDaLinha, _cidadeDoEndereco: _cidadeDoEndereco, _duEntre: _duEntre, _somaDU: _somaDU,

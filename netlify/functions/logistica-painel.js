@@ -1,6 +1,12 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v4  ·  01/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v5  ·  01/10/2026
+   v5 (Thiago, 01/10, noite): (1) VISTO — parados e atrasos de envio ganham o campo `visto` (vitaflow_sync/logistica/vistos/<pedido>,
+       gravado pelo painel): o pedido sai da lista, do placar e do resumo do WhatsApp até mudar de status. Em pedido em trânsito, o
+       visto liga o aviso "equipe acompanhando" na página de rastreio (rastreio-consulta v6). (2) CUPOM: nasce sozinho, mas o
+       E-MAIL SÓ SAI PELO BOTÃO do painel (acao 'cupons_enviar': por pedido ou todos os pendentes). (3) O cupom leva na
+       "Descrição" da Gestão de Cupons o motivo e o pedido ("Atraso na entrega · VF-…") — sem o nome do cliente, porque a coleção
+       é aberta para leitura. (4) ?defaults=1 devolve também os textos dos avisos da página de rastreio (rastreio_aviso_*).
    v4 (Thiago, 01/10): CUPOM DE ATRASO + PEDIDOS PARADOS + CAMPINAS.
        · cupom de atraso: o pedido que passa da PREVISÃO MÁXIMA de entrega (a mesma conta da página de rastreio) e ainda não
          chegou ganha UM cupom (padrão 5%, uso único, 45 dias), gravado na coleção cupons_vitaflow (a mesma da Gestão de
@@ -210,9 +216,10 @@ function fornNome(f) {
 async function lerBase(comEmails) {
   var lidos = await Promise.all([
     R.fbGet('vitaflow_pedidos_hdr'), R.fbGet('vitaflow_pedidos'), R.fbGet('vitaflow_historico_status'),
-    R.fbGetOu(RAIZ + '/config'), R.fbGetOu(RAIZ + '/textos'), comEmails ? R.fbGetOu(RAIZ + '/email_atraso') : Promise.resolve(null)
+    R.fbGetOu(RAIZ + '/config'), R.fbGetOu(RAIZ + '/textos'), comEmails ? R.fbGetOu(RAIZ + '/email_atraso') : Promise.resolve(null),
+    R.fbGetOu(RAIZ + '/vistos')   /* v5 */
   ]);
-  return { hdr: lidos[0] || [], esp: lidos[1] || {}, hist: lidos[2] || {}, cfg: lidos[3] || {}, txt: lidos[4] || {}, env: lidos[5] || {} };
+  return { hdr: lidos[0] || [], esp: lidos[1] || {}, hist: lidos[2] || {}, cfg: lidos[3] || {}, txt: lidos[4] || {}, env: lidos[5] || {}, vistos: lidos[6] || {} };
 }
 
 /* um pedido do espelho → dados de tempo (ts em ms) */
@@ -374,7 +381,8 @@ async function calcularAtrasos(base, peds, agora) {
     lista.push({ k: p.k, k_email: kf, pedido_email: p.pai || p.pedido, pacote_de: p.pai || '', pedido: p.pedido, nome: p.nome, email: p.email, uf: p.uf, cidade: p.cidade, data: p.data, status: p.status,
       fornecedor: p.forn, fornecedor_txt: p.fornTxt, transportadora: p.transpTxt, codigo: p.codigo, atacado: p.atacado,
       dias: dias, prazo_postagem: pd, postagem_ate: R.ddmm(R.somaDU(p.tConf, pd)), conf_ts: p.tConf,
-      emails: Number(env.n) || 0, email_ultimo: Number(env.ultimo) || 0, revendedor: ehRevendedor(p.pai || p.pedido) });
+      emails: Number(env.n) || 0, email_ultimo: Number(env.ultimo) || 0, revendedor: ehRevendedor(p.pai || p.pedido),
+      st: p.st, visto: vistoVale((base.vistos || {})[p.k], p.st) });   /* v5 */
   });
   /* v3: o e-mail sai UM por família — o "líder" é o pedido original (se estiver atrasado), senão a 1ª linha D atrasada.
      parcial = a família tem pacote que NÃO está atrasado (já postado ou ainda no prazo) → texto "um dos pacotes". */
@@ -1198,7 +1206,10 @@ async function fsCriarCupom(docId, c) {
     tipoVal: { stringValue: 'unico_prazo' }, expira: { timestampValue: new Date(c.expira).toISOString() },
     maxUsos: { integerValue: 1 }, usosAtual: { integerValue: 0 }, minPedido: { doubleValue: 0 }, maxDesc: { doubleValue: 0 },
     /* rastreabilidade na Gestão de Cupons (sem dado pessoal: a coleção é lida pelo site) */
-    origem: { stringValue: 'atraso-entrega' }, pedido: { stringValue: c.pedido }, criadoEm: { stringValue: new Date(c.criado).toISOString() } } };
+    origem: { stringValue: 'atraso-entrega' }, pedido: { stringValue: c.pedido }, criadoEm: { stringValue: new Date(c.criado).toISOString() },
+    /* v5: aparece no campo "Descrição" da Gestão de Cupons — motivo + pedido. O NOME do cliente NÃO vai aqui (pedido do Thiago:
+       ninguém de fora pode ler; esta coleção é aberta para leitura). O nome aparece na aba Cupons do painel da logística. */
+    descricao: { stringValue: c.descricao || ('Atraso na entrega · ' + c.pedido) } } };
   try {
     var r = await fetch(fsUrl('/cupons_vitaflow', '&documentId=' + encodeURIComponent(docId)), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
@@ -1268,13 +1279,40 @@ function montarEmailCupom(reg, textos) {
     VALIDADE: ddmmaa(reg.expira), PREVISAO: reg.previsao_ate || '', DIAS: reg.dias_validade || '' };
   return { assunto: preencher(T.email_cupom_assunto, v), texto: preencher(T.email_cupom_texto, v) };
 }
+function emailPendente(g, agora) { return !!(g && g.codigo && !g.email_ts && emailOk(g.email) && Number(g.expira) > agora); }
+/* v5: manda o e-mail do cupom — SÓ quando alguém aperta o botão no painel. op.pedidos = lista de pedidos, ou op.todos.
+   Não manda duas vezes (email_ts), nem cupom usado, apagado ou vencido. Até 15 por chamada (o painel repete se faltar). */
+async function cuponsEnviar(op) {
+  var agora = op.agora || Date.now();
+  var regs = (await fbLerOu(CUPONS)) || {}, textos = (await fbLerOu(RAIZ + '/textos')) || {};
+  var quer = {}; (op.pedidos || []).forEach(function (p) { quer[R.histKey(String(p || '').trim())] = 1; });
+  var ks = Object.keys(regs).filter(function (k) { return (op.todos || quer[k]) && emailPendente(regs[k], agora); })
+    .sort(function (a, b) { return (regs[a].criado || 0) - (regs[b].criado || 0); });
+  var out = { ok: true, pendentes: ks.length, enviados: 0, pulados: 0, falhas: 0, erros: [], faltaram: Math.max(0, ks.length - 15) };
+  if (!op.todos) Object.keys(quer).forEach(function (k) { if (ks.indexOf(k) < 0) { out.pulados++; if (out.erros.length < 10) out.erros.push((regs[k] ? regs[k].pedido : k) + ': ' + (!regs[k] ? 'sem cupom' : (regs[k].email_ts ? 'e-mail já enviado' : (!emailOk(regs[k].email) ? 'pedido sem e-mail' : 'cupom vencido')))); } });
+  ks = ks.slice(0, 15);
+  async function um(k) {
+    var g = regs[k], fs = await fsLerCupom(g.doc || ('atraso_' + k));
+    if (fs === undefined) { out.falhas++; if (out.erros.length < 10) out.erros.push(g.pedido + ': não consegui consultar o cupom'); return; }
+    if (fs === null || fs.ativo === false || fs.usos >= 1) { out.pulados++; if (out.erros.length < 10) out.erros.push(g.pedido + ': cupom ' + (fs === null ? 'apagado' : (fs.usos >= 1 ? 'já usado' : 'desativado')) + ' — e-mail não enviado'); return; }
+    var m = montarEmailCupom(g, textos), re = await enviarBrevo(g.email, g.nome, m.assunto, m.texto);
+    if (!re.ok) { out.falhas++; if (out.erros.length < 10) out.erros.push(g.pedido + ': ' + re.erro); return; }
+    out.enviados++;
+    try { await fbReq('PATCH', CUPONS + '/' + k, { email_ts: Date.now(), email_por: txt(op.uid, 40) }); }
+    catch (eP) { if (out.erros.length < 10) out.erros.push(g.pedido + ': e-mail enviado, mas não gravou o registro (' + eP.message + ')'); }
+  }
+  for (var i = 0; i < ks.length; i += 5) await Promise.all(ks.slice(i, i + 5).map(um));
+  if (out.falhas) out.ok = out.enviados > 0;
+  return out;
+}
 function cupomSituacao(reg, fs, agora) {
   if (fs && fs.usos >= 1) return 'usado';
   if (fs && fs.ativo === false) return 'inativo';
   if ((fs && fs.expira ? fs.expira : reg.expira) < agora) return 'vencido';
   return 'disponivel';
 }
-/* gera os cupons que faltam (modo ligado) e manda o e-mail. op.simular = só diz o que faria. */
+/* gera os cupons que faltam (modo ligado). v5: NÃO manda e-mail — o cupom já aparece em "Meus cupons" e o e-mail sai
+   pelo botão do painel (cuponsEnviar). op.simular = só diz o que faria. */
 async function cuponsAtraso(op) {
   var agora = op.agora || Date.now();
   var base = op.base || await lerBase(false);
@@ -1286,16 +1324,9 @@ async function cuponsAtraso(op) {
   var antigos = fora.filter(function (c) { return !regs[c.kf] && cfg.desde && c.ate_ts < cfg.desde; }).length;
   var out = { ok: true, modo: cfg.modo, fora_do_prazo: fora.length, ja_tem_cupom: fora.filter(function (c) { return !!regs[c.kf]; }).length,
     antes_do_inicio: antigos, a_gerar: novos.length, gerados: 0, emails: 0, sem_email: 0, falhas: 0, erros: [],
+    email_pendentes: Object.keys(regs).filter(function (k) { return emailPendente(regs[k], agora); }).length,
     lista: novos.map(function (c) { return { pedido: c.pedido, nome: c.nome, uf: c.uf, status: c.status, previsao_ate: c.previsao_ate, dias_alem: c.dias_alem, tem_email: emailOk(c.email) }; }) };
   if (op.simular || cfg.modo !== 'ligado') return out;
-
-  /* e-mails que ficaram pendentes de uma rodada anterior (cupom criado, e-mail falhou): até 3 tentativas */
-  var pend = Object.keys(regs).filter(function (k) { var g = regs[k]; return g && g.codigo && !g.email_ts && !g.sem_email && (Number(g.email_tent) || 0) < 3 && emailOk(g.email) && g.expira > agora; });
-  for (var ip = 0; ip < pend.length && ip < 20; ip++) {
-    var g = regs[pend[ip]], mp = montarEmailCupom(g, base.txt), rp = await enviarBrevo(g.email, g.nome, mp.assunto, mp.texto);
-    try { await fbReq('PATCH', CUPONS + '/' + pend[ip], rp.ok ? { email_ts: agora } : { email_tent: (Number(g.email_tent) || 0) + 1, email_erro: txt(rp.erro, 160) }); } catch (eP) { /* tenta de novo amanhã */ }
-    if (rp.ok) out.emails++; else { out.falhas++; if (out.erros.length < 10) out.erros.push(g.pedido + ': ' + rp.erro); }
-  }
 
   var fila = novos.slice(0, cfg.max);
   function falha(c, msg) { out.falhas++; if (out.erros.length < 10) out.erros.push(c.pedido + ': ' + msg); }
@@ -1310,7 +1341,7 @@ async function cuponsAtraso(op) {
       for (var t = 0; t < 4 && !codigo; t++) { var tent = codigoCupomNovo(cfg.prefixo); if ((await fsCodigoExiste(tent)) === false) codigo = tent; }
       if (!codigo) return falha(c, 'não consegui conferir o código do cupom');
       reg = { codigo: codigo, pct: cfg.pct, expira: agora + cfg.dias * DIA };
-      var cr = await fsCriarCupom(docId, { codigo: codigo, pct: cfg.pct, expira: reg.expira, pedido: c.pedido, criado: agora });
+      var cr = await fsCriarCupom(docId, { codigo: codigo, pct: cfg.pct, expira: reg.expira, pedido: c.pedido, criado: agora, descricao: 'Atraso na entrega · ' + c.pedido });
       if (!cr.ok) return falha(c, cr.erro || 'o cupom já existia');
     }
     reg.pedido = c.pedido; reg.nome = txt(c.nome, 80); reg.email = emailOk(c.email) ? String(c.email).trim() : ''; reg.uf = c.uf || '';
@@ -1319,13 +1350,11 @@ async function cuponsAtraso(op) {
     try { await fbReq('PUT', CUPONS + '/' + c.kf, reg); }
     catch (eG) { return falha(c, 'cupom criado, mas não gravou o registro (' + eG.message + ')'); }
     out.gerados++;
-    if (!reg.email) { out.sem_email++; return; }
-    var m = montarEmailCupom(reg, base.txt), re = await enviarBrevo(reg.email, reg.nome, m.assunto, m.texto);
-    try { await fbReq('PATCH', CUPONS + '/' + c.kf, re.ok ? { email_ts: Date.now() } : { email_tent: 1, email_erro: txt(re.erro, 160) }); } catch (eE) { /* fica pendente */ }
-    if (re.ok) out.emails++; else falha(c, 'cupom criado, e-mail falhou (' + re.erro + ')');
+    if (!reg.email) out.sem_email++;   /* v5: o e-mail NÃO sai aqui — só pelo botão do painel (cuponsEnviar) */
   }
   for (var i = 0; i < fila.length; i += 4) await Promise.all(fila.slice(i, i + 4).map(gerarUm));   /* 4 por vez: cabe no tempo da função */
   out.faltaram = Math.max(0, novos.length - fila.length);
+  out.email_pendentes += Math.max(0, out.gerados - out.sem_email);   /* v5: os recém-gerados esperam o botão */
   try { var lg = {}; lg[R.diaBR(agora).replace(/-/g, '') + '_' + agora] = { ts: agora, fora: out.fora_do_prazo, gerados: out.gerados, emails: out.emails, sem_email: out.sem_email, falhas: out.falhas, erros: out.erros.slice(0, 5) };
     await fbReq('PATCH', RAIZ + '/cupons_atraso_log', lg); } catch (eL) { /* log é só registro */ }
   return out;
@@ -1337,10 +1366,16 @@ async function cuponsGerados(agora, max) {
   var fss = await Promise.all(ks.map(function (k) { return fsLerCupom(regs[k].doc || ('atraso_' + k)); }));
   return ks.map(function (k, i) {
     var g = regs[k];
+    var sitC = fss[i] === null ? 'apagado' : cupomSituacao(g, fss[i], agora);
     return { pedido: g.pedido, nome: g.nome || '', codigo: g.codigo, pct: g.pct, criado: ddmmaa(g.criado), expira: ddmmaa(g.expira), previsao_ate: g.previsao_ate || '',
-      situacao: fss[i] === null ? 'apagado' : cupomSituacao(g, fss[i], agora), email: g.email_ts ? 'enviado' : (g.sem_email ? 'sem e-mail' : 'pendente') };
+      situacao: sitC, email: g.email_ts ? 'enviado' : ((g.sem_email || !emailOk(g.email)) ? 'sem e-mail' : 'pendente'), email_em: g.email_ts ? ddmmaa(g.email_ts) : '',
+      pode_enviar: sitC === 'disponivel' && emailPendente(g, agora) };
   });
 }
+
+/* v5: VISTO — a logística marca o pedido no painel (vitaflow_sync/logistica/vistos/<pedido> = { st, ts, por }) e ele sai da lista
+   e do resumo do WhatsApp ATÉ MUDAR DE STATUS (o visto vale só para o status em que foi dado). */
+function vistoVale(v, st) { return !!(v && v.st && v.st === st); }
 
 /* ---------- PEDIDOS PARADOS: mais de N dias úteis no MESMO status (menos entregue, cancelado e não pago) ---------- */
 var ROTULO_ST = { 'PEDIDO CONFIRMADO': 'Pedido confirmado', 'PAGO': 'Pedido confirmado', 'EM SEPARACAO': 'Em separação', 'DESPACHADO': 'Despachado', 'POSTADO': 'Postado',
@@ -1352,7 +1387,7 @@ function nomeStatus(s) { var u = R.semAcentoUp(s); if (ROTULO_ST[u]) return ROTU
 function calcularParados(base, peds, agora) {
   var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
   var lim = Math.max(1, Number(cfg.parados_dias) || 3), janela = Math.max(7, Number(cfg.parados_janela_dias) || 60);
-  var out = [];
+  var out = [], V = base.vistos || {};
   peds.forEach(function (p) {
     if (p.naoPagou || p.final || !p.st || p.st === 'ENTREGUE') return;
     if (!p.tConf || p.tConf < agora - janela * DIA) return;
@@ -1360,7 +1395,7 @@ function calcularParados(base, peds, agora) {
     if (dias <= lim) return;
     out.push({ k: p.k, pedido: p.pedido, pacote_de: p.pai || '', nome: p.nome, uf: p.uf, cidade: p.cidade, data: p.data, status: p.status, st: p.st,
       dias: dias, desde: R.ddmm(t), fornecedor: p.forn, transportadora: p.transpTxt, codigo: p.codigo, revendedor: ehRevendedor(p.pai || p.pedido),
-      desde_incerto: !p.tStatus });
+      desde_incerto: !p.tStatus, visto: vistoVale(V[p.k], p.st), visto_em: (V[p.k] && V[p.k].ts) ? R.ddmm(V[p.k].ts) : '' });
   });
   out.sort(function (a, b) { return b.dias - a.dias || (a.pedido < b.pedido ? -1 : 1); });
   return out;
@@ -1395,8 +1430,9 @@ async function avisoParados(op) {
   var agora = op.agora || Date.now();
   var base = op.base || await lerBase(false);
   var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
-  var lista = calcularParados(base, op.peds || montarPedidos(base), agora);
-  var out = { ok: true, parados: lista.length, novos: 0, enviado: false };
+  var todosP = calcularParados(base, op.peds || montarPedidos(base), agora);
+  var lista = todosP.filter(function (a) { return !a.visto; });   /* v5: os vistos ficam fora do resumo */
+  var out = { ok: true, parados: lista.length, vistos: todosP.length - lista.length, novos: 0, enviado: false };
   if (cfg.parados_whatsapp === 'desligado') { out.pulou = 'aviso desligado'; return out; }
   var av = (await fbLerOu(RAIZ + '/parados_avisados')) || {};
   var novos = lista.filter(function (a) { return !(av[a.k] && av[a.k].st === a.st); });
@@ -1428,13 +1464,19 @@ async function acaoAdminV4(acao, d, uid, agora) {
       config: { modo: cc.modo, pct: cc.pct, dias: cc.dias, prefixo: cc.prefixo, desde: cc.desde } });
   }
   if (acao === 'cupons_rodar') return resp(await cuponsAtraso({ agora: agora, simular: d.simular === true }));
+  if (acao === 'cupons_enviar') {   /* v5: o e-mail do cupom só sai por aqui (botão do painel) */
+    var peds = (d.pedidos instanceof Array) ? d.pedidos.slice(0, 60).map(function (x) { return txt(x, 30); }) : [];
+    if (!d.todos && !peds.length) return resp({ ok: false, erro: 'diga o pedido (ou todos)' }, 400);
+    return resp(await cuponsEnviar({ agora: agora, uid: uid, todos: d.todos === true, pedidos: peds }));
+  }
   if (acao === 'placar') {   /* os contadores do topo do painel (cache de 2 min na instância quente) */
     if (!d.forcar && _cache.placar && agora - _cache.placar.t < 120000) return resp(_cache.placar.v);
     var bL = await lerBase(true), pL = montarPedidos(bL);
-    var atr = await calcularAtrasos(bL, pL, agora), par = calcularParados(bL, pL, agora);
+    var atrT = await calcularAtrasos(bL, pL, agora), parT = calcularParados(bL, pL, agora);
+    var atr = atrT.filter(function (a) { return !a.visto; }), par = parT.filter(function (a) { return !a.visto; });   /* v5: sem os vistos */
     var vL = { ok: true, gerado_ts: agora,
       envio: { total: atr.length, varejo: atr.filter(function (a) { return !a.atacado; }).length, atacado: atr.filter(function (a) { return a.atacado; }).length, maior: atr.length ? atr[0].dias : 0 },
-      parados: { total: par.length, maior: par.length ? par[0].dias : 0 } };
+      parados: { total: par.length, maior: par.length ? par[0].dias : 0 }, vistos: { envio: atrT.length - atr.length, parados: parT.length - par.length } };
     _cache.placar = { t: agora, v: vL };
     return resp(vL);
   }
@@ -1465,7 +1507,7 @@ exports.handler = async function (event) {
     var src = fonteColetor(String(q.coletor));
     return { statusCode: src ? 200 : 404, headers: Object.assign({}, CORS, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' }), body: src || '// coletor desconhecido' };
   }
-  if (event.httpMethod === 'GET' && q.defaults) return resp({ textos: EMAIL_PADRAO, config: EMAIL_CFG_PADRAO, brevo: !!process.env.BREVO_API_KEY });
+  if (event.httpMethod === 'GET' && q.defaults) return resp({ textos: Object.assign({}, EMAIL_PADRAO, R.AVISOS_PADRAO || {}), config: EMAIL_CFG_PADRAO, brevo: !!process.env.BREVO_API_KEY });
   if (event.httpMethod !== 'POST') return resp({ ok: false, erro: 'use POST' }, 405);
   var d = {};
   try { d = JSON.parse(event.body || '{}') || {}; } catch (e) { d = {}; }
@@ -1489,7 +1531,7 @@ exports.handler = async function (event) {
       var rV3 = await acaoAdminV3(acao, d, uid, agora);
       if (rV3) return rV3;
     }
-    if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'placar') {   /* v4 */
+    if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'cupons_enviar' || acao === 'placar') {   /* v4 · v5 */
       var rV4 = await acaoAdminV4(acao, d, uid, agora);
       if (rV4) return rV4;
     }
@@ -1553,4 +1595,4 @@ exports.lib = { lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros:
   /* v4 */
   cuponsAtraso: cuponsAtraso, foraDoPrazo: foraDoPrazo, prazoMaximo: prazoMaximo, montarEmailCupom: montarEmailCupom, cuponsGerados: cuponsGerados,
   cupomSituacao: cupomSituacao, cfgCupom: cfgCupom, calcularParados: calcularParados, avisoParados: avisoParados, textoParados: textoParados,
-  codigoCupomNovo: codigoCupomNovo, fsLerCupom: fsLerCupom };
+  codigoCupomNovo: codigoCupomNovo, fsLerCupom: fsLerCupom, cuponsEnviar: cuponsEnviar, vistoVale: vistoVale /* v5 */ };
