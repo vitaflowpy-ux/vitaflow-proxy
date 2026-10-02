@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v3  ·  01/10/2026
+   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v4  ·  02/10/2026
+   v4 (ordem do Thiago, 01-02/10: "o mesmo aviso da página de rastreio na Minha Conta"): cada envio ganha `aviso` { tipo, texto }
+       — o MESMO que a página de rastreio mostra para aquele pedido (rastreio-consulta v7: textos do Thiago; 1 e 2 quando a
+       logística marca Postado e a transportadora ainda não leu; atacado; visto em trânsito). Só em pedido em andamento.
    v3 (01/10/2026): MEUS CUPONS. A resposta de 'minha_conta' ganha a lista `cupons`: o cupom de atraso na entrega que a
        logistica-painel v4 gera (vitaflow_sync/logistica/cupons_atraso/<pedido>) para os pedidos DESTA conta — código,
        desconto, validade e situação (disponível / usado / vencido, lida da coleção cupons_vitaflow, a mesma do carrinho).
@@ -420,6 +423,7 @@ function envioPublico(rr, n) {
       if (tConf && p.normal) e.postagem_ate = R.ddmm(R.somaDU(tConf, p.normal));
     }
     e.atraso = !!p.fora;
+    if (rr.aviso && rr.aviso.texto) e.aviso = { tipo: String(rr.aviso.tipo || ''), texto: String(rr.aviso.texto) };   /* v4: o mesmo aviso da página de rastreio */
   }
   return e;
 }

@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v7  ·  01/10/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v8  ·  02/10/2026
+   v8 (ordem do Thiago, 01-02/10: "o bot avisa a mesma coisa que está na página de rastreio"): o cartão do pedido e a opção 1
+       (rastreio) mostram o MESMO AVISO que a página mostra para aquele pedido (campo `aviso` da rastreio-consulta v7 — textos
+       do Thiago, sem mudar uma palavra; só negrito/itálico do WhatsApp e uma frase por linha). Com o aviso 1 ou 2 (pedido
+       marcado como Postado pela logística, sem leitura da transportadora) some a frase "o código aparece assim que a
+       transportadora fizer a primeira leitura", que dizia outra coisa. Sem o campo (reserva do GAS) nada muda.
    v7 (Thiago, 01/10): (1) COMANDO #bot — quando a logística manda "#bot" pelo celular numa conversa em que o bot está
        calado, o bot VOLTA NA HORA naquela conversa (sem esperar as 6 h). Só vale vindo do celular da logística (fromMe):
        se o CLIENTE escrever #bot, é uma mensagem qualquer — não reativa nada. (2) LISTA "BOT CALADO": cada silêncio fica
@@ -72,7 +77,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v7';
+var VERSAO = 'v8';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -432,6 +437,7 @@ function resumo(it) {
     transportadora: it.transportadora || '', codigo: it.codigo || '', link_transp: it.link_transp || '',
     data: it.data || '', estado: it.estado || '', cidade: it.cidade || '', origem: it.origem || '',
     atacado: !!it.atacado, primeira_leitura: Number(it.primeira_leitura) || 0, prazo: it.prazo || null,
+    aviso: (it.aviso && it.aviso.texto) ? { tipo: String(it.aviso.tipo || ''), texto: String(it.aviso.texto).slice(0, 1500) } : null,   /* v8 */
     eventos: ev, historico: hi, t: Date.now()
   };
 }
@@ -844,8 +850,31 @@ function produtosLinhas(txt, max) {
   return itens;
 }
 
+/* v8: AVISO da página de rastreio no WhatsApp. NÃO muda nenhuma palavra do texto: uma frase por linha, a 1ª em negrito,
+   negrito nos trechos principais e itálico no "Fique tranquilo" (os mesmos destaques da página v9). */
+var AV_EMOJI = '(?:[\\uD83C-\\uDBFF][\\uDC00-\\uDFFF]|[\\u2190-\\u2BFF\\uFE0F\\u200D])';
+var AV_FIM = new RegExp('([.!?](?:\\s*' + AV_EMOJI + ')*)\\s+(?=[A-ZÀ-Ý])', 'g');
+var AV_NEGRITO = ['o código de rastreamento ainda não está disponível', 'o status detalhado ainda não foi alterado', 'o seu código aparecerá aqui!',
+  'as informações serão atualizadas automaticamente aqui', 'transporte 100% seguro', 'a postagem ocorrerá logo em seguida', 'já abriu um chamado junto à transportadora'];
+var AV_ITALICO = ['Fique tranquilo', 'fique tranquilo', 'Agradecemos a compreensão'];
+function avisoWhats(t) {
+  var frases = [];
+  String(t || '').split(/\n+/).forEach(function (bloco) {
+    bloco.replace(AV_FIM, '$1\n').split('\n').forEach(function (f) { f = f.replace(/^\s+|\s+$/g, ''); if (f) frases.push(f); });
+  });
+  return frases.map(function (f, i) {
+    if (i === 0 && frases.length > 1) return '*' + f + '*';
+    AV_NEGRITO.forEach(function (x) { f = f.split(x).join('*' + x + '*'); });
+    AV_ITALICO.forEach(function (x) { f = f.split(x).join('_' + x + '_'); });
+    return f;
+  }).join('\n');
+}
+/* o aviso só vale para pedido em andamento (o mesmo critério da página) */
+function avisoDe(snap) { return (snap && snap.aviso && snap.aviso.texto && categoria(snap) === 'fluxo') ? snap.aviso : null; }
+function avisoPostagem(av) { return !!av && (av.tipo === 'sem_codigo' || av.tipo === 'objeto_criado' || av.tipo === 'atacado'); }
+
 function cartao(snap, T) {
-  var s = statusDe(snap), cat = categoria(snap), L = [];
+  var s = statusDe(snap), cat = categoria(snap), L = [], av = avisoDe(snap);
   L.push('📦 *Pedido ' + snap.pedido + '*');
   if (snap.nome) L.push('👤 ' + snap.nome);
   if (snap.produtos) { L.push('🧾 *Produtos:*'); produtosLinhas(snap.produtos).forEach(function (x) { L.push(x); }); }   /* v5 */
@@ -855,13 +884,14 @@ function cartao(snap, T) {
     L.push('📬 *A transportadora registrou a entrega*' + (ei.ts ? ' em ' + ddmmhhmm(ei.ts) : '') + (ei.local ? ' (' + ei.local + ')' : '') + '.');
     L.push('_Ainda não recebeu? Escolha a opção *5*._');
   } else {
-    L.push('📍 *Status:* ' + rotuloStatus(s) + (EXPLIC[s] ? ' — ' + EXPLIC[s] : ''));
+    L.push('📍 *Status:* ' + rotuloStatus(s) + ((EXPLIC[s] && !avisoPostagem(av)) ? ' — ' + EXPLIC[s] : ''));   /* v8: com o aviso de postagem, quem explica é o aviso (igual à página) */
     if (cat === 'excecao') L.push('_Para a logística verificar, escolha a opção *3*._');
   }
   if (snap.transportadora) L.push('🚚 ' + snap.transportadora + (snap.codigo ? ' · código *' + snap.codigo + '*' : ''));
   if (ORIGEM[snap.origem] && cat !== 'entregue') L.push('🏭 Sai de: ' + ORIGEM[snap.origem]);
   var prev = previsaoTxt(snap.prazo);
   if (prev && (cat === 'fluxo')) L.push('🗓️ Previsão estimada de entrega: *' + prev + '*');
+  if (av) { L.push('⠀'); L.push(avisoWhats(av.texto)); }   /* v8 */
   L.push('⠀');
   L.push(T.menu);
   return L.join('\n');
@@ -869,14 +899,16 @@ function cartao(snap, T) {
 
 function textoRastreio(snap, T) {
   var L = ['🔎 *Rastreio do pedido ' + snap.pedido + '*', '⠀'];
-  var s = statusDe(snap);
+  var s = statusDe(snap), av = avisoDe(snap);   /* v8 */
   if (snap.codigo) {
     L.push('🚚 ' + (snap.transportadora || 'Transportadora') + ' · código *' + snap.codigo + '*');
     if (snap.link_transp) L.push('👉 ' + snap.link_transp);
   } else {
-    L.push('📍 Agora: *' + rotuloStatus(s) + '*' + (EXPLIC[s] ? ' — ' + EXPLIC[s] : ''));
-    L.push('_O código de rastreio aparece aqui assim que a transportadora fizer a *primeira leitura* do pacote._');
+    L.push('📍 Agora: *' + rotuloStatus(s) + '*' + ((EXPLIC[s] && !avisoPostagem(av)) ? ' — ' + EXPLIC[s] : ''));
+    /* v8: com o aviso 1 ou 2 na mensagem, esta frase dizia outra coisa sobre o código — não vai */
+    if (!(av && (av.tipo === 'sem_codigo' || av.tipo === 'objeto_criado'))) L.push('_O código de rastreio aparece aqui assim que a transportadora fizer a *primeira leitura* do pacote._');
   }
+  if (av) { L.push('⠀'); L.push(avisoWhats(av.texto)); }   /* v8 */
   var ev = (snap.eventos || []).slice(-6).reverse();
   if (ev.length) {
     L.push('⠀'); L.push('*Últimas movimentações da transportadora:*');
@@ -1538,5 +1570,6 @@ exports._t = {
   chaveNumero: chaveNumero, numeroNaLista: numeroNaLista, dentroHorario: dentroHorario, proximaAbertura: proximaAbertura,
   textoAbertura: textoAbertura, categoria: categoria, jaPostado: jaPostado, entregaInfo: entregaInfo,
   impressao: impressao, opcaoPorPalavra: opcaoPorPalavra, T_PADRAO: T_PADRAO, CFG_PADRAO: CFG_PADRAO,
-  _cache: _cache, regraAlteracao: regraAlteracao, partesBR: partesBR
+  _cache: _cache, regraAlteracao: regraAlteracao, partesBR: partesBR,
+  cartao: cartao, textoRastreio: textoRastreio, avisoWhats: avisoWhats, resumo: resumo   /* v8 */
 };
