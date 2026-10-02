@@ -65,12 +65,17 @@
      correcoes_email/<id>  {quando, uid, pedidos, de, para}
    LÊ: vitaflow_idx_email · vitaflow_idx_cpf · vitaflow_pedidos(_hdr) · vitaflow_compras · vitaflow_historico_status
        vitaflow_sync/rastreio_eventos · vitaflow_sorteio
+   v6 (02/10/2026 — ordem do Thiago: "tem que ser pelo CPF"): a conta mostra os pedidos pagos do e-mail da conta E os pedidos pagos
+       do(s) CPF(s) desses pedidos, mesmo feitos com outro e-mail (é a mesma lista que o rastreio por CPF já mostra).
+       dados_compra / Meus dados: telefone = o do pedido mais recente que tem telefone; endereço = o do pedido mais recente, separado
+       nos dois formatos que a planilha grava (carrinho do site e Athena/Orçamento). Pedido mais recente sem endereço separável:
+       usa o endereço separável mais recente do MESMO CEP (ou, se o mais recente nem CEP tem, o separável mais recente).
    Variáveis: FIREBASE_SECRET · BREVO_API_KEY · TELEGRAM_TOKEN/TELEGRAM_CHAT (já existem) · COMPRAS_KEY (NOVA, só pra trocar e-mail)
    ============================================================================= */
 var crypto = require('crypto');
 var R = require('./rastreio-consulta.js').lib;
 
-var VERSAO = 'v5';
+var VERSAO = 'v6';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_contas';
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
@@ -476,8 +481,9 @@ function notaSeq(dSeq, oSeq) {
 }
 function casarD(dLinha, I, cands, conta) {
   var em = normEmail(cel(dLinha, I.email)), cp = cpf11(cel(dLinha, I.cpf));
-  if (em && em !== conta.email) return null;                      /* D com e-mail de outra pessoa */
-  if (cp && cp.length === 11 && conta.cpfs.indexOf(cp) < 0) return null;   /* D com CPF de outra pessoa */
+  var cpMeu = cp.length === 11 && conta.cpfs.indexOf(cp) >= 0;     /* v6: o CPF manda */
+  if (cp && cp.length === 11 && !cpMeu) return null;              /* D com CPF de outra pessoa */
+  if (!cpMeu && em && em !== conta.email && (conta.emails || []).indexOf(em) < 0) return null;   /* D com e-mail de outra pessoa */
   /* v2: linha D automática → o dono é o PEDIDO_ORIGINAL, e só ele (se não for deste cliente, a linha fica de fora) */
   var pai = cel(dLinha, I.pai).toUpperCase();
   if (pai) { for (var q = 0; q < cands.length; q++) { if (String(cands[q].pedido).trim().toUpperCase() === pai) return cands[q]; } return null; }
@@ -497,11 +503,26 @@ async function montarConta(u, agora, soCompra) {
   var hdr = await lerHdr();
   var I = indices(hdr);
 
-  /* 1) linhas do e-mail (o índice pode ter sobra: confere o e-mail da linha) */
-  var normais = [], reenvios = [], dsDoIdx = [], todosDoDia = {};
+  /* 1) linhas do e-mail (o índice pode ter sobra: confere o e-mail da linha)
+        v6: + as linhas do(s) CPF(s) dos pedidos PAGOS desse e-mail (confere o CPF da linha). Revendedor não puxa CPF. */
+  var minhas = {};
   Object.keys(porEmail).forEach(function (k) {
     var l = porEmail[k];
     if (normEmail(cel(l, I.email)) !== conta.email) return;
+    minhas[k] = l;
+    var pedE = cel(l, I.ped); if (!pedE || pedE.indexOf(',') >= 0 || ehRevendedor(pedE) || prefixo(pedE) === 'D') return;
+    if (R.naoPagou(cel(l, I.status), cel(l, 12))) return;
+    var cE = cpf11(cel(l, I.cpf)); if (cE.length === 11 && conta.cpfs.indexOf(cE) < 0) conta.cpfs.push(cE);
+  });
+  var cpfsBase = conta.cpfs.slice(0, 3);
+  var porCpfs = await Promise.all(cpfsBase.map(function (c) { return linhasDoIndice('vitaflow_idx_cpf', c); }));
+  porCpfs.forEach(function (obj, j) {
+    Object.keys(obj || {}).forEach(function (k) { var l = obj[k]; if (cpf11(cel(l, I.cpf)) === cpfsBase[j]) minhas[k] = l; });
+  });
+  conta.emails = [conta.email];
+  var normais = [], reenvios = [], dsDoIdx = [], todosDoDia = {};
+  Object.keys(minhas).forEach(function (k) {
+    var l = minhas[k];
     var ped = cel(l, I.ped); if (!ped || ped.indexOf(',') >= 0) return;
     if (R.naoPagou(cel(l, I.status), cel(l, 12))) return;            /* só pedido pago (igual à busca por e-mail do rastreio) */
     var pf = prefixo(ped);
@@ -512,7 +533,7 @@ async function montarConta(u, agora, soCompra) {
     if (item.v) return;                                              /* revendedor: não aparece */
     if (pf === 'R') { reenvios.push(item); return; }
     normais.push(item);
-    var c = cpf11(cel(l, I.cpf)); if (c.length === 11 && conta.cpfs.indexOf(c) < 0) conta.cpfs.push(c);
+    var emL = normEmail(cel(l, I.email)); if (emL && conta.emails.indexOf(emL) < 0) conta.emails.push(emL);
   });
 
   /* 2) linhas D dos dias dos pedidos (consulta por faixa de chave: só as D daquele dia) */
@@ -743,11 +764,23 @@ async function montarConta(u, agora, soCompra) {
   var listaEnd = Object.keys(ends).map(function (k) { return ends[k]; }).sort(function (a, b) { return a.ordem - b.ordem; }).slice(0, 5)
     .map(function (e, j) { return { texto: e.texto, n: e.n, ultimo: j === 0 }; });
 
-  if (soCompra) {   /* v5: só os dados para o formulário do carrinho (do pedido mais recente) */
-    var nomeC = (ult && cel(ult, I.nome)) || u.nome || '', cpfC = cpf11(ult ? cel(ult, I.cpf) : '');
-    return { ok: true, dados: { nome: nomeBonito(nomeC), email: conta.email, telefone: ult ? cel(ult, I.tel) : '',
+  /* v6: telefone = o do pedido mais recente que TEM telefone (pedido manual costuma vir sem) */
+  var telConta = '';
+  recentes.some(function (x) { var t = cel(x.linha, I.tel); if (soDig(t).length >= 10) { telConta = t; return true; } return false; });
+  if (soCompra) {   /* v5: só os dados para o formulário do carrinho · v6: telefone e endereço procurados nos pedidos, do mais novo pro mais antigo */
+    var nomeC = (ult && cel(ult, I.nome)) || u.nome || '';
+    var cpfC = ''; recentes.some(function (x) { var c = cpf11(cel(x.linha, I.cpf)); if (c.length === 11) { cpfC = c; return true; } return false; });
+    var endC = null, ptsEnd = [];
+    recentes.forEach(function (x) { var e = cel(x.linha, I.end); if (e) ptsEnd.push(enderecoPartes(e)); });
+    if (ptsEnd.length) {
+      endC = ptsEnd[0];
+      if (!endC.completo) {
+        for (var q = 1; q < ptsEnd.length; q++) { if (ptsEnd[q].completo && (!endC.cep || ptsEnd[q].cep === endC.cep)) { endC = ptsEnd[q]; break; } }
+      }
+    }
+    return { ok: true, dados: { nome: nomeBonito(nomeC), email: conta.email, telefone: telConta,
       cpf: cpfC.length === 11 ? cpfC.slice(0, 3) + '.' + cpfC.slice(3, 6) + '.' + cpfC.slice(6, 9) + '-' + cpfC.slice(9) : '',
-      endereco: enderecoPartes(ult ? cel(ult, I.end) : '') } };
+      endereco: endC || enderecoPartes('') } };
   }
   var sorteio = await sorteioDoCliente(conta.cpfs, agora);
   var cupons = [];   /* v3: falha na leitura dos cupons nunca derruba a conta */
@@ -761,7 +794,7 @@ async function montarConta(u, agora, soCompra) {
     kpis: { pedidos: nPedidos, total: Math.round(totalGasto * 100) / 100, numeros: sorteio ? sorteio.atual.numeros.length : 0 },
     grupos: lista, produtos: listaProd, sorteio: sorteio, cupons: cupons,
     dados: { nome: nomeBonito(nomeConta), email: conta.email, cpf: mascararCpf(ult ? cel(ult, I.cpf) : ''),
-      telefone: ult ? cel(ult, I.tel) : '', enderecos: listaEnd }
+      telefone: telConta, enderecos: listaEnd }
   };
 }
 /* v5: endereço do pedido → campos do carrinho. Formato do carrinho: "rua, numero[ complemento], bairro, cidade - UF, CEP: 00000-000" */
@@ -770,17 +803,31 @@ function enderecoPartes(txt) {
   var o = { cep: '', rua: '', numero: '', complemento: '', bairro: '', cidade: '', uf: '', completo: false };
   var mc = t.match(/\d{5}-?\d{3}(?!\d)/g);
   if (mc) { var c = mc[mc.length - 1].replace(/\D/g, ''); o.cep = c.slice(0, 5) + '-' + c.slice(5); }
-  var ps = t.split(', ');
-  if (ps.length >= 5 && /^(?:CEP:? ?)?\d{5}-?\d{3}$/i.test(ps[ps.length - 1])) {
-    var mu = ps[ps.length - 2].match(/^(.+) - ([A-Za-z]{2})$/);
-    if (mu) {
-      o.cidade = mu[1].trim(); o.uf = mu[2].toUpperCase(); o.bairro = ps[ps.length - 3].trim();
-      if (ps.length === 5) {   /* sem vírgula sobrando na rua nem no complemento: dá pra separar com certeza */
-        var mn = ps[1].trim().match(/^(\S+)(?: (.+))?$/);
-        if (mn) { o.rua = ps[0].trim(); o.numero = mn[1]; o.complemento = mn[2] || ''; o.completo = true; }
-      }
+  var ps = t.split(/\s*,\s*/).filter(function (p) { return p !== ''; });
+  var n = ps.length;
+  if (n < 4 || !/^(?:CEP:? ?)?\d{5}-?\d{3}$/i.test(ps[n - 1])) return o;
+  var cab = null;
+  var mu = ps[n - 2].match(/^(.+?) ?- ?([A-Za-z]{2})$/);
+  if (mu && n >= 4) {                 /* carrinho do site: "Rua, 10 apto 2, Bairro, Cidade - UF, CEP: 00000-000" */
+    o.cidade = mu[1].trim(); o.uf = mu[2].toUpperCase(); o.bairro = ps[n - 3].trim(); cab = ps.slice(0, n - 3);
+    if (cab.length === 2) {
+      var mn = cab[1].match(/^(\S+)(?: (.+))?$/);
+      if (mn) { o.rua = cab[0]; o.numero = mn[1]; o.complemento = mn[2] || ''; }
+      cab = null;
     }
+  } else if (/^[A-Za-z]{2}$/.test(ps[n - 2]) && n >= 5) {   /* v6 — Athena/Orçamento: "Rua[, número][, complemento], Bairro, Cidade, UF, CEP" */
+    o.uf = ps[n - 2].toUpperCase(); o.cidade = ps[n - 3]; o.bairro = ps[n - 4]; cab = ps.slice(0, n - 4);
+  } else return o;
+  if (cab && cab.length) {
+    var NUM = /^(?:n[º°o.]? ?)?(\d+[A-Za-z]?|s\/?n)$/i, FIM = /^(.*\D)[ ]+(?:n[º°o.]? ?)?(\d+[A-Za-z]?)$/;
+    var m1 = cab.length >= 2 ? cab[1].match(NUM) : null, m0 = cab[0].match(FIM);
+    var m1b = (!m1 && cab.length >= 2) ? cab[1].match(/^(\d+[A-Za-z]?) (.+)$/) : null;
+    if (m1) { o.rua = cab[0]; o.numero = m1[1]; o.complemento = cab.slice(2).join(', '); }          /* rua, número[, complemento] */
+    else if (m1b) { o.rua = cab[0]; o.numero = m1b[1]; o.complemento = [m1b[2]].concat(cab.slice(2)).join(', '); }   /* rua, "10 apto 2"[, mais complemento] */
+    else if (m0) { o.rua = m0[1].trim(); o.numero = m0[2]; o.complemento = cab.slice(1).join(', '); } /* "rua e número juntos"[, complemento] */
+    else { o.rua = cab[0]; o.complemento = cab.slice(1).join(', '); }                                 /* sem número identificável: o cliente completa */
   }
+  o.completo = !!(o.rua && o.numero && o.bairro && o.cidade && o.uf && o.cep);
   return o;
 }
 function juntarE(a) { a = a.map(String); return a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' e ' + a[a.length - 1]; }
