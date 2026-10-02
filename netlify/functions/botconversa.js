@@ -1,5 +1,18 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v85 (02/10/2026 — 2ª leitura das conversas, as que tinham ficado sem ler + as respostas do Thiago). Resto = v84.
+//   1) BLOCO DE DADOS (Nome/CPF/endereço) fora da coleta — cliente corrigindo o endereço depois do pedido — virava "Você quis dizer
+//      Stanozolol?". Agora avisa a equipe no Telegram e responde MSG_DADOS_REENVIADOS (texto aprovado pelo Thiago em 02/10).
+//   2) DÚVIDAS (opção 3 › 1): nome de produto solto ("Durateston") vai pra IA, não pra "Você quis dizer…?".
+//   3) PROTOCOLO PÓS-COMPRA: a lista do que o cliente comprou trazia o pedido inteiro numa linha só, com "( un.)" e o FRETE como
+//      produto ("…, Frete Transportadora — SP ( un.)"). extrairProdutosDosPedidos agora separa item por item e tira frete/preço/quantidade.
+//   4) RASTREIO: (a) texto colado com o nº do pedido + nome de produto (a própria confirmação do pedido) abria a LISTA do produto;
+//      (b) com pedido + CPF + e-mail na mesma mensagem só o 1º era tentado — agora tenta os outros se o 1º não achar;
+//      (c) "VT-1709-S008" (T no lugar do F) é lido como VF; (d) "E-mail fulano@…" solto consulta direto, como o CPF solto já fazia;
+//      (e) "meus pedidos" / "minhas compras" abrem o rastreio (inclusive na pergunta "continuar a compra ou começar do zero").
+//   5) LISTA DE PRODUTOS: colar a linha inteira do produto ("Tirzec 15mg (4 ampolas…) — R$ 759,00") escolhe o produto.
+//   6) ATACADO: "Obg / Tchau" era buscado como produto.
+//   7) RECLAMAÇÃO: "consta como entregue e não recebi / só chegou 1" vai pro atendente.
 // v84 (02/10/2026 — leitura das conversas reais de 27/09 a 01/10 no BotConversa, a pedido do Thiago). Só correção de erro de funcionamento;
 //   nenhum texto novo pro cliente (reusa as mensagens que já existiam). Resto = v83.
 //   1) QUANTIDADE / ATK_QTD: "60 mg" virava 60 unidades (caso real: carrinho de R$ 47.340). Agora só vale quantidade PURA (qtdPura).
@@ -635,12 +648,36 @@ function ehPedidoProtocoloCompleto(nMsg){
 }
 // Extrai a lista de produtos (nomes limpos, sem duplicar) dos pedidos PAGOS retornados pelo consultar_status.
 function extrairProdutosDosPedidos(pedidos){
+  // v85: o campo PRODUTOS vem em vários formatos — "A (R$ 99,00 un.) x1, B (R$ 79,00 un.) x2, Frete Transportadora — SP (R$ 75,00 un.) x1"
+  // (site/Athena), "1x A | 2x B" (manual) e outros. Antes só separava por | ; e quebra de linha: o pedido inteiro virava UM "produto",
+  // com "( un.)" e o frete dentro. Agora separa também por vírgula FORA de parênteses (o "2,5mg" e o "(BPC, TB-500)" ficam inteiros).
   const set = new Set();
+  const separar = txt => {
+    const out = []; let cur = '', prof = 0;
+    const t = String(txt || '');
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i];
+      if (ch === '(') prof++;
+      else if (ch === ')') prof = Math.max(0, prof - 1);
+      if (ch === '|' || ch === ';' || ch === '\n' || (ch === ',' && prof === 0 && /\s/.test(t[i + 1] || ' '))) { out.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    out.push(cur);
+    return out;
+  };
   (pedidos||[]).forEach(p => {
-    String(p && p.produtos || '').split(/[|;\n]+/).forEach(part => {
-      let nome = part.replace(/\bx\s*\d+\b/gi,'').replace(/R\$\s*[\d.,]+/g,'').replace(/\s{2,}/g,' ').trim();
-      nome = nome.replace(/^[-\u2022\d.\)\s]+/,'').trim();
-      if (nome && nome.length > 2 && !/^frete/i.test(nome)) set.add(nome);
+    separar(p && p.produtos).forEach(part => {
+      let nome = String(part)
+        .replace(/\(\s*R\$\s*[\d.,]+\s*(un\.?)?\s*\)/gi, ' ')   // "(R$ 99,00 un.)"
+        .replace(/\(\s*(un\.?)?\s*\)/gi, ' ')                    // "( un.)" e "()"
+        .replace(/R\$\s*[\d.,]+/g, ' ')
+        .replace(/(^|\s)x\s*\d+\s*$/i, ' ')                      // "… x2" no fim
+        .replace(/^\s*\d+\s*x\s+/i, '')                          // "2x …" no começo
+        .replace(/\s{2,}/g, ' ').trim();
+      nome = nome.replace(/^[-•.\)\s]+/, '').replace(/[\s,]+$/, '').trim();
+      if (!nome || nome.length <= 2) return;
+      if (/^(frete|transportadora|pac|sedex|seguro|gr[aá]tis)(\s|$|[^a-zà-ú])/i.test(nome)) return;   // frete não é produto
+      set.add(nome);
     });
   });
   return [...set].slice(0, 12);
@@ -1554,7 +1591,11 @@ async function entrarAtacado(session, sid, respond) {
 // "oi" casava com "STANOZOLOL *OI*L" e o cliente recebia uma lista sem pé nem cabeça.
 function _ehConversaSolta(t) {
   var s = norm(t || '').replace(/[!?.,]/g, ' ').replace(/\s+/g, ' ').trim();
-  return /^(oi|ola|opa|eae|e ai|hey|alo|bom dia|boa tarde|boa noite|tudo bem|tudo bom|blz|beleza|ok|okay|certo|entendi|obrigado|obrigada|valeu|vlw|de nada|show|otimo|otima|perfeito|legal|top|sim|nao|nada|nenhum|nenhuma)$/.test(s);
+  if (/^(oi|ola|opa|eae|e ai|hey|alo|bom dia|boa tarde|boa noite|tudo bem|tudo bom|blz|beleza|ok|okay|certo|entendi|obrigado|obrigada|valeu|vlw|de nada|show|otimo|otima|perfeito|legal|top|sim|nao|nada|nenhum|nenhuma)$/.test(s)) return true;
+  // v85: agradecimento/despedida em mais de uma palavra ("Obg Tchau", "valeu obrigado", "ok obrigada ate mais")
+  const _solta = ['obg','obrigado','obrigada','brigado','brigada','valeu','vlw','tchau','xau','flw','falou','ate','mais','logo','abraco','abs','ok','okay','blz','beleza','certo','entendi','show','top','legal','perfeito','muito','por','enquanto','so','isso','era','nada','de'];
+  const _tk = s.split(' ').filter(Boolean);
+  return _tk.length >= 1 && _tk.length <= 5 && _tk.every(w => _solta.indexOf(w) >= 0) && _tk.some(w => /^(obg|obrigad[oa]|brigad[oa]|valeu|vlw|tchau|xau|flw|falou)$/.test(w));
 }
 // v74 (25/09/2026): mensagem que é só NAVEGAÇÃO dentro do atacado (não é nome de produto).
 // 'apresentacao' → mostra MSG_ATACADO de novo | 'pdf' → manda o link da tabela | '' → segue a busca.
@@ -1888,7 +1929,40 @@ function ehReclamacaoPedido(nMsg) {
   if (/(produto|pedido|item|encomenda) (veio |chegou |esta |ta )?(errad[oa]|trocad[oa]|incompleto|quebrad[oa]|danificad[oa]|violad[oa])/.test(x)) return true;
   if (/(faltou|faltaram|veio faltando|chegou faltando) (um |uma |o |a |\d+ )?(produto|produtos|item|itens|frasco|frascos|ampola|ampolas|caixa|caixas)/.test(x)) return true;
   if (/ comprei /.test(x) && / (recebi|veio|chegou|mandaram|enviaram) /.test(x) && reconhecerVarios(String(nMsg || '')).length >= 2) return true;
+  if (/(consta|aparece|diz|esta|ta) (como |que foi |que )?(entregue|entrega)/.test(x) && /(nao recebi|nao chegou|nao foi entregue|foi entregue apenas|so (chegou|recebi|veio)|apenas (1|um|uma)|faltou)/.test(x)) return true;   // v85
   return false;
+}
+// v85 — o cliente colou o BLOCO DE DADOS de envio (3+ linhas rotuladas) fora da coleta.
+function ehBlocoDados(msg) {
+  const linhas = String(msg || '').split(/\n+/);
+  let n = 0;
+  linhas.forEach(l => { if (/^\s*(nome( completo)?|cpf|telefone|celular|e-?mail|rua( e n[uú]mero)?|endere[cç]o|complemento|bairro|cidade|estado|uf|cep)\s*[:\-]/i.test(l)) n++; });
+  return n >= 3;
+}
+const MSG_DADOS_REENVIADOS = 'Recebi seus dados! 😊 Como o seu pedido *já está registrado*, encaminhei a correção pra nossa equipe conferir e ajustar o envio.\n\nSe precisar falar com uma pessoa, é só digitar *atendente*.';
+// v85 — e-mail "solto": a mensagem é basicamente o e-mail ("E-mail fulano@x.com", "meu email é …").
+function ehEmailSolto(msg) {
+  const em = idEmail(msg);
+  if (!em) return false;
+  const resto = String(msg || '').toLowerCase().replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, ' ').replace(/e-?mail|meu|minha|compra|:/g, ' ').replace(/(^|\s)(o|é|e|da|de)(?=\s|$)/g, ' ').replace(/[^a-zà-úç]/g, '');
+  return resto.length <= 3;
+}
+// v85 — todos os dados de pedido que vieram na mensagem, na ordem de confiança (pedido, CPF, e-mail).
+function termosRastreio(msg) {
+  const out = [];
+  const p = idPedido(msg); if (p) out.push(p);
+  const c = idCpf(msg); if (c.cpf) out.push(c.cpf);
+  const e = idEmail(msg); if (e) out.push(e);
+  return out;
+}
+// v85 — linha da lista colada inteira ("3️⃣ Tirzec 15mg (4 ampolas - Total 60mg) — R$ 759,00") → índice na lista, ou -1.
+function indicePorNomeExato(lista, msg) {
+  const limpa = x => norm(String(x || '').replace(/\s[—–-]\s*R\$\s*[\d.,]+.*$/, '').replace(/[*_]/g, '').replace(/^[^a-zA-ZÀ-ú0-9]*(\d{1,2}[.)]\s+)?/, '')).replace(/\s+/g, ' ').trim();
+  const alvo = limpa(msg);
+  if (alvo.length < 6) return -1;
+  const ach = [];
+  (lista || []).forEach((p, i) => { if (limpa(p.nome) === alvo) ach.push(i); });
+  return ach.length === 1 ? ach[0] : -1;
 }
 function _ehQueroFechar(t) {
   const x = (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
@@ -2440,6 +2514,8 @@ function idSeq(letra, dig) {
 function idPrepNum(texto) {
   var t = String(texto || '').toUpperCase();
   for (var i = 0; i < 3; i++) t = t.replace(/(\d)O/g, '$10').replace(/O(\d)/g, '0$1');
+  // v85: letra trocada no prefixo ("VT-1709-S008", "VG-…") — só quando o resto é exatamente o formato do pedido.
+  t = t.replace(/(^|[^A-Z0-9])V[A-EG-Z]\s*[-–]\s*(\d{4})\s*[-–]\s*([SMAVW]X?\d{1,4})(?![A-Z0-9])/g, '$1VF-$2-$3');
   return t;
 }
 /* número do pedido normalizado ou '' */
@@ -2525,7 +2601,7 @@ function _restoDaMensagem(msg, tirar) {
 function idPedidoForte(msg) {
   const p = idPedido(msg);
   if (!p) return '';
-  if (/V\s*F/i.test(String(msg || ''))) return p;
+  if (/V\s*F/i.test(idPrepNum(msg))) return p;   // v85: idPrepNum já conserta "VT-" → "VF-"
   return _restoDaMensagem(idPrepNum(msg).replace(/[\d\/\-._]+/g, ' ')).length <= 12 ? p : '';
 }
 function ehNumeroPedido(msg) {
@@ -2566,8 +2642,10 @@ function ehIntencaoRastreio(nMsg, msgOriginal) {
   const palavras = ['rastrear','rastreamento','rastreio','cade meu pedido','cadê meu pedido','meu pedido','onde esta meu pedido','onde está meu pedido','status do pedido','status do meu pedido','acompanhar pedido','codigo de rastreio',
     'atrasou','atrasado','atraso','demorou','demorando','ta demorando','esta demorando','nao chegou','ainda nao chegou','nao recebi','cade meu produto','onde esta minha encomenda'];
   if (palavras.some(p => nMsg.includes(norm(p)))) return true;
+  if (/(^|[^a-z])(meus pedidos|minhas compras|historico de (pedidos|compras))([^a-z]|$)/.test(nMsg)) return true;   // v85
   if (ehNumeroPedido(msgOriginal)) return true;
   if (ehCPFsolto(msgOriginal)) return true;
+  if (ehEmailSolto(msgOriginal)) return true;   // v85
   return false;
 }
 
@@ -2584,10 +2662,15 @@ function extrairTermoRastreio(msg) {
   return raw.trim();
 }
 // Executa o rastreio direto (mesma lógica do estado RASTREAR), a partir de qualquer estado.
-async function fazerRastreio(termo, respond) {
+async function fazerRastreio(termo, respond, msgOriginal) {
   const _inc = respostaIdIncompleto(termo, true);   // v81: falta a letra / dia e mês / CPF não confere
   if (_inc) return respond(_inc + `\n\n_Ou digite *menu* para voltar._`);
-  const pedidos = await consultarStatusGAS((termo || '').trim());
+  let pedidos = await consultarStatusGAS((termo || '').trim());
+  // v85: veio mais de um dado na mensagem (pedido + CPF + e-mail) e o 1º não achou → tenta os outros.
+  if (!pedidos.length && msgOriginal) {
+    const _outros = termosRastreio(msgOriginal).filter(x => x !== (termo || '').trim());
+    for (let _i = 0; _i < _outros.length && !pedidos.length; _i++) pedidos = await consultarStatusGAS(_outros[_i]);
+  }
   if (!pedidos.length) {
     // Cliente colou o código da TRANSPORTADORA em vez do número do pedido VitaFlow → orienta.
     if (ehCodigoTransportadora(termo)) {
@@ -4174,7 +4257,7 @@ Retorne SOMENTE o JSON no formato:
 }
 
 // ── Handler principal ─────────────────────────────────────────────────────────
-exports._t = { statusBloco, avisoWhats };   // v83: só para teste
+exports._t = { statusBloco, avisoWhats, extrairProdutosDosPedidos, ehBlocoDados, ehEmailSolto, idPedido, indicePorNomeExato, ehReclamacaoPedido, norm };   // v83: só para teste
 exports.handler = async (event) => {
   const headers = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json' };
   if (event.httpMethod === 'OPTIONS') return { statusCode:200, headers, body:'' };
@@ -4385,6 +4468,23 @@ exports.handler = async (event) => {
     session._dedupTs = _dedupAgora;
     try { await saveSession(sid, session); } catch (e) {}
 
+    // v85 ── BLOCO DE DADOS fora da coleta: o cliente está CORRIGINDO os dados de um pedido já registrado
+    // (caso real 30/09: reenviou o bloco pra corrigir o nome da rua e recebeu "Você quis dizer Stanozolol?").
+    // A Athena não altera pedido registrado: avisa a equipe e diz isso ao cliente. Não muda o estado.
+    if (!emCheckout && state !== 'ADM' && ehBlocoDados(mensagem)) {
+      try { await enviarTelegram(`✏️ *DADOS DE ENVIO REENVIADOS — possível correção*\n📱 ${sid}\n📦 Último pedido da sessão: ${session.orderNsu || '—'}\n\n${String(mensagem).slice(0, 900)}`); } catch (e) {}
+      return respond(MSG_DADOS_REENVIADOS);
+    }
+    // v85 ── LISTA DE PRODUTOS: o cliente colou a linha inteira do produto → é a escolha dele (igual a digitar o número).
+    if (state === 'LISTA_PRODUTOS' && !/^\d{1,3}$/.test(n.trim())) {
+      const _ixNome = indicePorNomeExato(session.produtoLista || [], mensagem);
+      if (_ixNome >= 0) {
+        const _prodN = session.produtoLista[_ixNome];
+        await saveSession(sid, { ...session, state:'QUANTIDADE', produtoSelecionado: _prodN });
+        return respond(`Você escolheu:\n📦 *${_prodN.nome}*\n💰 R$ ${_prodN.preco.toFixed(2).replace('.',',')}\n\n*Quantas unidades deseja?*\n_(Digite o número)_`);
+      }
+    }
+
     // ── CARRINHO CHEIO: "finalizar" e "ver carrinho" vão SEMPRE pro fluxo determinístico ──
     // A IA NÃO enxerga o carrinho e inventava "carrinho vazio" + reabria seleção (duplicava item).
     // Só quando há itens no carrinho e fora dos passos que já tratam isso (estado/frete/confirmar/pgto).
@@ -4481,6 +4581,7 @@ exports.handler = async (event) => {
         && _JA_TRATA_DUVIDA.indexOf(state) < 0
         && _DADO_LIVRE.indexOf(state) < 0
         && _ESPERA_RESPOSTA_CURTA.indexOf(state) < 0
+        && !(state === 'RASTREAR' && termosRastreio(mensagem).length)   // v85: no rastreio, mensagem com pedido/CPF/e-mail é consulta
         && !_ehMidiaMsg && !_ehNavegacao) {
       const _recGlobal = reconhecerProduto(n);
       if (_recGlobal && _recGlobal.modo === 'canonico') {
@@ -4654,7 +4755,8 @@ exports.handler = async (event) => {
     if (state === 'RETOMAR_CARRINHO') {
       if (num === 1) { await saveSession(sid, { ...session, state:'CARRINHO' }); return respond(`Boa, continuando sua compra! 🛒\n\n${msgCarrinhoMenu(session.carrinho || [])}`); }
       if (num === 2) { await saveSession(sid, { state:'TRIAGEM' }); return respond(`Prontinho, comecei um carrinho novo! 🧹\n\n${buildTriagem()}`); }
-      return respond('Digite *1* para continuar sua compra de antes ou *2* para começar do zero:');
+      if (!ehIntencaoRastreio(n, mensagem)) return respond('Digite *1* para continuar sua compra de antes ou *2* para começar do zero:');
+      // v85: "meus pedidos" / "rastreamento" / nº do pedido aqui é rastreio — segue pro rastreio universal (o carrinho continua salvo).
     }
 
     // REVENDA vem ANTES da transferência pra humano: 'vendedor' (da lista abaixo) é
@@ -4801,7 +4903,7 @@ exports.handler = async (event) => {
         return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido*, seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_Digite *menu* para voltar._`);
       }
       // Já mandou o dado (CPF/pedido/email) → rastreia direto, sem perder o estado de compra.
-      return await fazerRastreio(extrairTermoRastreio(mensagem), respond);
+      return await fazerRastreio(extrairTermoRastreio(mensagem), respond, mensagem);
     }
     // ── RASTREIO DENTRO DO ATACADO (17/09/2026) ──────────────────────────────
     // ATACADO/ATK_* contam como checkout (blindagem), então o bloco acima não entra lá. Só que
@@ -4818,7 +4920,7 @@ exports.handler = async (event) => {
       const _pedeRastreio = /(rastre|codigo de rastreio|status do (meu )?pedido|cade meu pedido|onde esta meu pedido|nao chegou|nao recebi)/.test(n);
       if (_temDadoRastreio) {
         console.log('[RASTREIO-NO-ATACADO] state:', state, '| termo:', extrairTermoRastreio(mensagem));
-        return await fazerRastreio(extrairTermoRastreio(mensagem), respond);
+        return await fazerRastreio(extrairTermoRastreio(mensagem), respond, mensagem);
       }
       if (_pedeRastreio) {
         return respond(`*📦 RASTREAR MEU PEDIDO*\n\nMe envia o *número do pedido* (começa com *VF-*), seu *CPF* ou o *e-mail* da compra que eu consulto o status pra você na hora! 😊\n\n_Seu pedido de atacado continua salvo aqui — depois é só seguir de onde parou._`);
@@ -5028,6 +5130,13 @@ exports.handler = async (event) => {
       return await tratarTextoLivre(session, sid, n, MSG_DUVIDAS_INTRO, respond);
     }
     if (state === 'DUVIDAS_LIVRE') {
+      // v85: aqui o cliente escolheu "tirar uma dúvida". Nome de produto solto (até 4 palavras, sem verbo de compra) é a dúvida dele
+      // sobre o produto — vai pra IA, não pra "Você quis dizer X?" nem pra lista de preços.
+      const _pal = n.split(/\s+/).filter(Boolean);
+      if (_pal.length >= 1 && _pal.length <= 4 && !/^\d+$/.test(n) && !/(^|\s)(comprar|compra|quero|preco|precos|valor|valores|quanto|tabela|lista|catalogo)(\s|$)/.test(n)
+          && !ehPedidoProtocoloCompleto(n) && !ehPedidoFracionamento(n) && (reconhecerProduto(n) || reconhecerVarios(n).length)) {
+        return await responderComIA(sid, mensagem, contextoLista(session), respond);
+      }
       return await tratarTextoLivre(session, sid, n, MSG_DUVIDAS_INTRO, respond);
     }
 
@@ -5090,7 +5199,11 @@ exports.handler = async (event) => {
       if (alnum.length < 2 || _fraseSolta) {
         return respond(`Hmm, isso não parece um número de pedido, CPF ou e-mail. 🤔\n\nMe manda o *número do pedido*, o *CPF* (11 dígitos) ou o *e-mail* da compra.\n\n_Ou digite *menu* para voltar._`);
       }
-      const pedidos = await consultarStatusGAS(termo);
+      let pedidos = await consultarStatusGAS(termo);
+      if (!pedidos.length) {   // v85: pedido + CPF + e-mail na mesma mensagem → tenta os outros
+        const _outrosR = termosRastreio(mensagem).filter(x => x !== termo);
+        for (let _i = 0; _i < _outrosR.length && !pedidos.length; _i++) pedidos = await consultarStatusGAS(_outrosR[_i]);
+      }
       if (!pedidos.length) {
         return respond(`🔍 Não encontrei nenhum pedido com *esse dado*.\n\nConfere se digitou certo o *número do pedido*, *CPF* ou *e-mail* da compra e me manda de novo. 😊\n\n📞 Se preferir, fale com a logística: 👉 wa.me/447537155718\n_Ou digite *menu* para voltar._`);
       }
