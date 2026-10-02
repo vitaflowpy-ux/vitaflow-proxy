@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v4  ·  02/10/2026
+   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v5  ·  02/10/2026
+   v5 (pedido do Thiago, 02/10: "os dados do cliente servem para comprar no site sem digitar tudo de novo"): acao 'dados_compra'
+       (precisa da sessão do cliente logado) devolve os dados do ÚLTIMO pedido dele prontos para o formulário do carrinho: nome,
+       e-mail, telefone, CPF completo e o endereço separado em CEP, rua, número, complemento, bairro, cidade e UF. O endereço só
+       é separado quando está no formato que o carrinho grava ("Rua, 10 apto 2, Bairro, Cidade - UF, CEP: 00000-000"); fora
+       disso vão só as partes certas (CEP/bairro/cidade/UF) e o cliente completa. Quem lê: sections/main-cart-footer.liquid.
    v4 (ordem do Thiago, 01-02/10: "o mesmo aviso da página de rastreio na Minha Conta"): cada envio ganha `aviso` { tipo, texto }
        — o MESMO que a página de rastreio mostra para aquele pedido (rastreio-consulta v7: textos do Thiago; 1 e 2 quando a
        logística marca Postado e a transportadora ainda não leu; atacado; visto em trânsito). Só em pedido em andamento.
@@ -65,7 +70,7 @@
 var crypto = require('crypto');
 var R = require('./rastreio-consulta.js').lib;
 
-var VERSAO = 'v3';
+var VERSAO = 'v5';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_contas';
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
@@ -486,7 +491,7 @@ function casarD(dLinha, I, cands, conta) {
   return melhor;
 }
 
-async function montarConta(u, agora) {
+async function montarConta(u, agora, soCompra) {
   var conta = { email: normEmail(u.email), cpfs: [] };
   var porEmail = await linhasDoIndice('vitaflow_idx_email', emailKey(u.email));
   var hdr = await lerHdr();
@@ -738,6 +743,12 @@ async function montarConta(u, agora) {
   var listaEnd = Object.keys(ends).map(function (k) { return ends[k]; }).sort(function (a, b) { return a.ordem - b.ordem; }).slice(0, 5)
     .map(function (e, j) { return { texto: e.texto, n: e.n, ultimo: j === 0 }; });
 
+  if (soCompra) {   /* v5: só os dados para o formulário do carrinho (do pedido mais recente) */
+    var nomeC = (ult && cel(ult, I.nome)) || u.nome || '', cpfC = cpf11(ult ? cel(ult, I.cpf) : '');
+    return { ok: true, dados: { nome: nomeBonito(nomeC), email: conta.email, telefone: ult ? cel(ult, I.tel) : '',
+      cpf: cpfC.length === 11 ? cpfC.slice(0, 3) + '.' + cpfC.slice(3, 6) + '.' + cpfC.slice(6, 9) + '-' + cpfC.slice(9) : '',
+      endereco: enderecoPartes(ult ? cel(ult, I.end) : '') } };
+  }
   var sorteio = await sorteioDoCliente(conta.cpfs, agora);
   var cupons = [];   /* v3: falha na leitura dos cupons nunca derruba a conta */
   try { cupons = await cuponsDoCliente(normais, agora); } catch (eCp) { console.error('[conta] cupons: ' + (eCp && eCp.message || eCp)); }
@@ -752,6 +763,25 @@ async function montarConta(u, agora) {
     dados: { nome: nomeBonito(nomeConta), email: conta.email, cpf: mascararCpf(ult ? cel(ult, I.cpf) : ''),
       telefone: ult ? cel(ult, I.tel) : '', enderecos: listaEnd }
   };
+}
+/* v5: endereço do pedido → campos do carrinho. Formato do carrinho: "rua, numero[ complemento], bairro, cidade - UF, CEP: 00000-000" */
+function enderecoPartes(txt) {
+  var t = String(txt || '').replace(/\s+/g, ' ').trim();
+  var o = { cep: '', rua: '', numero: '', complemento: '', bairro: '', cidade: '', uf: '', completo: false };
+  var mc = t.match(/\d{5}-?\d{3}(?!\d)/g);
+  if (mc) { var c = mc[mc.length - 1].replace(/\D/g, ''); o.cep = c.slice(0, 5) + '-' + c.slice(5); }
+  var ps = t.split(', ');
+  if (ps.length >= 5 && /^(?:CEP:? ?)?\d{5}-?\d{3}$/i.test(ps[ps.length - 1])) {
+    var mu = ps[ps.length - 2].match(/^(.+) - ([A-Za-z]{2})$/);
+    if (mu) {
+      o.cidade = mu[1].trim(); o.uf = mu[2].toUpperCase(); o.bairro = ps[ps.length - 3].trim();
+      if (ps.length === 5) {   /* sem vírgula sobrando na rua nem no complemento: dá pra separar com certeza */
+        var mn = ps[1].trim().match(/^(\S+)(?: (.+))?$/);
+        if (mn) { o.rua = ps[0].trim(); o.numero = mn[1]; o.complemento = mn[2] || ''; o.completo = true; }
+      }
+    }
+  }
+  return o;
 }
 function juntarE(a) { a = a.map(String); return a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' e ' + a[a.length - 1]; }
 function metodoBonito(m) {
@@ -977,11 +1007,12 @@ exports.handler = async function (event) {
       return resp({ ok: true });
     }
 
-    if (acao === 'minha_conta' || acao === 'como_conheceu' || acao === 'avaliar') {
+    if (acao === 'minha_conta' || acao === 'como_conheceu' || acao === 'avaliar' || acao === 'dados_compra') {
       var sc = await lerSessao(d.sessao, agora);
       if (!sc) return erro('sessao', 'Sua sessão terminou. Entre de novo.');
       var camUs = RAIZ + '/usuarios/' + emailKey(sc.u.email);
 
+      if (acao === 'dados_compra') return resp(await montarConta(sc.u, agora, true));   /* v5 */
       if (acao === 'minha_conta') {
         var conta = await montarConta(sc.u, agora);
         try { await fbPatch(camUs, { ultimo_acesso: agora }); } catch (e) { /* acessório */ }
@@ -1038,5 +1069,5 @@ exports.handler = async function (event) {
 };
 
 /* só pra teste local (node) */
-exports._t = { parseProdutos: parseProdutos, casarD: casarD, notaSeq: notaSeq, sorteioCiclo: sorteioCiclo, sorteioCicloPorN: sorteioCicloPorN,
+exports._t = { enderecoPartes: enderecoPartes, parseProdutos: parseProdutos, casarD: casarD, notaSeq: notaSeq, sorteioCiclo: sorteioCiclo, sorteioCicloPorN: sorteioCicloPorN,
   mascararEmail: mascararEmail, mascararCpf: mascararCpf, montarConta: montarConta, envioPublico: envioPublico, indices: indices, scrypt: scrypt };
