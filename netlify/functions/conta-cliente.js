@@ -72,12 +72,18 @@
        usa o endereço separável mais recente do MESMO CEP (ou, se o mais recente nem CEP tem, o separável mais recente).
    v7 (02/10/2026): cada produto de "Produtos que já comprei" leva o `pid` (id do produto no site — o vfId gravado pelo Compras),
        para a página achar o produto certo mesmo quando o nome dele mudou no site. Sem vfId no Compras: pid vazio.
+   v8 (02/10/2026 — pedido do Thiago): CADASTRO editável pelo cliente. Nome, CPF e e-mail continuam travados; o cliente edita o
+       TELEFONE e guarda até 5 ENDEREÇOS (um é o principal). Fica em usuarios/<emailKey>/cadastro {telefone, enderecos[], principal, em}.
+       acao `salvar_dados` {sessao, telefone, enderecos:[{cep,rua,numero,complemento,bairro,cidade,uf}], principal}.
+       minha_conta → dados.cadastro {salvo, telefone, enderecos, principal} (nunca salvou: sugestão tirada dos pedidos, salvo:false).
+       dados_compra → o cadastro salvo vale primeiro; devolve também `enderecos` e `principal` para o carrinho oferecer a escolha.
+       Pedidos já feitos não mudam.
    Variáveis: FIREBASE_SECRET · BREVO_API_KEY · TELEGRAM_TOKEN/TELEGRAM_CHAT (já existem) · COMPRAS_KEY (NOVA, só pra trocar e-mail)
    ============================================================================= */
 var crypto = require('crypto');
 var R = require('./rastreio-consulta.js').lib;
 
-var VERSAO = 'v7';
+var VERSAO = 'v8';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_contas';
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
@@ -152,6 +158,24 @@ function nomeBonito(n) {
     .replace(/ (Da|De|Do|Das|Dos|E) /g, function (a) { return a.toLowerCase(); });
 }
 function limpaTexto(s, max) { return String(s || '').replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max); }
+/* ---- v8: cadastro do cliente ---- */
+var MAX_ENDERECOS = 5;
+function limpaCampo(v, max) { return String(v == null ? '' : v).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max); }
+function telDigitos(v) { var t = soDig(v); if (t.length > 11 && t.indexOf('55') === 0) t = t.slice(2); return t; }
+function normEndereco(e) {
+  e = e || {};
+  var cep = soDig(e.cep); if (cep.length !== 8) return null;
+  var o = { cep: cep.slice(0, 5) + '-' + cep.slice(5), rua: limpaCampo(e.rua, 120), numero: limpaCampo(e.numero, 15), complemento: limpaCampo(e.complemento, 60),
+    bairro: limpaCampo(e.bairro, 60), cidade: limpaCampo(e.cidade, 60), uf: limpaCampo(e.uf, 2).toUpperCase() };
+  if (!o.rua || !o.numero || !o.bairro || !o.cidade || !/^[A-Z]{2}$/.test(o.uf)) return null;
+  return o;
+}
+function cadastroSalvo(u) {
+  var c = u && u.cadastro; if (!c || typeof c !== 'object') return null;
+  var ends = (Array.isArray(c.enderecos) ? c.enderecos : []).map(normEndereco).filter(Boolean).slice(0, MAX_ENDERECOS);
+  var pr = parseInt(c.principal, 10); if (!(pr >= 0 && pr < ends.length)) pr = 0;
+  return { telefone: telDigitos(c.telefone), enderecos: ends, principal: pr };
+}
 function ipDe(event) {
   var h = event.headers || {};
   var ip = h['x-nf-client-connection-ip'] || String(h['x-forwarded-for'] || '').split(',')[0] || 'sem-ip';
@@ -772,21 +796,31 @@ async function montarConta(u, agora, soCompra) {
   /* v6: telefone = o do pedido mais recente que TEM telefone (pedido manual costuma vir sem) */
   var telConta = '';
   recentes.some(function (x) { var t = cel(x.linha, I.tel); if (soDig(t).length >= 10) { telConta = t; return true; } return false; });
-  if (soCompra) {   /* v5: só os dados para o formulário do carrinho · v6: telefone e endereço procurados nos pedidos, do mais novo pro mais antigo */
+  /* endereço tirado dos pedidos (do mais novo pro mais antigo) — usado quando o cliente ainda não salvou o cadastro */
+  var endPed = null, ptsEnd = [];
+  recentes.forEach(function (x) { var e = cel(x.linha, I.end); if (e) ptsEnd.push(enderecoPartes(e)); });
+  if (ptsEnd.length) {
+    endPed = ptsEnd[0];
+    if (!endPed.completo) {
+      for (var q = 1; q < ptsEnd.length; q++) { if (ptsEnd[q].completo && (!endPed.cep || ptsEnd[q].cep === endPed.cep)) { endPed = ptsEnd[q]; break; } }
+    }
+  }
+  /* v8: cadastro salvo pelo cliente vale primeiro */
+  var cad = cadastroSalvo(u);
+  var telFinal = (cad && cad.telefone.length >= 10) ? cad.telefone : telConta;
+  var endsCad = (cad && cad.enderecos.length) ? cad.enderecos.map(function (e) { return Object.assign({}, e, { completo: true }); }) : null;
+  if (soCompra) {   /* só os dados para o formulário do carrinho */
     var nomeC = (ult && cel(ult, I.nome)) || u.nome || '';
     var cpfC = ''; recentes.some(function (x) { var c = cpf11(cel(x.linha, I.cpf)); if (c.length === 11) { cpfC = c; return true; } return false; });
-    var endC = null, ptsEnd = [];
-    recentes.forEach(function (x) { var e = cel(x.linha, I.end); if (e) ptsEnd.push(enderecoPartes(e)); });
-    if (ptsEnd.length) {
-      endC = ptsEnd[0];
-      if (!endC.completo) {
-        for (var q = 1; q < ptsEnd.length; q++) { if (ptsEnd[q].completo && (!endC.cep || ptsEnd[q].cep === endC.cep)) { endC = ptsEnd[q]; break; } }
-      }
-    }
-    return { ok: true, dados: { nome: nomeBonito(nomeC), email: conta.email, telefone: telConta,
+    var listaC = endsCad || ((endPed && endPed.cep) ? [endPed] : []);
+    var prC = endsCad ? cad.principal : 0;
+    return { ok: true, dados: { nome: nomeBonito(nomeC), email: conta.email, telefone: telFinal,
       cpf: cpfC.length === 11 ? cpfC.slice(0, 3) + '.' + cpfC.slice(3, 6) + '.' + cpfC.slice(6, 9) + '-' + cpfC.slice(9) : '',
-      endereco: endC || enderecoPartes('') } };
+      endereco: listaC[prC] || endPed || enderecoPartes(''), enderecos: listaC, principal: prC } };
   }
+  var cadSaida = cad
+    ? { salvo: true, telefone: cad.telefone.length >= 10 ? cad.telefone : telDigitos(telConta), enderecos: cad.enderecos, principal: cad.principal }
+    : { salvo: false, telefone: telDigitos(telConta), enderecos: (endPed && endPed.completo) ? [normEndereco(endPed)].filter(Boolean) : [], principal: 0 };
   var sorteio = await sorteioDoCliente(conta.cpfs, agora);
   var cupons = [];   /* v3: falha na leitura dos cupons nunca derruba a conta */
   try { cupons = await cuponsDoCliente(normais, agora); } catch (eCp) { console.error('[conta] cupons: ' + (eCp && eCp.message || eCp)); }
@@ -799,7 +833,7 @@ async function montarConta(u, agora, soCompra) {
     kpis: { pedidos: nPedidos, total: Math.round(totalGasto * 100) / 100, numeros: sorteio ? sorteio.atual.numeros.length : 0 },
     grupos: lista, produtos: listaProd, sorteio: sorteio, cupons: cupons,
     dados: { nome: nomeBonito(nomeConta), email: conta.email, cpf: mascararCpf(ult ? cel(ult, I.cpf) : ''),
-      telefone: telConta, enderecos: listaEnd }
+      telefone: telFinal, enderecos: listaEnd, cadastro: cadSaida }
   };
 }
 /* v5: endereço do pedido → campos do carrinho. Formato do carrinho: "rua, numero[ complemento], bairro, cidade - UF, CEP: 00000-000" */
@@ -1059,7 +1093,7 @@ exports.handler = async function (event) {
       return resp({ ok: true });
     }
 
-    if (acao === 'minha_conta' || acao === 'como_conheceu' || acao === 'avaliar' || acao === 'dados_compra') {
+    if (acao === 'minha_conta' || acao === 'como_conheceu' || acao === 'avaliar' || acao === 'dados_compra' || acao === 'salvar_dados') {
       var sc = await lerSessao(d.sessao, agora);
       if (!sc) return erro('sessao', 'Sua sessão terminou. Entre de novo.');
       var camUs = RAIZ + '/usuarios/' + emailKey(sc.u.email);
@@ -1069,6 +1103,21 @@ exports.handler = async function (event) {
         var conta = await montarConta(sc.u, agora);
         try { await fbPatch(camUs, { ultimo_acesso: agora }); } catch (e) { /* acessório */ }
         return resp(conta);
+      }
+      if (acao === 'salvar_dados') {   /* v8 */
+        var telS = telDigitos(d.telefone);
+        if (telS.length < 10 || telS.length > 11) return erro('telefone', 'Digite o telefone com DDD (10 ou 11 números).');
+        var entrada = Array.isArray(d.enderecos) ? d.enderecos : [];
+        if (entrada.length > MAX_ENDERECOS) return erro('enderecos', 'Dá para guardar até ' + MAX_ENDERECOS + ' endereços.');
+        var endsS = [];
+        for (var iE = 0; iE < entrada.length; iE++) {
+          var nE = normEndereco(entrada[iE]);
+          if (!nE) return erro('endereco', 'Complete o endereço ' + (iE + 1) + ': CEP, rua, número, bairro, cidade e UF.', { indice: iE });
+          endsS.push(nE);
+        }
+        var prS = parseInt(d.principal, 10); if (!(prS >= 0 && prS < endsS.length)) prS = 0;
+        await fbPut(camUs + '/cadastro', { telefone: telS, enderecos: endsS, principal: prS, em: agora });
+        return resp({ ok: true, cadastro: { salvo: true, telefone: telS, enderecos: endsS, principal: prS } });
       }
       if (acao === 'como_conheceu') {
         var op = String(d.opcao || '');
@@ -1121,5 +1170,5 @@ exports.handler = async function (event) {
 };
 
 /* só pra teste local (node) */
-exports._t = { enderecoPartes: enderecoPartes, parseProdutos: parseProdutos, casarD: casarD, notaSeq: notaSeq, sorteioCiclo: sorteioCiclo, sorteioCicloPorN: sorteioCicloPorN,
+exports._t = { normEndereco: normEndereco, cadastroSalvo: cadastroSalvo, enderecoPartes: enderecoPartes, parseProdutos: parseProdutos, casarD: casarD, notaSeq: notaSeq, sorteioCiclo: sorteioCiclo, sorteioCicloPorN: sorteioCicloPorN,
   mascararEmail: mascararEmail, mascararCpf: mascararCpf, montarConta: montarConta, envioPublico: envioPublico, indices: indices, scrypt: scrypt };
