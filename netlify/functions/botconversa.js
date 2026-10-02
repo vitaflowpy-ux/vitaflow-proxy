@@ -1,5 +1,19 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v84 (02/10/2026 — leitura das conversas reais de 27/09 a 01/10 no BotConversa, a pedido do Thiago). Só correção de erro de funcionamento;
+//   nenhum texto novo pro cliente (reusa as mensagens que já existiam). Resto = v83.
+//   1) QUANTIDADE / ATK_QTD: "60 mg" virava 60 unidades (caso real: carrinho de R$ 47.340). Agora só vale quantidade PURA (qtdPura).
+//   2) OBSERVAÇÃO: texto que começa com "Olá…" caía na saudação e ZERAVA o fechamento do atacado; e quem escrevia a observação
+//      direto na pergunta "1 Sim / 2 Não" ficava num laço. Agora o texto é aceito como a observação.
+//   3) SAUDAÇÃO + ASSUNTO ("Ola meu pedido veio errado"): só a saudação era lida e o assunto se perdia. Com 12+ letras de assunto, segue.
+//   4) RECLAMAÇÃO DE PEDIDO ERRADO ("comprei X, recebi Y", "veio errado/trocado/faltando/quebrado") virava COMBO de compra. Agora
+//      vai pro atendente, pelo mesmo caminho de "reclamação" que já existia (palavrasHumano).
+//   5) ATACADO: "finalizar pedido" / "fechar pedido" era lido como nome de produto ("Não encontrei finalizar pedido…"); "varejo" idem.
+//   6) PEDIDO EM ABERTO: "cancelar" / "não quero mais" repetia o mesmo aviso; agora vale como "menu" (é o que o aviso já manda digitar).
+//   7) BUSCA: "TG 15mg" jogava fora o "TG" (2 letras) e listava todo produto de 15mg. Palavra de 2 letras agora conta (com volta atrás se der zero).
+//   8) FRETE: "FRETEZERO" e "pacote" abriam a consulta de frete (casava no meio da palavra). Agora é palavra inteira.
+//   9) RASTREIO: frase solta dentro do rastreio ("já tentei falar com a logística…") respondia "não encontrei pedido com esse dado".
+//  10) MENSAGEM VAZIA ou "Este tipo de mensagem não é suportado" (figurinha/áudio que o BotConversa não repassa) ia pra IA e ficava sem resposta.
 // v83 (02/10/2026 — ordem do Thiago: "a Athena dá a mesma explicação dos outros sistemas"): a consulta de pedido (statusBloco) mostra o
 //   MESMO AVISO da página de rastreio, do bot da logística e da Minha Conta (campo `aviso` da rastreio-consulta v7 — textos do Thiago,
 //   sem mudar uma palavra; só negrito/itálico do WhatsApp e uma frase por linha). Com o aviso de postagem (pedido marcado como Postado
@@ -1849,6 +1863,33 @@ Só que no atacado tem um detalhe importante:
 // Resposta natural ao convite acima = fechar. Sem isso o cliente que responde "quero"
 // no ATK_CART cairia na BUSCA de produto e nunca receberia o link.
 // Só palavras de intenção: pergunta de verdade ("qual o prazo?") continua sendo pergunta.
+// v84 — quantidade PURA: "2", "02", "2x", "x2", "2 un", "2 unidades", "quero 2". "60 mg", "15ml", "2,5" NÃO são quantidade.
+function qtdPura(msg) {
+  const x = norm(msg || '').replace(/[!.]+$/, '').trim();
+  const m = x.match(/^(?:quero |vou querer |so |apenas |me ve |manda )?x?\s*(\d{1,3})\s*x?\s*(?:un|und|unid|unids|unidade|unidades|cx|caixa|caixas|frasco|frascos|kit|kits|peca|pecas)?(?: por favor| pf| pfv)?$/);
+  return m ? parseInt(m[1], 10) : NaN;
+}
+// v84 — "finalizar pedido", "fechar o pedido", "concluir compra" (o rótulo da opção 2 do atacado, digitado por extenso).
+function _ehFinalizarTxt(t) {
+  const x = norm(t || '').replace(/[!.]+$/, '').trim();
+  return /^(quero |vou |pode |vamos )?(finalizar|finaliza|fechar|fecha|concluir|conclui|encerrar)( o| a| meu| minha)?( pedido| compra| atacado| pedido de atacado)?$/.test(x);
+}
+// v84 — o que sobra da mensagem depois de tirar a saudação do começo ("Ola meu pedido veio errado" → "meu pedido veio errado").
+function _restoSemSaudacao(nMsg) {
+  let x = String(nMsg || '').replace(/[!?.,;:]+/g, ' ').replace(/\s+/g, ' ').trim();
+  let antes;
+  do { antes = x; x = x.replace(/^(ola|oi+|opa|eai|e ai|hey|alo|bom dia|boa tarde|boa noite|hi|hello|tudo bem|tudo bom|td bem|blz|beleza|athena|stella|pessoal|gente|amigo|amiga|querido|querida)( |$)/, '').trim(); } while (x !== antes);
+  return x;
+}
+// v84 — reclamação de pedido que chegou errado/faltando/danificado (vai pro atendente, não pra venda).
+function ehReclamacaoPedido(nMsg) {
+  const x = ' ' + String(nMsg || '') + ' ';
+  if (/(veio|chegou|recebi|mandaram|enviaram|entregaram)( o| a| um| uma| meu| minha)?( produto| pedido| item| encomenda)? (errad[oa]|trocad[oa]|faltando|incompleto|quebrad[oa]|danificad[oa]|vazando|vazad[oa]|abert[oa]|violad[oa])/.test(x)) return true;
+  if (/(produto|pedido|item|encomenda) (veio |chegou |esta |ta )?(errad[oa]|trocad[oa]|incompleto|quebrad[oa]|danificad[oa]|violad[oa])/.test(x)) return true;
+  if (/(faltou|faltaram|veio faltando|chegou faltando) (um |uma |o |a |\d+ )?(produto|produtos|item|itens|frasco|frascos|ampola|ampolas|caixa|caixas)/.test(x)) return true;
+  if (/ comprei /.test(x) && / (recebi|veio|chegou|mandaram|enviaram) /.test(x) && reconhecerVarios(String(nMsg || '')).length >= 2) return true;
+  return false;
+}
 function _ehQueroFechar(t) {
   const x = (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
   if (!x || x.length > 40) return false;
@@ -2851,6 +2892,19 @@ function _ehCodigo(termo) { return /[-.\/\d]/.test(String(termo || '')); }
 function filtrarCache(dados, termos) {
   const lista = Array.isArray(termos) ? termos : [termos];
   const resultados = new Set();
+  const _STOP2 = ['de','da','do','em','no','na','os','as','um','ou','se','eu','me','te','ja','so','pf','mg','ml','ui','iu','mc','cx','un'];
+  // v84: passada ESTRITA com as palavras de 2 letras que não são preposição ("tg 15mg" → tg + 15mg). Se der zero, vale a busca de sempre.
+  const _estritos = new Set();
+  lista.forEach(termo => {
+    const todas = norm(termo).split(/\s+/).filter(Boolean);
+    const p2 = todas.filter(p => p.length > 2 || (p.length === 2 && /^[a-z]{2}$|^[a-z]\d$/.test(p) && _STOP2.indexOf(p) < 0));
+    if (p2.length < 2 || !p2.some(p => p.length === 2)) return;
+    dados.split('\n').filter(Boolean).forEach(linha => {
+      const nomeProd = norm(linha.split('|')[0]);
+      if (p2.every(p => _casaTermo(nomeProd, p))) _estritos.add(linha);
+    });
+  });
+  if (_estritos.size) return [..._estritos];
   lista.forEach(termo => {
     const palavras = norm(termo).split(/\s+/).filter(p => p.length > 2);
     if (!palavras.length) return;
@@ -4308,6 +4362,11 @@ exports.handler = async (event) => {
       if (body.type === 'audio') return respond(RESP_AUDIO_PADRAO);
       return respond(RESP_MIDIA_PADRAO);
     }
+    // v84: o BotConversa às vezes repassa figurinha/áudio/contato como texto VAZIO ou como o aviso dele mesmo
+    // ("Este tipo de mensagem não é suportado"), sem body.type. Isso ia pra IA ("Deixa eu ver isso…") e ficava sem resposta.
+    if (!ehMidia && !emCheckout && state !== 'ADM' && (!mensagem || /^este tipo de mensagem nao e suportado\.?$/.test(n))) {
+      return respond(RESP_MIDIA_PADRAO);
+    }
 
     // ── DEDUP anti-retry do BotConversa ───────────────────────────────────────
     // Quando a resposta demora (ex.: gerar o link de pagamento leva ~5s), o BotConversa
@@ -4548,7 +4607,15 @@ exports.handler = async (event) => {
     }
 
     const saudacoes = ['ola','olá','oi','oii','opa','eai','e ai','bom dia','boa tarde','boa noite','hi','hello','tudo bem','tudo bom'];
-    const ehSaudacaoOuMenu = n === 'menu' || n === 'inicio' || n === 'voltar' || n === 'start' || saudacoes.some(s => n === s || n.startsWith(s+' ') || n.startsWith(s+'!'));
+    // v84: (a) saudação SEGUIDA de assunto (12+ letras depois de tirar "ola/bom dia/tudo bem…") não é só saudação — segue pro
+    //          tratamento normal, senão o assunto se perde ("Ola meu pedido veio errado" recebia só o menu);
+    //      (b) em OBS_TEXTO o cliente está ESCREVENDO a observação: "Olá Michel, …" é a observação, não um oi (só "menu" sai);
+    //      (c) com pedido em aberto, "cancelar" / "não quero mais" vale como "menu" (é o que o aviso do pedido em aberto manda digitar).
+    const _soComando = n === 'menu' || n === 'inicio' || n === 'voltar' || n === 'start';
+    const _saudacaoComAssunto = !_soComando && _restoSemSaudacao(n).replace(/\s/g, '').length >= 12;
+    const _cancelaPendente = state === 'AGUARDAR_COMPROVANTE' && /^(quero |pode |vou )?(cancelar|cancela|cancelo|desistir|desisti|desisto)( o| a| meu| minha)?( pedido| compra)?[!.]*$|^nao (quero|vou querer) mais[!.]*$/.test(n);
+    const ehSaudacaoOuMenu = _cancelaPendente || _soComando
+      || (state !== 'OBS_TEXTO' && !_saudacaoComAssunto && saudacoes.some(s => n === s || n.startsWith(s+' ') || n.startsWith(s+'!')));
 
     // ── "0" ou "voltar" = sobe UM nível na árvore (só nos menus navegáveis). "menu" continua indo pro início. ──
     // 18/09/2026 — o VitaFlow pediu que o "0" volte um nível em TODO menu, não só nas listas.
@@ -4602,7 +4669,7 @@ exports.handler = async (event) => {
     const palavrasHumano = ['atendente','atendimento','humano','vendedor','pessoa real','falar com alguem','falar com pessoa','falar com atendimento','quero atendimento','suporte','reclamacao','reclamar'];
     // Em estados críticos (carrinho/pedido pago) NÃO apaga a sessão — escala mas preserva o pedido.
     const estadoCritico = ['CARRINHO','ESTADO','FRETE','PERGUNTA_CUPOM','INFORMAR_CUPOM','CONFIRMAR','ESCOLHER_BRINDE','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','POS_TABELA_FRAC','PROTO_HUMANO','AGUARDAR_COMPROVANTE','COLETA_DADOS'].includes(state);
-    if (palavrasHumano.some(p => n.includes(p))) {
+    if (palavrasHumano.some(p => n.includes(p)) || (state !== 'OBS_TEXTO' && state !== 'COLETA_DADOS' && ehReclamacaoPedido(n))) {   // v84: pedido errado/faltando → atendente
       await enviarTelegram(`🔔 CLIENTE QUER HUMANO\n📱 ${sid}\n📍 Estado: ${state}\n💬 ${mensagem}`);
       const _temCar = session.carrinho && session.carrinho.length;
       // Nunca apaga o carrinho: só limpa a sessão se NÃO for estado crítico E não houver carrinho.
@@ -4793,7 +4860,8 @@ exports.handler = async (event) => {
       return respond(MSG_PRAZO_VAREJO + '\n\n_Pode continuar de onde parou — ou digite *menu* para ver nossos produtos._');
     }
 
-    const ehPerguntaFrete = ["frete","transportadora","pac","sedex","valor do envio","custo do envio","quanto e o frete","quanto fica o frete"].some(p => n.includes(p));
+    // v84: palavra INTEIRA — "FRETEZERO" (cupom) e "pacote" casavam no meio e abriam a consulta de frete.
+    const ehPerguntaFrete = /(^|[^a-z0-9])(frete|fretes|transportadora|pac|sedex)([^a-z0-9]|$)/.test(n) || ["valor do envio","custo do envio"].some(p => n.includes(p));
     if (ehPerguntaFrete && !emCheckout && !["ATACADO","PRAZO_TIPO","FRETE_AVULSO"].includes(state)) {
       await saveSession(sid, { ...session, state:"FRETE_AVULSO" });
       return respond("🚚 *Consultar frete*\n\nMe diz o seu estado (sigla) que eu calculo na hora!\nExemplo: RJ, SP, MG, DF, BA...");
@@ -4826,6 +4894,16 @@ exports.handler = async (event) => {
       if (num === 1) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`); }
       if (num === 2) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + buildMenuPrincipal()); }
       if (!_txtAtk || _txtAtk.length < 2) return respond('Me diga o *nome do produto* do atacado (ex.: retatrutida, bpc, testosterona), ou digite *1* pra baixar a tabela em PDF, ou *2* pra voltar ao menu.');
+      // v84: "varejo" sai do atacado (igual à opção 2); "finalizar pedido" fecha (igual à opção 2 do pedido de atacado) em vez de virar busca de produto.
+      if (/^(varejo|no varejo|quero varejo|comprar no varejo|ir (pro|para o) varejo)$/.test(n)) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + buildMenuPrincipal()); }
+      if (_ehFinalizarTxt(_txtAtk)) {
+        const _cartF = session.carrinhoAtk || [];
+        if (!_cartF.length) return respond('Seu pedido de atacado está vazio. Me diga o *nome do produto* que você quer. 😊');
+        const _subF = totalCarrinho(_cartF);
+        if (_subF < ATACADO_MIN) { await saveSession(sid, { ...session, state:'ATK_CART' }); return respond(`Ainda não dá pra fechar: seu pedido de atacado está em *R$ ${_subF.toFixed(2).replace('.', ',')}* e o mínimo é *R$ 3.000*.\nFaltam *R$ ${faltaAtk(_subF).toFixed(2).replace('.', ',')}*.\n\nMe manda o *nome* de outro produto que eu adiciono. 😊`); }
+        await saveSession(sid, { ...session, obsReturn:'atacado', state:'OBS_PERGUNTA' });
+        return respond('📝 Quer adicionar alguma *observação* ao seu pedido? (ex.: ponto de referência, algum pedido especial)\n\n1️⃣ Sim\n2️⃣ Não');
+      }
       return await atkAbrirBusca(session, sid, _txtAtk, respond);
     }
 
@@ -4840,7 +4918,8 @@ exports.handler = async (event) => {
     }
 
     if (state === 'ATK_QTD') {
-      if (!/^\d/.test((mensagem || '').trim())) return respond('Me diz a *quantidade* em número, por favor (ex.: 10):');
+      if (!/^\d/.test((mensagem || '').trim()) && isNaN(qtdPura(mensagem))) return respond('Me diz a *quantidade* em número, por favor (ex.: 10):');
+      num = qtdPura(mensagem);   // v84: "60 mg" não é quantidade
       if (!num || num < 1 || num > 999) return respond('Informe uma quantidade válida (1 a 999):');
       const prod = session.atkSel || {};
       const cart = session.carrinhoAtk || [];
@@ -4854,7 +4933,7 @@ exports.handler = async (event) => {
       const cart = session.carrinhoAtk || [];
       const _t = (mensagem || '').trim();
       if (num === 1) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Beleza! Me diga o *nome do produto* de atacado que você quer adicionar. 👇\n\n_(Ou digite *1* pra baixar a tabela completa em PDF.)_'); }
-      if (num === 2) {
+      if (num === 2 || (!/^\d/.test(_t) && !_ehQueroFechar(_t) && _ehFinalizarTxt(_t))) {   // v84: "finalizar pedido" por extenso = opção 2
         if (!cart.length) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond('Seu pedido de atacado está vazio. Me diga o *nome do produto* que você quer. 😊'); }
         const sub = totalCarrinho(cart);
         if (sub < ATACADO_MIN) return respond(`Ainda não dá pra fechar: seu pedido de atacado está em *R$ ${sub.toFixed(2).replace('.', ',')}* e o mínimo é *R$ 3.000*.\nFaltam *R$ ${faltaAtk(sub).toFixed(2).replace('.', ',')}*.\n\nMe manda o *nome* de outro produto pra adicionar. 😊`);
@@ -5006,7 +5085,9 @@ exports.handler = async (event) => {
       if (_incR) return respond(_incR + `\n\n_Ou digite *menu* para voltar._`);
       const termo = extrairTermoRastreio(mensagem);         // v81: número/CPF normalizados (o resto vai como veio)
       const alnum = termo.replace(/[^a-zA-Z0-9@]/g, '');
-      if (alnum.length < 2) {
+      // v84: frase solta (3+ palavras, sem pedido/CPF/e-mail e sem sequência de 5+ números) não é dado de pedido — não consulta.
+      const _fraseSolta = !idPedido(mensagem) && !idEmail(mensagem) && !idCpf(mensagem).cpf && !/\d{5,}/.test(String(mensagem).replace(/[\s.\-]/g, '')) && String(mensagem).trim().split(/\s+/).length >= 3;
+      if (alnum.length < 2 || _fraseSolta) {
         return respond(`Hmm, isso não parece um número de pedido, CPF ou e-mail. 🤔\n\nMe manda o *número do pedido*, o *CPF* (11 dígitos) ou o *e-mail* da compra.\n\n_Ou digite *menu* para voltar._`);
       }
       const pedidos = await consultarStatusGAS(termo);
@@ -5259,7 +5340,8 @@ exports.handler = async (event) => {
 
     if (state === 'QUANTIDADE') {
       // não é número → troca de produto por texto, combo ou dúvida (IA)
-      if (!/^\d/.test(n.trim())) return await tratarTextoLivre(session, sid, n, '', respond);
+      if (!/^\d/.test(n.trim()) && isNaN(qtdPura(mensagem))) return await tratarTextoLivre(session, sid, n, '', respond);
+      num = qtdPura(mensagem);   // v84: "60 mg" virava 60 unidades (R$ 47.340 no carrinho) — só quantidade pura vale
       if (!num || num < 1 || num > 99) return respond('Por favor, informe uma quantidade válida (1 a 99):');
       // TRAVA anti-mistura: tem pedido de ATACADO aberto? Não pode adicionar item de varejo no mesmo pedido.
       if ((session.carrinhoAtk || []).length) {
@@ -5608,6 +5690,11 @@ exports.handler = async (event) => {
       }
       if (ehNao) {
         return await _seguirAposObs({ ...session, obsColetada:true, obsCliente:'' }, sid, respond);
+      }
+      // v84: o cliente escreveu a observação direto aqui (caso real: "Ponto de Referência: Em frente ao…" e a pergunta se repetiu).
+      const _obsDireta = (mensagem || '').trim();
+      if (!/^\d+$/.test(_obsDireta) && _obsDireta.replace(/[^a-zA-ZÀ-ú]/g, '').length >= 8 && _obsDireta.split(/\s+/).length >= 2) {
+        return await _seguirAposObs({ ...session, obsColetada:true, obsCliente: _obsDireta.slice(0, 300) }, sid, respond);
       }
       return respond('Você quer adicionar alguma *observação* ao pedido?\n\n1️⃣ Sim\n2️⃣ Não');
     }
