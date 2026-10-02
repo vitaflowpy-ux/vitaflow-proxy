@@ -1,5 +1,10 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v83 (02/10/2026 — ordem do Thiago: "a Athena dá a mesma explicação dos outros sistemas"): a consulta de pedido (statusBloco) mostra o
+//   MESMO AVISO da página de rastreio, do bot da logística e da Minha Conta (campo `aviso` da rastreio-consulta v7 — textos do Thiago,
+//   sem mudar uma palavra; só negrito/itálico do WhatsApp e uma frase por linha). Com o aviso de postagem (pedido marcado como Postado
+//   pela logística e ainda sem leitura da transportadora, ou atacado aguardando a rota) quem explica é o aviso, não a frase do status.
+//   Sem o campo (consulta de reserva no GAS) nada muda. Resto = v82.
 // v82 (01/10/2026): PRAZOS NOVOS (tabela por ESTADO aprovada pelo Thiago em 29/09): postagem do varejo em até 3 dias úteis,
 //   atacado em até 6; entrega por estado (MSG_PRAZO_VAREJO, MSG_PRAZOS_COMPLETO, mensagem do pedido confirmado, regras da IA)
 //   e a previsão do statusBloco (PRAZO_DESPACHO_DU = 3 + PRAZO_UF_DU). Mesma tabela do GAS v52 e da rastreio-consulta v3. Resto = v81.
@@ -3006,13 +3011,38 @@ function calcularPrazo(dataConf, estado) {
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
   return { dataLimite: _ddmm(deadline), dentroPrazo: hoje.getTime() <= deadline.getTime() };
 }
+// v83: AVISO do pedido (o mesmo da página de rastreio). NÃO muda nenhuma palavra do texto: uma frase por linha, a 1ª em negrito,
+// negrito nos trechos principais e itálico no "Fique tranquilo" (os mesmos destaques da página v9 e do bot da logística v8).
+const AV_EMOJI = '(?:[\\uD83C-\\uDBFF][\\uDC00-\\uDFFF]|[\\u2190-\\u2BFF\\uFE0F\\u200D])';
+const AV_FIM = new RegExp('([.!?](?:\\s*' + AV_EMOJI + ')*)\\s+(?=[A-ZÀ-Ý])', 'g');
+const AV_NEGRITO = ['o código de rastreamento ainda não está disponível', 'o status detalhado ainda não foi alterado', 'o seu código aparecerá aqui!',
+  'as informações serão atualizadas automaticamente aqui', 'transporte 100% seguro', 'a postagem ocorrerá logo em seguida', 'já abriu um chamado junto à transportadora'];
+const AV_ITALICO = ['Fique tranquilo', 'fique tranquilo', 'Agradecemos a compreensão'];
+function avisoWhats(t) {
+  const frases = [];
+  String(t || '').split(/\n+/).forEach(bloco => {
+    bloco.replace(AV_FIM, '$1\n').split('\n').forEach(f => { f = f.trim(); if (f) frases.push(f); });
+  });
+  return frases.map((f, i) => {
+    if (i === 0 && frases.length > 1) return '*' + f + '*';
+    AV_NEGRITO.forEach(x => { f = f.split(x).join('*' + x + '*'); });
+    AV_ITALICO.forEach(x => { f = f.split(x).join('_' + x + '_'); });
+    return f;
+  }).join('\n');
+}
 function statusBloco(p) {
   const pedido = (p && p.pedido) || '—';
   const statusTexto = (p && p.status) || '';
   const info = STATUS_INFO[norm(statusTexto)];
   const emoji = info ? info.emoji : '📦';
-  const exp = info ? `\n_${info.exp}_` : '';
+  // v83: aviso do pedido (só em pedido em andamento). Com o aviso de postagem, quem explica é o aviso (igual à página de rastreio).
+  const _nstA = norm(statusTexto);
+  const _andamento = ['pedido confirmado', 'pago', 'em separacao', 'despachado', 'postado', 'em transferencia', 'chegou a unidade de destino', 'em separacao no centro logistico', 'saiu para entrega'].indexOf(_nstA) >= 0;
+  const aviso = (p && p.aviso && p.aviso.texto && _andamento) ? p.aviso : null;
+  const avisoPost = !!aviso && ['sem_codigo', 'objeto_criado', 'atacado'].indexOf(aviso.tipo) >= 0;
+  const exp = (info && !avisoPost) ? `\n_${info.exp}_` : '';
   let bloco = `📦 *Pedido ${pedido}*\n${emoji} *${statusTexto || '—'}*${exp}`;
+  if (aviso) bloco += `\n\n${avisoWhats(aviso.texto)}`;
   // PREVISÃO DE ENTREGA + "está no prazo" (não mostra se já foi entregue).
   const _nst = norm(statusTexto);
   if (_nst.indexOf('entregue') < 0 && p && p.data && p.estado) {
@@ -4090,6 +4120,7 @@ Retorne SOMENTE o JSON no formato:
 }
 
 // ── Handler principal ─────────────────────────────────────────────────────────
+exports._t = { statusBloco, avisoWhats };   // v83: só para teste
 exports.handler = async (event) => {
   const headers = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json' };
   if (event.httpMethod === 'OPTIONS') return { statusCode:200, headers, body:'' };
