@@ -60,6 +60,9 @@
    - SILÊNCIO: quando alguém responde À MÃO pelo celular da logística (fromMe que não foi o bot),
      o bot fica calado naquela conversa por 6 h (config). O protocolo aberto passa a "em atendimento".
    - MODO (v9): 'ligado' atende todo mundo; 'desligado' não responde ninguém. (O modo teste saiu na v9.)
+   - EXCEÇÕES (v10, ordem do Thiago, 03/10/2026): número cadastrado na aba 🚫 Exceções do painel NÃO tem bot nenhum —
+     sem menu, sem protocolo, sem aviso, sem silêncio, sem #bot. A logística recebe e conversa à mão. O bot lê SÓ a
+     chave daquele número (nunca o nó inteiro). Se a leitura falhar, segue como número comum.
    - Textos e config no Firebase (vitaflow_sync/logistica/textos e /config), editáveis no painel da
      logística. Os padrões abaixo só valem enquanto o nó não existir. GET ?defaults=1 devolve os padrões.
 
@@ -72,6 +75,7 @@
      vitaflow_sync/logistica/seq/<aaaammdd>           contador do dia (ETag / if-match)
      vitaflow_sync/logistica/fila_aviso/<chave>       protocolos abertos fora do horário (aviso na abertura)
      vitaflow_sync/logistica/silencio/<telefone>      (v7) conversas com o bot calado — espelho pro painel
+     vitaflow_sync/logistica/excecoes/<numero>        (v10) SÓ LÊ — números sem bot (grava o painel; chave = chaveNumero)
    LÊ: rastreio-consulta (função deste site) → GAS consultar_status (reserva) · vitaflow_compras/<pedido>
 
    VARIÁVEIS DE AMBIENTE (Netlify vitaflow-proxy)
@@ -82,7 +86,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v9';
+var VERSAO = 'v10';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -172,6 +176,12 @@ async function fbExiste(caminho) {
   } catch (e) { return null; }
 }
 function fbPut(c, v) { return fbEscreve(c, v, 'PUT'); }
+/* v10: número na lista de exceções do painel = nada de bot. Lê só a chave do número. */
+async function ehExcecao(phone) {
+  var ke = chaveFb(chaveNumero(phone));
+  if (!ke) return false;
+  return !!(await fbGet(RAIZ + '/excecoes/' + ke));
+}
 function fbPatch(c, v) { return fbEscreve(c, v, 'PATCH'); }
 async function fbDelete(caminho) {
   try { var r = await fetchT(fbUrl(caminho), { method: 'DELETE' }, 5000); return r.ok; }
@@ -1489,6 +1499,7 @@ exports.handler = async function (event) {
   var k = chaveFb(phone);
   var cfg = await carregarCfg();
   if (cfg.modo === 'desligado') return resp(200, 'bot desligado no painel');
+  if (await ehExcecao(phone)) return resp(200, 'numero na lista de excecoes — ignorado');   /* v10: vale também para o fromMe */
 
   if (body.fromMe) return resp(200, await tratarFromMe(body, cfg, k, phone));
 
