@@ -1,6 +1,7 @@
 'use strict';
 /* =============================================================================
-   estoque.js — ESTOQUE PRÓPRIO DO PAINEL DE DADOS (VitaFlow)  ·  v1  ·  03/10/2026
+   estoque.js — ESTOQUE PRÓPRIO DO PAINEL DE DADOS (VitaFlow)  ·  v2  ·  03/10/2026
+   v2 (03/10/2026, pedido do Thiago): ação 'desfazer' — desfaz a baixa de UM pedido.
    Netlify Function no repo vitaflow-proxy → netlify/functions/estoque.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/estoque
 
@@ -22,6 +23,9 @@
      { acao:'baixa', pedidos:[{pedido, itens:[{chave,nome,qtd}]}] }
           → desconta do estoque o que cada pedido usa (nunca abaixo de zero), marca o pedido como baixado.
             Pedido que já teve baixa é IGNORADO (não desconta duas vezes).   → devolve o 'ler' + feitos/ja_baixados
+     { acao:'desfazer', pedido:'VF-…' }               (v2)
+          → devolve ao estoque exatamente o que a baixa daquele pedido descontou e apaga a marca de baixa
+            (o pedido volta a entrar na conta).   → devolve o 'ler' + devolvido (unidades)
 
    Variáveis de ambiente (já existem no vitaflow-proxy): FIREBASE_SECRET · COMPRAS_KEY
    ============================================================================= */
@@ -139,6 +143,30 @@ exports.handler = async function (event) {
       }
       var c = await lerTudo();
       return resp({ success: true, itens: c.itens, baixas: c.baixas, feitos: feitos, ja_baixados: jaBaixados });
+    }
+
+    if (acao === 'desfazer') {
+      var pkD = pedidoChave(d.pedido);
+      if (!pkD) return erro('pedido faltando');
+      var at = (await fb(RAIZ)) || {};
+      var its = (at.itens && typeof at.itens === 'object') ? at.itens : {};
+      var regB = at.baixas && at.baixas[pkD];
+      if (!regB) return erro('esse pedido nao tem baixa');
+      var volta = {}, nomes = {}, devolvido = 0, linhasB = Array.isArray(regB.itens) ? regB.itens : [];
+      for (var x = 0; x < linhasB.length; x++) {
+        var kb = linhasB[x] && linhasB[x].chave, qb = qtdInt(linhasB[x] && linhasB[x].baixou);
+        if (!chaveOk(kb) || !qb) continue;
+        volta[kb] = (volta[kb] || 0) + qb; nomes[kb] = nomeOk(linhasB[x].nome); devolvido += qb;
+      }
+      var tD = Date.now(), patchD = {};
+      Object.keys(volta).forEach(function (kv) {
+        var nomeAtual = nomeOk(its[kv] && its[kv].nome) || nomes[kv] || kv;
+        patchD['itens/' + kv] = { nome: nomeAtual, qtd: Math.min(qtdInt(its[kv] && its[kv].qtd) + volta[kv], MAX_QTD), t: tD };
+      });
+      patchD['baixas/' + pkD] = null;
+      await fb(RAIZ, 'PATCH', patchD);   /* um PATCH só: o estoque volta e a marca some juntos */
+      var e2 = await lerTudo();
+      return resp({ success: true, itens: e2.itens, baixas: e2.baixas, desfeito: pkD, devolvido: devolvido });
     }
 
     return erro('acao desconhecida');
