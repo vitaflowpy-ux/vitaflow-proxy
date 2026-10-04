@@ -1,6 +1,10 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v7  ·  02/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v8  ·  04/10/2026
+   v8 (pedido do Thiago, 03-04/10): EXCLUIR CUPOM DA LISTA (acao 'cupons_excluir'). E-mail JÁ ENVIADO → só sai da lista (o cupom
+       continua valendo). E-mail NÃO enviado (a logística decidiu não mandar) → o cupom é CANCELADO (ativo:false no Firestore: some de
+       "Meus cupons" e o carrinho recusa) e sai da lista. Cupom já usado → só sai da lista. O registro fica (oculto_ts), então a rodada
+       NÃO gera outro cupom para o pedido. Excluído não recebe e-mail. desfazer:true volta (e reativa o cupom cancelado). Resto = v7.
    v7 (OK do Thiago, 02/10): o RESUMO DAS 10h no WhatsApp da logística (avisoParados) passa a trazer também QUEM PASSOU DO PRAZO DE
        POSTAGEM (3 dias úteis no varejo, 6 no atacado) — a mesma lista da aba Atrasos, sem os marcados com ✔ Visto: pedido, fornecedor,
        dias úteis e até quando era. O resumo sai quando há parados OU atrasados na postagem. Mesma chave (parados_whatsapp). Resto = v6.
@@ -1371,7 +1375,7 @@ function montarEmailCupom(reg, textos) {
     VALIDADE: ddmmaa(reg.expira), PREVISAO: reg.previsao_ate || '', DIAS: reg.dias_validade || '' };
   return { assunto: preencher(T.email_cupom_assunto, v), texto: preencher(T.email_cupom_texto, v) };
 }
-function emailPendente(g, agora) { return !!(g && g.codigo && !g.email_ts && emailOk(g.email) && Number(g.expira) > agora); }
+function emailPendente(g, agora) { return !!(g && g.codigo && !g.email_ts && !g.oculto_ts && emailOk(g.email) && Number(g.expira) > agora); }   /* v8: excluído não recebe e-mail */
 /* v5: manda o e-mail do cupom — SÓ quando alguém aperta o botão no painel. op.pedidos = lista de pedidos, ou op.todos.
    Não manda duas vezes (email_ts), nem cupom usado, apagado ou vencido. Até 15 por chamada (o painel repete se faltar). */
 async function cuponsEnviar(op) {
@@ -1381,7 +1385,7 @@ async function cuponsEnviar(op) {
   var ks = Object.keys(regs).filter(function (k) { return (op.todos || quer[k]) && emailPendente(regs[k], agora); })
     .sort(function (a, b) { return (regs[a].criado || 0) - (regs[b].criado || 0); });
   var out = { ok: true, pendentes: ks.length, enviados: 0, pulados: 0, falhas: 0, erros: [], faltaram: Math.max(0, ks.length - 15) };
-  if (!op.todos) Object.keys(quer).forEach(function (k) { if (ks.indexOf(k) < 0) { out.pulados++; if (out.erros.length < 10) out.erros.push((regs[k] ? regs[k].pedido : k) + ': ' + (!regs[k] ? 'sem cupom' : (regs[k].email_ts ? 'e-mail já enviado' : (!emailOk(regs[k].email) ? 'pedido sem e-mail' : 'cupom vencido')))); } });
+  if (!op.todos) Object.keys(quer).forEach(function (k) { if (ks.indexOf(k) < 0) { out.pulados++; if (out.erros.length < 10) out.erros.push((regs[k] ? regs[k].pedido : k) + ': ' + (!regs[k] ? 'sem cupom' : (regs[k].email_ts ? 'e-mail já enviado' : (regs[k].oculto_ts ? 'excluído da lista' : (!emailOk(regs[k].email) ? 'pedido sem e-mail' : 'cupom vencido'))))); } });
   ks = ks.slice(0, 15);
   async function um(k) {
     var g = regs[k], fs = await fsLerCupom(g.doc || ('atraso_' + k));
@@ -1396,6 +1400,46 @@ async function cuponsEnviar(op) {
   for (var i = 0; i < ks.length; i += 5) await Promise.all(ks.slice(i, i + 5).map(um));
   if (out.falhas) out.ok = out.enviados > 0;
   return out;
+}
+/* v8: liga/desliga o cupom na coleção cupons_vitaflow (só o campo ativo). true = feito · false = não deu */
+async function fsAtivarCupom(docId, ativo) {
+  try {
+    var r = await fetch(fsUrl('/cupons_vitaflow/' + encodeURIComponent(docId), '&updateMask.fieldPaths=ativo&currentDocument.exists=true'), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { ativo: { booleanValue: !!ativo } } }) });
+    return r.ok;
+  } catch (e) { return false; }
+}
+/* v8: EXCLUIR da lista de cupons gerados (ou desfazer). Ver o cabeçalho. Nunca apaga o registro: sem ele a rodada geraria outro cupom. */
+async function cuponsExcluir(op) {
+  var k = R.histKey(String(op.pedido || '').trim());
+  if (!k) return { ok: false, erro: 'diga o pedido' };
+  var g = await fbLerOu(CUPONS + '/' + k);
+  if (!g || !g.codigo) return { ok: false, erro: 'esse pedido não tem cupom de atraso' };
+  var docId = g.doc || ('atraso_' + k), agora = op.agora || Date.now();
+
+  if (op.desfazer) {
+    if (!g.oculto_ts) return { ok: false, erro: 'esse cupom não está excluído' };
+    var reativou = false;
+    if (g.oculto_tipo === 'cancelado') {
+      if (!(await fsAtivarCupom(docId, true))) return { ok: false, erro: 'não consegui reativar o cupom (nada foi alterado)' };
+      reativou = true;
+    }
+    await fbReq('PATCH', CUPONS + '/' + k, { oculto_ts: null, oculto_tipo: null, oculto_por: null });
+    return { ok: true, pedido: g.pedido, desfeito: true, reativado: reativou };
+  }
+
+  if (g.oculto_ts) return { ok: false, erro: 'esse cupom já está excluído' };
+  var tipo = 'lista';   /* e-mail já enviado, ou cupom usado/apagado: só sai da lista */
+  if (!g.email_ts) {
+    var fs = await fsLerCupom(docId);
+    if (fs === undefined) return { ok: false, erro: 'não consegui consultar o cupom (nada foi alterado)' };
+    if (fs && fs.usos < 1) {
+      if (fs.ativo !== false && !(await fsAtivarCupom(docId, false))) return { ok: false, erro: 'não consegui cancelar o cupom (nada foi alterado)' };
+      tipo = 'cancelado';
+    }
+  }
+  await fbReq('PATCH', CUPONS + '/' + k, { oculto_ts: agora, oculto_tipo: tipo, oculto_por: txt(op.uid, 40) });
+  return { ok: true, pedido: g.pedido, excluido: tipo };
 }
 function cupomSituacao(reg, fs, agora) {
   if (fs && fs.usos >= 1) return 'usado';
@@ -1461,7 +1505,8 @@ async function cuponsGerados(agora, max) {
     var sitC = fss[i] === null ? 'apagado' : cupomSituacao(g, fss[i], agora);
     return { pedido: g.pedido, nome: g.nome || '', codigo: g.codigo, pct: g.pct, criado: ddmmaa(g.criado), expira: ddmmaa(g.expira), previsao_ate: g.previsao_ate || '',
       situacao: sitC, email: g.email_ts ? 'enviado' : ((g.sem_email || !emailOk(g.email)) ? 'sem e-mail' : 'pendente'), email_em: g.email_ts ? ddmmaa(g.email_ts) : '',
-      pode_enviar: sitC === 'disponivel' && emailPendente(g, agora) };
+      pode_enviar: sitC === 'disponivel' && emailPendente(g, agora),
+      excluido: g.oculto_ts ? (g.oculto_tipo || 'lista') : '', excluido_em: g.oculto_ts ? ddmmaa(g.oculto_ts) : '' };   /* v8 */
   });
 }
 
@@ -1579,6 +1624,11 @@ async function acaoAdminV4(acao, d, uid, agora) {
     if (!d.todos && !peds.length) return resp({ ok: false, erro: 'diga o pedido (ou todos)' }, 400);
     return resp(await cuponsEnviar({ agora: agora, uid: uid, todos: d.todos === true, pedidos: peds }));
   }
+  if (acao === 'cupons_excluir') {   /* v8 */
+    var pedX = txt(d.pedido, 30);
+    if (!pedX) return resp({ ok: false, erro: 'diga o pedido' }, 400);
+    return resp(await cuponsExcluir({ agora: agora, uid: uid, pedido: pedX, desfazer: d.desfazer === true }));
+  }
   if (acao === 'placar') {   /* os contadores do topo do painel (cache de 2 min na instância quente) */
     if (!d.forcar && _cache.placar && agora - _cache.placar.t < 120000) return resp(_cache.placar.v);
     var bL = await lerBase(true), pL = montarPedidos(bL);
@@ -1641,7 +1691,7 @@ exports.handler = async function (event) {
       var rV3 = await acaoAdminV3(acao, d, uid, agora);
       if (rV3) return rV3;
     }
-    if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'cupons_enviar' || acao === 'placar') {   /* v4 · v5 */
+    if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'cupons_enviar' || acao === 'cupons_excluir' || acao === 'placar') {   /* v4 · v5 · v8 */
       var rV4 = await acaoAdminV4(acao, d, uid, agora);
       if (rV4) return rV4;
     }
