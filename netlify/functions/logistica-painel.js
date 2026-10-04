@@ -1,6 +1,16 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v12  ·  04/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v13  ·  04/10/2026
+   v13 (OK do Thiago, 04/10: "ok, pode fazer tudo" às 3 sugestões):
+       (1) OCORRÊNCIAS — o que o Rastreamento sinaliza na coluna ACAO_MANUAL (ausente, endereço incorreto, fiscalização, extravio,
+           devolvido, objeto cancelado/devolvido na Onlog, +25 dias) passa a aparecer no painel da logística: acao 'ocorrencias'
+           (lista) e 'ocorrencias_visto' (✔ Visto por pedido, vale enquanto o aviso é o mesmo — vitaflow_sync/logistica/
+           acao_manual_vistos). O placar devolve `ocorrencias.total`. Só LÊ a planilha: mudar o status e o "✓ Resolvido" continuam
+           no painel de Rastreamento (é ele que grava histórico e manda o e-mail de status).
+       (3) RESUMO DAS PASSADAS NO WHATSAPP da logística, na rotina das 10h (logistica-atrasos v5 → avisoPassadas): passadas do
+           rastreio e rodadas de códigos desde o último resumo, ocorrências e dúvidas esperando, e alerta se uma das rotinas parou.
+           Chave: passadas_whatsapp (ligado é o padrão). acao 'passadas_resumo' = enviar agora / ver o texto. Sem dado de cliente.
+       Resto = v12.
    v12 (pedido do Thiago, 04/10: "colocasse no aviso do painel da logística o resultado depois de cada passada"; ele escolheu "as duas" e
        "quadro no painel"): codigos_pendentes devolve `rastreio.passadas` — o resultado das últimas passadas do rastreio automático,
        gravado pelo Rastreamento v20 em vitaflow_sync/logistica/rastreio_passadas (só números). As rodadas de códigos já iam em
@@ -183,7 +193,7 @@ var EMAIL_PADRAO = {
     'Se precisar, fale com a nossa logística pelo WhatsApp +44 7537 155718.\n\n' +
     'Equipe VitaFlow'
 };
-var EMAIL_CFG_PADRAO = { email_atraso_modo: 'desligado', email_atraso_max: 3, email_atraso_intervalo_du: 3, email_atraso_janela_dias: 45,
+var EMAIL_CFG_PADRAO = { /* v13 */ passadas_whatsapp: 'ligado', email_atraso_modo: 'desligado', email_atraso_max: 3, email_atraso_intervalo_du: 3, email_atraso_janela_dias: 45,
   email_postagem_modo: 'desligado', email_postagem_janela_dias: 45,   /* v6 */
   email_pacotes_modo: 'ligado', codigos_janela_dias: 45, codigos_duvida_dias: 15,   /* v3 */
   /* v4 */ cupom_atraso_modo: 'desligado', cupom_atraso_pct: 5, cupom_atraso_dias: 45, cupom_atraso_prefixo: 'DESCULPA', cupom_atraso_janela_dias: 60,
@@ -300,6 +310,7 @@ function montarPedidos(base) {
   var hd = (base.hdr || []).map(function (h) { return String(h || '').trim().toUpperCase(); });
   var cT = hd.indexOf('TRANSPORTADORA'), cR = hd.indexOf('CODIGO_RASTREIO'); if (cR < 0) cR = hd.indexOf('CODIGO RASTREIO');
   var cF = hd.indexOf('COMPRADO_FORNECEDORES');
+  var cAM = hd.indexOf('ACAO_MANUAL');   /* v13 */
   var cE = { orig: hd.indexOf('ORIGEM'), pai: hd.indexOf('PEDIDO_ORIGINAL') }, cO = hd.indexOf('CODIGO_ONLOG');   /* v3 */
   var out = [];
   Object.keys(base.esp).forEach(function (k) {
@@ -338,6 +349,7 @@ function montarPedidos(base) {
       /* v3: o que a rodada de códigos e os pacotes usam */
       cpf: cpf11(l[3]), cep: cepDe(l[8]), pai: b._pai, origCol: b._orig, produtos: b.produtos,
       cod: (String(b._rast || '').toUpperCase().indexOf('AVISO_ABANDONO') >= 0) ? '' : limparCod(b._rast),
+      am: cAM >= 0 ? String(l[cAM] == null ? '' : l[cAM]).replace(/\s+/g, ' ').trim().slice(0, 240) : '',   /* v13 */
       onlog: limparCod(cO >= 0 ? l[cO] : ''), fams: linhasForn(b._forn).map(familia).filter(function (f, i, a) { return f && a.indexOf(f) === i; }) });
   });
   return out;
@@ -1072,17 +1084,105 @@ function textoSemConsulta(novos, emAberto, painelUrl) {
   L.push('Enquanto o dado não for preenchido na planilha, o status desses pedidos não atualiza. Ao todo há ' + emAberto + ' nessa situação. Veja na aba *Códigos* do painel' + (painelUrl ? ': ' + painelUrl : '.'));
   return L.join('\n');
 }
+/* v13: OCORRÊNCIAS — o que o Rastreamento sinalizou na coluna ACAO_MANUAL e espera decisão da logística */
+var AM_VISTOS = RAIZ + '/acao_manual_vistos';   /* <pedido> = { am, ts, uid } — vale enquanto o aviso for o mesmo */
+var AM_INFO = {
+  'DESTINATARIO AUSENTE': ['ausente', 'Destinatário ausente', 'A transportadora tentou entregar e não encontrou ninguém. Avise o cliente e veja com a transportadora se haverá nova tentativa ou retirada.'],
+  'ENDERECO INCORRETO': ['endereco', 'Endereço incorreto', 'A transportadora não achou o endereço. Confirme o endereço com o cliente e passe a correção para a transportadora.'],
+  'AREA COM DISTRIBUICAO': ['area', 'Retirada ou imprevisto na rota', 'Leia a frase da transportadora: ou o pacote está aguardando retirada (avise o cliente onde retirar) ou houve um imprevisto na rota (acompanhe).'],
+  'ENCAMINHADO PARA FISCALIZACAO': ['fiscal', 'Fiscalização', 'O pacote foi retido para fiscalização. Acompanhe a liberação e avise o cliente.'],
+  'PEDIDO EXTRAVIADO': ['extravio', 'Extravio ou avaria', 'A transportadora registrou extravio ou avaria. Confirme com ela e combine a solução com o cliente.'],
+  'PEDIDO CANCELADO': ['devolvido', 'Devolvido ao remetente', 'O pacote voltou ou está voltando para o remetente. Combine o reenvio com o fornecedor e avise o cliente.']
+};
+function acaoManualInfo(am) {
+  var t = String(am || '').trim(), partes = t.split('|'), sug = partes[0].trim(), frase = partes.slice(1).join('|').trim(), u = R.semAcentoUp(sug);
+  if (u.indexOf('VERIFICAR') === 0) return { tipo: 'onlog', titulo: 'Objeto cancelado ou devolvido na Onlog', sugestao: '', frase: (sug.replace(/^VERIFICAR:?\s*/i, '') + (frase ? ' · ' + frase : '')).trim(),
+    oque: 'O código deste pedido não vai mais andar. Fale com o fornecedor: o pedido precisa de novo envio. O detalhe está na aba Códigos, em Avisos da Onlog.' };
+  if (u.indexOf('+25 DIAS') >= 0 || u.indexOf('REVISAR MANUAL') === 0) return { tipo: 'antigo', titulo: 'Em aberto há mais de 25 dias', sugestao: '', frase: '',
+    oque: 'O rastreio automático parou de consultar este pedido (a transportadora não devolve mais nada depois desse tempo). Confira direto com a transportadora e acerte o status à mão.' };
+  var inf = AM_INFO[u];
+  if (inf) return { tipo: inf[0], titulo: inf[1], sugestao: sug, frase: frase, oque: inf[2] };
+  return { tipo: 'outro', titulo: txt(sug, 60) || 'Aviso do rastreio', sugestao: sug, frase: frase, oque: 'Leia a frase da transportadora e decida o que fazer com o pedido.' };
+}
+function ocorrenciasLista(peds, vistos, agora) {
+  var V = (vistos && typeof vistos === 'object') ? vistos : {};
+  return (peds || []).filter(function (p) { return p.am && !p.final && !p.naoPagou && p.st !== 'ENTREGUE'; }).map(function (p) {
+    var i = acaoManualInfo(p.am), v = V[p.k], visto = !!(v && String(v.am || '') === p.am.slice(0, 80));
+    return { k: p.k, pedido: p.pedido, pacote_de: p.pai || '', nome: p.nome, tipo: i.tipo, titulo: i.titulo, sugestao: txt(i.sugestao, 60), frase: txt(i.frase, 200), oque: i.oque,
+      status: p.status, transportadora: p.transp, codigo: p.cod || '', fornecedor: p.forn, data: String(p.data || '').slice(0, 10), revendedor: ehRevendedor(p.pai || p.pedido),
+      dias: p.tConf ? R.duEntre(p.tConf, agora) : 0, visto: visto, visto_em: (visto && v.ts) ? R.ddmm(v.ts) : '' };
+  }).sort(function (a, b) { return (a.visto ? 1 : 0) - (b.visto ? 1 : 0) || b.dias - a.dias || (a.pedido < b.pedido ? -1 : 1); });
+}
+/* v13: RESUMO DAS PASSADAS no WhatsApp da logística (rotina das 10h, seg a sex) */
+var PASS_RESUMO = RAIZ + '/passadas_resumo';   /* { ts } do último resumo enviado */
+function quandoBR(ms) { return new Date(Number(ms)).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às'); }
+function horasDesde(ms, agora) { var h = Math.floor((agora - Number(ms)) / 3600000); return h < 48 ? h + ' hora(s)' : Math.floor(h / 24) + ' dia(s)'; }
+function textoPassadas(x) {
+  var L = ['📋 *Logística — resumo das passadas*', 'Desde ' + quandoBR(x.desde), '⠀'];
+  if (x.passadas.length) {
+    var c = 0, a = 0, e = 0, inc = 0;
+    x.passadas.forEach(function (p) { c += p.consultados || 0; a += p.atualizados || 0; e += p.entregues || 0; if (p.incompleta) inc++; });
+    L.push('🚚 *Rastreio automático*: ' + x.passadas.length + ' passada(s) · ' + c + ' consulta(s)');
+    L.push('• *' + a + '* pedido(s) mudaram de status' + (e ? ' · ' + e + ' viraram entregue' : ''));
+    if (inc) L.push('• ⚠️ ' + inc + ' passada(s) não terminaram');
+  } else L.push('🚚 *Rastreio automático*: nenhuma passada no período');
+  if (x.sem_consulta) L.push('• 🔎 ' + x.sem_consulta + ' pedido(s) sem consulta por falta de dado na planilha');
+  L.push('⠀');
+  if (x.rodadas.length) {
+    var cod = 0; x.rodadas.forEach(function (r) { cod += (r.resumo && r.resumo.codigos) || 0; });
+    L.push('📦 *Rodada de códigos*: ' + x.rodadas.length + ' rodada(s) · *' + cod + '* código(s) gravado(s)');
+  } else L.push('📦 *Rodada de códigos*: nenhuma rodada no período');
+  var esp = [];
+  if (x.duvidas) esp.push('❓ ' + x.duvidas + ' dúvida(s) de código');
+  if (x.ocorrencias) esp.push('🔴 ' + x.ocorrencias + ' ocorrência(s)');
+  if (esp.length) { L.push('⠀'); L.push('*Esperando você:* ' + esp.join(' · ')); }
+  if (x.alertas.length) { L.push('⠀'); x.alertas.forEach(function (t) { L.push('⚠️ ' + t); }); }
+  L.push('⠀');
+  L.push('Detalhes na aba *Códigos* do painel' + (x.painel_url ? ': ' + x.painel_url : '.'));
+  return L.join('\n');
+}
+async function avisoPassadas(op) {
+  op = op || {};
+  var agora = op.agora || Date.now();
+  var base = op.base || await lerBase(false);
+  var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
+  var out = { ok: true, enviado: false };
+  if (cfg.passadas_whatsapp === 'desligado' && !op.forcar && !op.simular) { out.pulou = 'aviso desligado'; return out; }
+  var lidos = await Promise.all([fbLerOu(RAST_PASSADAS), fbLerOu(COD + '/rodadas', 'orderBy=' + encodeURIComponent('"$key"') + '&limitToLast=10'), fbLerOu(COD + '/ultima'),
+    fbLerOu(PASS_RESUMO), fbLerOu(SEM_CONS), fbLerOu(AM_VISTOS)]);
+  var peds = op.peds || montarPedidos(base);
+  var todas = passadasLista(lidos[0], 40), rodT = Object.keys(lidos[1] || {}).map(function (k) { return lidos[1][k]; }).filter(function (r) { return r && Number(r.ts) > 0; }).sort(function (a, b) { return b.ts - a.ts; });
+  var ult = (lidos[3] && Number(lidos[3].ts)) || 0;
+  var desde = ult ? Math.max(ult, agora - 80 * 3600000) : agora - 24 * 3600000;   /* 80 h cobre o fim de semana (sexta 10h → segunda 10h) */
+  var alertas = [];
+  if (!todas.length) alertas.push('O rastreio automático ainda não registrou nenhuma passada.');
+  else if (agora - todas[0].ts > 16 * 3600000) alertas.push('*O rastreio automático não roda há ' + horasDesde(todas[0].ts, agora) + '.* Nenhum status atualiza sozinho. Avise o Thiago.');
+  if (rodT.length && agora - rodT[0].ts > 30 * 3600000) alertas.push('*A rodada de códigos não roda há ' + horasDesde(rodT[0].ts, agora) + '.* Não entram códigos novos e Loggi e Fastpack param de atualizar. Avise o Thiago.');
+  var x = { desde: desde, passadas: todas.filter(function (p) { return p.ts > desde; }), rodadas: rodT.filter(function (r) { return r.ts > desde; }),
+    sem_consulta: semConsultaLista(peds, lidos[4], agora).length, duvidas: ((lidos[2] && lidos[2].duvidas) || []).length,
+    ocorrencias: ocorrenciasLista(peds, lidos[5], agora).filter(function (o) { return !o.visto; }).length, alertas: alertas, painel_url: cfg.painel_url || '' };
+  out.passadas = x.passadas.length; out.rodadas = x.rodadas.length; out.alertas = alertas.length;
+  var texto = textoPassadas(x);
+  if (op.simular) { out.texto = texto; return out; }
+  var tel = String(cfg.ana_whatsapp || '').replace(/\D/g, '');
+  if (!tel) { out.ok = false; out.erro = 'sem o WhatsApp da logística na configuração (ana_whatsapp)'; return out; }
+  var r = await whats(tel, texto);
+  if (!r.ok) { out.ok = false; out.erro = r.erro; return out; }
+  out.enviado = true;
+  if (!op.forcar) { try { await fbReq('PUT', PASS_RESUMO, { ts: agora }); } catch (e) { out.erro = 'enviou, mas não gravou a data (' + e.message + ')'; } }   /* o "enviar agora" do painel não mexe na contagem da rotina */
+  return out;
+}
 /* v12: resultado das passadas do rastreio automático (gravado pelo Rastreamento v20). Só números; a mais nova primeiro. */
 var RAST_PASSADAS = RAIZ + '/rastreio_passadas';
 var PASSADA_CAMPOS = ['ts', 'ini', 'consultados', 'atualizados', 'entregues', 'via_onlog', 'pv', 'sem_pv', 'sem_consulta', 'execs', 'incompleta', 'faltaram'];
-function passadasLista(no) {
+function passadasLista(no, max) {
   var l = (no && no.lista && typeof no.lista === 'object') ? no.lista : {};
   return Object.keys(l).map(function (k) {
     var x = l[k]; if (!x || typeof x !== 'object' || !(Number(x.ts) > 0)) return null;
     var o = { tipo: x.tipo === 'rapida' ? 'rapida' : 'completa' };
     PASSADA_CAMPOS.forEach(function (c) { if (x[c] !== undefined && x[c] !== null && isFinite(Number(x[c]))) o[c] = Number(x[c]); });
     return o;
-  }).filter(Boolean).sort(function (a, b) { return b.ts - a.ts; }).slice(0, 12);
+  }).filter(Boolean).sort(function (a, b) { return b.ts - a.ts; }).slice(0, Math.max(1, Number(max) || 12));
 }
 async function avisoSemConsulta(op) {
   var agora = op.agora || Date.now(), cfg = op.cfg || {}, lista = op.lista || [];
@@ -1367,7 +1467,7 @@ async function acaoAdminV3(acao, d, uid, agora) {
           onlog: p.onlog, pacote_de: p.pai, dias: R.duEntre(p.tConf, agora), revendedor: ehRevendedor(p.pedido) };
       }),
       ultima: lidos[0] || null, rodadas: lidos[1] || {},
-      config: { email_pacotes_modo: cfg.email_pacotes_modo, teste: cfg.email_atraso_teste || '' } });
+      config: { email_pacotes_modo: cfg.email_pacotes_modo, teste: cfg.email_atraso_teste || '', passadas_whatsapp: cfg.passadas_whatsapp === 'desligado' ? 'desligado' : 'ligado' } });
   }
   if (acao === 'codigos_casar') return resp(await rodadaCodigos({ agora: agora, aplicar: d.aplicar === true }));
   if (acao === 'codigos_onlog_processar') return resp(await onlogStatusProcessar(agora));   /* v9: se o coletor parou antes do fim */
@@ -2061,6 +2161,23 @@ async function acaoAdminV4(acao, d, uid, agora) {
     if (!pedX) return resp({ ok: false, erro: 'diga o pedido' }, 400);
     return resp(await cuponsExcluir({ agora: agora, uid: uid, pedido: pedX, desfazer: d.desfazer === true }));
   }
+  if (acao === 'ocorrencias') {   /* v13: o que o Rastreamento sinalizou (ACAO_MANUAL) */
+    var bO = await lerBase(false);
+    return resp({ ok: true, gerado_ts: agora, ocorrencias: ocorrenciasLista(montarPedidos(bO), await fbLerOu(AM_VISTOS), agora) });
+  }
+  if (acao === 'ocorrencias_visto') {   /* v13: ✔ Visto — vale enquanto o aviso da planilha for o mesmo */
+    var kO = String(d.k || '');
+    if (!/^[A-Za-z0-9_-]{3,40}$/.test(kO)) return resp({ ok: false, erro: 'pedido inválido' }, 400);
+    _cache.placar = null;
+    if (d.desfazer === true) { await fbReq('DELETE', AM_VISTOS + '/' + kO); return resp({ ok: true, k: kO, visto: false }); }
+    var pO = montarPedidos(await lerBase(false)).filter(function (p) { return p.k === kO; })[0];
+    if (!pO || !pO.am) return resp({ ok: false, erro: 'esse pedido não tem mais aviso (alguém já resolveu no painel de Rastreamento)' });
+    await fbReq('PUT', AM_VISTOS + '/' + kO, { am: pO.am.slice(0, 80), ts: agora, uid: uid });
+    return resp({ ok: true, k: kO, visto: true });
+  }
+  if (acao === 'passadas_resumo') {   /* v13: ver o texto ou mandar agora o resumo das passadas */
+    return resp(await avisoPassadas({ agora: agora, simular: d.enviar !== true, forcar: d.enviar === true }));
+  }
   if (acao === 'placar') {   /* os contadores do topo do painel (cache de 2 min na instância quente) */
     if (!d.forcar && _cache.placar && agora - _cache.placar.t < 120000) return resp(_cache.placar.v);
     var bL = await lerBase(true), pL = montarPedidos(bL);
@@ -2068,7 +2185,8 @@ async function acaoAdminV4(acao, d, uid, agora) {
     var atr = atrT.filter(function (a) { return !a.visto; }), par = parT.filter(function (a) { return !a.visto; });   /* v5: sem os vistos */
     var vL = { ok: true, gerado_ts: agora,
       envio: { total: atr.length, varejo: atr.filter(function (a) { return !a.atacado; }).length, atacado: atr.filter(function (a) { return a.atacado; }).length, maior: atr.length ? atr[0].dias : 0 },
-      parados: { total: par.length, maior: par.length ? par[0].dias : 0 }, vistos: { envio: atrT.length - atr.length, parados: parT.length - par.length } };
+      parados: { total: par.length, maior: par.length ? par[0].dias : 0 }, vistos: { envio: atrT.length - atr.length, parados: parT.length - par.length },
+      ocorrencias: { total: ocorrenciasLista(pL, await fbLerOu(AM_VISTOS), agora).filter(function (o) { return !o.visto; }).length } };   /* v13 */
     _cache.placar = { t: agora, v: vL };
     return resp(vL);
   }
@@ -2123,7 +2241,7 @@ exports.handler = async function (event) {
       var rV3 = await acaoAdminV3(acao, d, uid, agora);
       if (rV3) return rV3;
     }
-    if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'cupons_enviar' || acao === 'cupons_excluir' || acao === 'placar') {   /* v4 · v5 · v8 */
+    if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'cupons_enviar' || acao === 'cupons_excluir' || acao === 'placar' || acao === 'ocorrencias' || acao === 'ocorrencias_visto' || acao === 'passadas_resumo') {   /* v4 · v5 · v8 */
       var rV4 = await acaoAdminV4(acao, d, uid, agora);
       if (rV4) return rV4;
     }
@@ -2190,7 +2308,7 @@ exports.handler = async function (event) {
 };
 
 /* usado pela logistica-atrasos.js (agendada) e pelos testes */
-exports.lib = { passadasLista: passadasLista, semConsultaLista: semConsultaLista, textoSemConsulta: textoSemConsulta, avisoSemConsulta: avisoSemConsulta, lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros: calcularNumeros, calcularAtrasos: calcularAtrasos,
+exports.lib = { ocorrenciasLista: ocorrenciasLista, acaoManualInfo: acaoManualInfo, avisoPassadas: avisoPassadas, textoPassadas: textoPassadas, passadasLista: passadasLista, semConsultaLista: semConsultaLista, textoSemConsulta: textoSemConsulta, avisoSemConsulta: avisoSemConsulta, lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros: calcularNumeros, calcularAtrasos: calcularAtrasos,
   decidirEnvio: decidirEnvio, ehRevendedor: ehRevendedor, montarEmail: montarEmail, enviarBrevo: enviarBrevo, htmlEmail: htmlEmail, conferirAdmin: conferirAdmin,
   EMAIL_PADRAO: EMAIL_PADRAO, EMAIL_CFG_PADRAO: EMAIL_CFG_PADRAO, transpNome: transpNome, fornNome: fornNome, RAIZ: RAIZ,
   /* v3 */

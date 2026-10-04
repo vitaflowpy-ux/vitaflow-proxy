@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   logistica-atrasos.js — ROTINA DIÁRIA DA LOGÍSTICA: e-mail de aviso de postagem, pacotes, cupom de atraso e parados (VitaFlow)  ·  v4  ·  02/10/2026
+   logistica-atrasos.js — ROTINA DIÁRIA DA LOGÍSTICA: e-mail de aviso de postagem, pacotes, cupom de atraso e parados (VitaFlow)  ·  v5  ·  04/10/2026
+   v5 (OK do Thiago, 04/10: "ok, pode fazer tudo"): (5) manda no WhatsApp da logística o RESUMO DAS PASSADAS (rastreio automático e
+       rodada de códigos desde o último resumo, o que está esperando a logística e alerta se uma rotina parou) — logistica-painel v13
+       → avisoPassadas; chave: passadas_whatsapp. Roda mesmo com o e-mail de postagem desligado; falha vira aviso no Telegram.
    v4 (ordem do Thiago, 01-02/10): O E-MAIL DE ATRASO VIROU E-MAIL DE AVISO DE POSTAGEM (logistica-painel v6). Todo dia útil, o pedido
        que a logística marcou como POSTADO e a transportadora ainda não leu recebe UM e-mail com o mesmo aviso da página de
        rastreio (texto 1 sem código, texto 2 com código). Sem lembrete. Chave: email_postagem_modo (desligado é o padrão).
@@ -67,16 +70,19 @@ async function rodar(agora) {
   var base = await P.lerBase(true);
   var peds = P.montarPedidos(base);
   /* v3: cupom de atraso na entrega e resumo dos parados (cada um com a sua chave; falha vira aviso e a rotina segue) */
-  var cupons = null, parados = null;
+  var cupons = null, parados = null, passadas = null;
   try { cupons = await P.cuponsAtraso({ agora: agora, base: base, peds: peds }); } catch (eC) { cupons = { ok: false, erro: String(eC && eC.message || eC) }; }
   try { parados = await P.avisoParados({ agora: agora, base: base, peds: peds }); } catch (eS) { parados = { ok: false, erro: String(eS && eS.message || eS) }; }
   if (cupons && cupons.lista) delete cupons.lista;   /* o log não precisa da lista */
   if (cupons && (cupons.erro || cupons.falhas)) await telegram('⚠️ CUPOM DE ATRASO: ' + (cupons.erro || (cupons.falhas + ' falha(s)\n' + (cupons.erros || []).slice(0, 3).join('\n'))));
   if (parados && parados.erro) await telegram('⚠️ PEDIDOS PARADOS: o resumo no WhatsApp falhou — ' + parados.erro);
+  /* v5: resumo das passadas no WhatsApp da logística */
+  try { passadas = await P.avisoPassadas({ agora: agora, base: base, peds: peds }); } catch (eR) { passadas = { ok: false, erro: String(eR && eR.message || eR) }; }
+  if (passadas && passadas.erro) await telegram('⚠️ RESUMO DAS PASSADAS: o aviso no WhatsApp falhou — ' + passadas.erro);
   /* v4: e-mail de AVISO DE POSTAGEM (substitui o e-mail de atraso) */
   var cfg = Object.assign({}, P.EMAIL_CFG_PADRAO, base.cfg || {});
   var modo = cfg.email_postagem_modo || 'desligado';
-  if (modo === 'desligado') return { ok: true, modo: modo, pacotes: pacotes, cupons: cupons, parados: parados };
+  if (modo === 'desligado') return { ok: true, modo: modo, pacotes: pacotes, cupons: cupons, parados: parados, passadas: passadas };
   var lista = await P.calcularPostagens(base, peds, agora);
   var fila = lista.filter(function (x) { return !!P.decidirPostagem(x); });
   var log = { ts: agora, modo: modo, postados: lista.length, elegiveis: fila.length, enviados: 0, falhas: 0, erros: [] };
@@ -111,7 +117,7 @@ async function rodar(agora) {
   if (log.falhas) {   /* Telegram só quando falha (o resumo do dia fica no log, visível no painel) */
     await telegram('⚠️ E-MAIL DE AVISO DE POSTAGEM (' + modo + '): ' + log.falhas + ' falha(s) de ' + log.elegiveis + '\n' + log.erros.slice(0, 3).join('\n'));
   }
-  return { ok: true, log: log, pacotes: pacotes, cupons: cupons, parados: parados };
+  return { ok: true, log: log, pacotes: pacotes, cupons: cupons, parados: parados, passadas: passadas };
 }
 
 exports.handler = async function () {
