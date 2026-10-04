@@ -1,6 +1,12 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v10  ·  04/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v11  ·  04/10/2026
+   v11 (pedido do Thiago, 04/10: "Esse aviso vai para o painel da logística??" / "Sim, pode fazer e publicar"): PEDIDOS QUE O RASTREIO
+       NÃO CONSEGUE CONSULTAR POR FALTA DE DADO (hoje: J&T sem CPF na planilha). O Rastreamento v19 grava a lista no fim de cada passada
+       completa em vitaflow_sync/logistica/rastreio_sem_consulta; codigos_pendentes devolve `rastreio.sem_consulta` (a aba Códigos mostra).
+       Sai da lista na hora se o CPF já foi preenchido ou o pedido foi encerrado. Aviso no WhatsApp da logística com o que é NOVO, na
+       leitura da rodada de códigos, pela mesma chave onlog_whatsapp. Controle em …/rastreio_sem_consulta_avisados. Sem nome de cliente.
+       Resto = v10.
    v10 (OK do Thiago, 04/10: "pode fazer tudo"): AVISO NO WHATSAPP DA LOGÍSTICA quando surge AVISO NOVO DA ONLOG (objeto cancelado,
        devolvido/voltando, com problema ou parado na Onlog). Sai no fim da leitura da situação (rodada de códigos), só com o que é
        NOVO desde o último aviso e não está marcado como visto. Mesmo número e mesma Z-API do resumo dos parados (ana_whatsapp).
@@ -1035,6 +1041,53 @@ function limparEntrada(fonte, itens) {
 }
 /* v10: WhatsApp da logística quando surge aviso NOVO da Onlog. Novo = não avisado ainda com esse tipo e essa situação, e não visto. */
 var ONLOG_AVISADOS = RAIZ + '/onlog_avisados';   /* <pedido> = { st, tipo, ts } */
+/* v11: pedidos que o Rastreamento não consegue consultar por falta de dado */
+var SEM_CONS = RAIZ + '/rastreio_sem_consulta';                    /* { ts, pedidos:{ <pedido>:{pedido,tipo,motivo,transp} } } — gravado pelo Rastreamento v19 */
+var SEM_CONS_AVISADOS = RAIZ + '/rastreio_sem_consulta_avisados';  /* <pedido> = { motivo, ts } */
+var SEM_CONS_OQUE = { cpf: 'Preencha o CPF do cliente na planilha (coluna CPF). O rastreio volta sozinho na próxima passada.' };
+/* A lista para o painel: só o que CONTINUA valendo agora (pedido em aberto e, no caso do CPF, ainda sem CPF na planilha). */
+function semConsultaLista(peds, no, agora) {
+  var mapa = (no && no.pedidos && typeof no.pedidos === 'object') ? no.pedidos : {}, porK = {};
+  (peds || []).forEach(function (p) { porK[p.k] = p; });
+  return Object.keys(mapa).map(function (k) {
+    var x = mapa[k]; if (!x || typeof x !== 'object') return null;
+    var p = porK[k] || porK[R.histKey(String(x.pedido || ''))];
+    if (!p || p.final || p.naoPagou || p.st === 'ENTREGUE') return null;   /* entregue, cancelado ou fora da planilha: não é mais problema */
+    var tipo = txt(x.tipo, 12);
+    if (tipo === 'cpf' && String(p.cpf || '').length === 11) return null;   /* já preencheram o CPF */
+    return { k: p.k, pedido: p.pedido, tipo: tipo, motivo: txt(x.motivo, 80), oque: SEM_CONS_OQUE[tipo] || '', transportadora: txt(x.transp, 30) || p.transp || '',
+      status: p.status, data: String(p.data || '').slice(0, 10), fornecedor: p.forn, codigo: p.cod || '', revendedor: ehRevendedor(p.pedido),
+      dias: p.tConf ? R.duEntre(p.tConf, agora) : 0 };
+  }).filter(Boolean).sort(function (a, b) { return b.dias - a.dias; });
+}
+function textoSemConsulta(novos, emAberto, painelUrl) {
+  var L = ['🔎 *Logística — pedidos que o rastreio não consegue consultar* (' + novos.length + ')', '⠀'];
+  novos.slice(0, 20).forEach(function (a) { L.push('• ' + a.pedido + ' — ' + a.motivo + (a.codigo ? ' — ' + a.codigo : '')); });
+  if (novos.length > 20) L.push('… e mais ' + (novos.length - 20));
+  L.push('⠀');
+  L.push('Enquanto o dado não for preenchido na planilha, o status desses pedidos não atualiza. Ao todo há ' + emAberto + ' nessa situação. Veja na aba *Códigos* do painel' + (painelUrl ? ': ' + painelUrl : '.'));
+  return L.join('\n');
+}
+async function avisoSemConsulta(op) {
+  var agora = op.agora || Date.now(), cfg = op.cfg || {}, lista = op.lista || [];
+  var av = (await fbLerOu(SEM_CONS_AVISADOS)) || {};
+  var igual = function (a) { var x = av[a.k]; return !!(x && x.motivo === a.motivo); };
+  var novos = lista.filter(function (a) { return !igual(a); });
+  var out = { ok: true, novos: novos.length, enviado: false };
+  if (op.simular) { out.texto = novos.length ? textoSemConsulta(novos, lista.length, cfg.painel_url || '') : ''; return out; }
+  if (cfg.onlog_whatsapp === 'desligado') out.pulou = 'aviso desligado';
+  else if (novos.length) {
+    var tel = String(cfg.ana_whatsapp || '').replace(/\D/g, '');
+    if (!tel) { out.ok = false; out.erro = 'sem o WhatsApp da logística na configuração (ana_whatsapp)'; return out; }
+    var r = await whats(tel, textoSemConsulta(novos, lista.length, cfg.painel_url || ''));
+    if (!r.ok) { out.ok = false; out.erro = r.erro; return out; }   /* não marca como avisado: tenta de novo na próxima leitura */
+    out.enviado = true;
+  }
+  var mapa = {};
+  lista.forEach(function (a) { mapa[a.k] = { motivo: a.motivo, ts: igual(a) ? av[a.k].ts : agora }; });
+  try { await fbReq('PUT', SEM_CONS_AVISADOS, mapa); } catch (e) { out.erro = 'avisou, mas não gravou a lista (' + e.message + ')'; }
+  return out;
+}
 var ONLOG_TIPO_TXT = { cancelado: '🚫 Cancelado na Onlog', devolucao: '↩️ Devolvido / voltando', problema: '⚠️ Com problema', parado: '⏳ Parado na Onlog (sem ir para a transportadora)' };
 function textoAvisosOnlog(novos, emAberto, painelUrl) {
   var L = ['🚨 *Logística — avisos novos da Onlog* (' + novos.length + ')', '⠀'];
@@ -1076,7 +1129,7 @@ async function avisoOnlog(op) {
 }
 /* v9: processa a leitura da situação dos objetos (chamado quando o coletor termina — fim:true — ou pelo painel) */
 async function onlogStatusProcessar(agora) {
-  var lidos = await Promise.all([lerBase(false), fbLerOu(COD + '/entrada_status'), fbLerOu(ONLOG_ST), fbLerOu(ONLOG_VISTOS)]);
+  var lidos = await Promise.all([lerBase(false), fbLerOu(COD + '/entrada_status'), fbLerOu(ONLOG_ST), fbLerOu(ONLOG_VISTOS), fbLerOu(SEM_CONS)]);
   var base = lidos[0], ent = lidos[1], velho = lidos[2] || {}, vistosO = lidos[3] || {};
   if (!ent || !Array.isArray(ent.itens) || agora - Number(ent.ts) > ENTRADA_VALE_MS) return { ok: false, erro: 'sem_entrada' };
   var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {}), peds = montarPedidos(base);
@@ -1087,6 +1140,9 @@ async function onlogStatusProcessar(agora) {
   var resumo = { ts: agora, acompanhados: r.alvos, lidos: r.lidos, nao_achados: r.nao_achados, sem_leitura: r.sem_leitura, alertas: al.length, por_tipo: cont };
   /* v10: aviso no WhatsApp da logística com o que é NOVO (falha aqui não derruba a leitura) */
   try { resumo.whatsapp = await avisoOnlog({ agora: agora, cfg: cfg, alertas: al }); } catch (eW) { resumo.whatsapp = { ok: false, erro: String(eW && eW.message || eW) }; }
+  /* v11: pedidos que o rastreio não consegue consultar (lista do Rastreamento v19) — mesma chave do aviso, falha aqui também não derruba */
+  try { resumo.whatsapp_sem_consulta = await avisoSemConsulta({ agora: agora, cfg: cfg, lista: semConsultaLista(peds, lidos[4], agora) }); }
+  catch (eS) { resumo.whatsapp_sem_consulta = { ok: false, erro: String(eS && eS.message || eS) }; }
   await fbReq('PUT', COD + '/status_ultima', resumo);
   await fbReq('DELETE', COD + '/entrada_status');
   return Object.assign({ ok: true }, resumo);
@@ -1281,9 +1337,11 @@ async function acaoAdminV3(acao, d, uid, agora) {
     var pedsP = montarPedidos(base);
     var pend = pendentesCodigo(pedsP, agora, cfg.codigos_janela_dias);
     var lidos = await Promise.all([fbLerOu(COD + '/ultima'), fbLerOu(COD + '/rodadas', 'orderBy=' + encodeURIComponent('"$key"') + '&limitToLast=10'),
-      fbLerOu(ONLOG_ST), fbLerOu(ONLOG_VISTOS), fbLerOu(COD + '/status_ultima')]);
-    var mapaO = lidos[2] || {};
+      fbLerOu(ONLOG_ST), fbLerOu(ONLOG_VISTOS), fbLerOu(COD + '/status_ultima'), fbLerOu(SEM_CONS)]);
+    var mapaO = lidos[2] || {}, noSC = lidos[5] || null;
     return resp({ ok: true, gerado_ts: agora,
+      /* v11: pedidos que o rastreio não consegue consultar por falta de dado */
+      rastreio: { sem_consulta: semConsultaLista(pedsP, noSC, agora), lido_ts: (noSC && Number(noSC.ts)) || 0 },
       /* v9: situação dos objetos na Onlog */
       onlog: { alertas: onlogAlertas(pedsP, mapaO, lidos[3] || {}, agora, cfg.onlog_parado_dias), acompanhados: Object.keys(mapaO).length,
         ultima: lidos[4] || null, parado_dias: Math.max(1, Number(cfg.onlog_parado_dias) || 2),
@@ -2116,7 +2174,7 @@ exports.handler = async function (event) {
 };
 
 /* usado pela logistica-atrasos.js (agendada) e pelos testes */
-exports.lib = { lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros: calcularNumeros, calcularAtrasos: calcularAtrasos,
+exports.lib = { semConsultaLista: semConsultaLista, textoSemConsulta: textoSemConsulta, avisoSemConsulta: avisoSemConsulta, lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros: calcularNumeros, calcularAtrasos: calcularAtrasos,
   decidirEnvio: decidirEnvio, ehRevendedor: ehRevendedor, montarEmail: montarEmail, enviarBrevo: enviarBrevo, htmlEmail: htmlEmail, conferirAdmin: conferirAdmin,
   EMAIL_PADRAO: EMAIL_PADRAO, EMAIL_CFG_PADRAO: EMAIL_CFG_PADRAO, transpNome: transpNome, fornNome: fornNome, RAIZ: RAIZ,
   /* v3 */
