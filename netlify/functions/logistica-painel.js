@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v9  ·  04/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v10  ·  04/10/2026
+   v10 (OK do Thiago, 04/10: "pode fazer tudo"): AVISO NO WHATSAPP DA LOGÍSTICA quando surge AVISO NOVO DA ONLOG (objeto cancelado,
+       devolvido/voltando, com problema ou parado na Onlog). Sai no fim da leitura da situação (rodada de códigos), só com o que é
+       NOVO desde o último aviso e não está marcado como visto. Mesmo número e mesma Z-API do resumo dos parados (ana_whatsapp).
+       Chave: onlog_whatsapp (ligado é o padrão; desligado = só o painel). Sem nome de cliente na mensagem. Controle em
+       vitaflow_sync/logistica/onlog_avisados/<pedido>. codigos_pendentes.onlog devolve `whatsapp` (ligado/desligado). Resto = v9.
    v9 (ordem do Thiago, 04/10: "resolva DEFINITIVAMENTE" — ele escolheu "ler a Onlog e avisar"): SITUAÇÃO DOS OBJETOS NA ONLOG.
        · a rodada de códigos passa a ler também a SITUAÇÃO de cada objeto em aberto no site da Onlog (consulta por código, vários
          de uma vez; abre o detalhe só do que mudou). Fica em vitaflow_sync/logistica/onlog_status/<pedido> — o Rastreamento v17 lê
@@ -173,7 +178,7 @@ var EMAIL_CFG_PADRAO = { email_atraso_modo: 'desligado', email_atraso_max: 3, em
   email_pacotes_modo: 'ligado', codigos_janela_dias: 45, codigos_duvida_dias: 15,   /* v3 */
   /* v4 */ cupom_atraso_modo: 'desligado', cupom_atraso_pct: 5, cupom_atraso_dias: 45, cupom_atraso_prefixo: 'DESCULPA', cupom_atraso_janela_dias: 60,
   cupom_atraso_desde: 0, cupom_atraso_max_rodada: 12, parados_dias: 3, parados_janela_dias: 60, parados_whatsapp: 'ligado',
-  /* v9 */ onlog_parado_dias: 2, onlog_janela_dias: 60 };
+  /* v9 */ onlog_parado_dias: 2, onlog_janela_dias: 60, /* v10 */ onlog_whatsapp: 'ligado' };
 
 function preencher(t, v) { return String(t || '').replace(/\{([A-Z_]+)\}/g, function (a, k) { return (v[k] != null) ? String(v[k]) : a; }); }
 function escH(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -1028,17 +1033,60 @@ function limparEntrada(fonte, itens) {
     }) };
   });
 }
+/* v10: WhatsApp da logística quando surge aviso NOVO da Onlog. Novo = não avisado ainda com esse tipo e essa situação, e não visto. */
+var ONLOG_AVISADOS = RAIZ + '/onlog_avisados';   /* <pedido> = { st, tipo, ts } */
+var ONLOG_TIPO_TXT = { cancelado: '🚫 Cancelado na Onlog', devolucao: '↩️ Devolvido / voltando', problema: '⚠️ Com problema', parado: '⏳ Parado na Onlog (sem ir para a transportadora)' };
+function textoAvisosOnlog(novos, emAberto, painelUrl) {
+  var L = ['🚨 *Logística — avisos novos da Onlog* (' + novos.length + ')', '⠀'];
+  ['cancelado', 'devolucao', 'problema', 'parado'].forEach(function (tp) {
+    var l = novos.filter(function (a) { return a.tipo === tp; });
+    if (!l.length) return;
+    L.push('*' + ONLOG_TIPO_TXT[tp] + '* (' + l.length + '):');
+    l.slice(0, 15).forEach(function (a) {
+      L.push('• ' + a.pedido + ' — ' + a.situacao + (a.detalhe ? ' · ' + a.detalhe : '') + (a.historico && a.historico.indexOf(a.situacao) < 0 ? ' · antes: ' + a.historico : '') +
+        (a.desde ? ' — desde ' + String(a.desde).slice(0, 5) : '') + (a.codigo ? ' — ' + a.codigo : ''));
+    });
+    if (l.length > 15) L.push('… e mais ' + (l.length - 15));
+    L.push('⠀');
+  });
+  L.push('Ao todo há ' + emAberto + ' aviso(s) em aberto. Veja e marque ✔ Visto na aba *Códigos* do painel' + (painelUrl ? ': ' + painelUrl : '.'));
+  return L.join('\n');
+}
+async function avisoOnlog(op) {
+  var agora = op.agora || Date.now(), cfg = op.cfg || {}, todos = op.alertas || [];
+  var abertos = todos.filter(function (a) { return !a.visto; });
+  var av = (await fbLerOu(ONLOG_AVISADOS)) || {};
+  var igual = function (a) { var x = av[a.k]; return !!(x && x.tipo === a.tipo && x.st === a.situacao); };
+  var novos = abertos.filter(function (a) { return !igual(a); });
+  var out = { ok: true, novos: novos.length, enviado: false };
+  if (op.simular) { out.texto = novos.length ? textoAvisosOnlog(novos, abertos.length, cfg.painel_url || '') : ''; return out; }
+  if (cfg.onlog_whatsapp === 'desligado') out.pulou = 'aviso desligado';
+  else if (novos.length) {
+    var tel = String(cfg.ana_whatsapp || '').replace(/\D/g, '');
+    if (!tel) { out.ok = false; out.erro = 'sem o WhatsApp da logística na configuração (ana_whatsapp)'; return out; }
+    var r = await whats(tel, textoAvisosOnlog(novos, abertos.length, cfg.painel_url || ''));
+    if (!r.ok) { out.ok = false; out.erro = r.erro; return out; }   /* não marca como avisado: tenta de novo na próxima leitura */
+    out.enviado = true;
+  }
+  /* guarda o que já foi avisado (com aviso desligado também, para não despejar tudo de uma vez ao religar) */
+  var mapa = {};
+  todos.forEach(function (a) { mapa[a.k] = { st: a.situacao, tipo: a.tipo, ts: igual(a) ? av[a.k].ts : agora }; });
+  try { await fbReq('PUT', ONLOG_AVISADOS, mapa); } catch (e) { out.erro = 'avisou, mas não gravou a lista (' + e.message + ')'; }
+  return out;
+}
 /* v9: processa a leitura da situação dos objetos (chamado quando o coletor termina — fim:true — ou pelo painel) */
 async function onlogStatusProcessar(agora) {
-  var lidos = await Promise.all([lerBase(false), fbLerOu(COD + '/entrada_status'), fbLerOu(ONLOG_ST)]);
-  var base = lidos[0], ent = lidos[1], velho = lidos[2] || {};
+  var lidos = await Promise.all([lerBase(false), fbLerOu(COD + '/entrada_status'), fbLerOu(ONLOG_ST), fbLerOu(ONLOG_VISTOS)]);
+  var base = lidos[0], ent = lidos[1], velho = lidos[2] || {}, vistosO = lidos[3] || {};
   if (!ent || !Array.isArray(ent.itens) || agora - Number(ent.ts) > ENTRADA_VALE_MS) return { ok: false, erro: 'sem_entrada' };
   var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {}), peds = montarPedidos(base);
   var r = onlogMontar(peds, ent.itens, velho, agora, cfg.onlog_janela_dias);
   await fbReq('PUT', ONLOG_ST, r.mapa);
-  var al = onlogAlertas(peds, r.mapa, {}, agora, cfg.onlog_parado_dias), cont = {};
+  var al = onlogAlertas(peds, r.mapa, vistosO, agora, cfg.onlog_parado_dias), cont = {};
   al.forEach(function (a) { cont[a.tipo] = (cont[a.tipo] || 0) + 1; });
   var resumo = { ts: agora, acompanhados: r.alvos, lidos: r.lidos, nao_achados: r.nao_achados, sem_leitura: r.sem_leitura, alertas: al.length, por_tipo: cont };
+  /* v10: aviso no WhatsApp da logística com o que é NOVO (falha aqui não derruba a leitura) */
+  try { resumo.whatsapp = await avisoOnlog({ agora: agora, cfg: cfg, alertas: al }); } catch (eW) { resumo.whatsapp = { ok: false, erro: String(eW && eW.message || eW) }; }
   await fbReq('PUT', COD + '/status_ultima', resumo);
   await fbReq('DELETE', COD + '/entrada_status');
   return Object.assign({ ok: true }, resumo);
@@ -1238,7 +1286,8 @@ async function acaoAdminV3(acao, d, uid, agora) {
     return resp({ ok: true, gerado_ts: agora,
       /* v9: situação dos objetos na Onlog */
       onlog: { alertas: onlogAlertas(pedsP, mapaO, lidos[3] || {}, agora, cfg.onlog_parado_dias), acompanhados: Object.keys(mapaO).length,
-        ultima: lidos[4] || null, parado_dias: Math.max(1, Number(cfg.onlog_parado_dias) || 2) },
+        ultima: lidos[4] || null, parado_dias: Math.max(1, Number(cfg.onlog_parado_dias) || 2),
+        whatsapp: cfg.onlog_whatsapp === 'desligado' ? 'desligado' : 'ligado' /* v10 */ },
       pendentes: pend.sort(function (a, b) { return a.tConf - b.tConf; }).map(function (p) {
         return { pedido: p.pedido, nome: p.nome, cpf: p.cpf, data: String(p.data || '').slice(0, 10), status: p.status, fornecedor: p.forn, comprado: p.fams.length > 0,
           onlog: p.onlog, pacote_de: p.pai, dias: R.duEntre(p.tConf, agora), revendedor: ehRevendedor(p.pedido) };
@@ -2081,4 +2130,4 @@ exports.lib = { lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros:
   codigoCupomNovo: codigoCupomNovo, fsLerCupom: fsLerCupom, cuponsEnviar: cuponsEnviar, vistoVale: vistoVale /* v5 */, textoAtrasosPostagem: textoAtrasosPostagem /* v7 */,
   calcularPostagens: calcularPostagens, decidirPostagem: decidirPostagem, montarEmailPostagem: montarEmailPostagem, frasesAviso: frasesAviso /* v6 */,
   /* v9 */ onlogSituacao: onlogSituacao, objetosOnlog: objetosOnlog, onlogRegistro: onlogRegistro, onlogMontar: onlogMontar, onlogAlertas: onlogAlertas,
-  onlogStatusProcessar: onlogStatusProcessar, coletorOnlog: coletorOnlog };
+  onlogStatusProcessar: onlogStatusProcessar, coletorOnlog: coletorOnlog, /* v10 */ avisoOnlog: avisoOnlog, textoAvisosOnlog: textoAvisosOnlog };
