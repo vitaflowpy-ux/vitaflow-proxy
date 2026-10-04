@@ -1,5 +1,8 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v88 (04/10/2026 — Thiago: "é bom deixar claro que o seguro continua valendo mesmo com frete grátis, exceto se o cliente optar pela
+//   modalidade PAC ou SEDEX"). Só texto, nenhuma conta muda: aviso do seguro no resumo com frete grátis (conforme a modalidade), no
+//   bloco das opções A/B, na opção 8 / "promo" (MSG_FRETE_AUTO) e no contextoPromo da IA. Resto = v87.
 // v87 (04/10/2026 — pedido do Thiago: "frete grátis para pedidos acima de 1000 reais… de forma automática onde o cliente não necessite
 //   colocar o cupom FRETEZERO… caso ele coloque algum cupom ele deve ter a opção de escolher o que for melhor para ele"). Resto = v86.
 //   FRETE GRÁTIS AUTOMÁTICO (FRETE_GRATIS_AUTO): varejo, pedido a partir de R$ 1.000 em produtos (preço cheio), qualquer modalidade, sem
@@ -1080,7 +1083,7 @@ async function contextoPromo(){
     }
   } catch (e) {}
   if (freteGratisAutoAtivo()) {
-    linhas.push('FRETE GRÁTIS AUTOMÁTICO (varejo, sem data de fim): em pedidos A PARTIR DE R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' em produtos, o FRETE é GRÁTIS pra todo o Brasil, em qualquer opção de envio (PAC, SEDEX ou Transportadora). É AUTOMÁTICO no fechamento (aqui na Athena e no site) — o cliente NÃO precisa digitar cupom nenhum; NÃO peça nem mencione o cupom FRETEZERO. NÃO ACUMULA com cupom, promoção nem com o benefício de ' + DESCONTO_ATHENA_PCT + '% da Athena: quando o pedido tem outro benefício, o resumo do pedido mostra as DUAS opções (frete grátis OU o desconto) com o valor de cada uma e o CLIENTE escolhe a que preferir. NUNCA diga que o cliente ganha o frete grátis E o desconto juntos. Única exceção: VALE-COMPRAS (é como dinheiro) funciona junto com o frete grátis. Abaixo de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' o frete é cobrado normalmente. No ATACADO a regra é outra (lá o frete já é grátis). SEMPRE que o cliente perguntar de frete grátis, promoção ou desconto, explique isso; se o pedido estiver perto de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ', avise quanto falta pro frete sair de graça.');
+    linhas.push('FRETE GRÁTIS AUTOMÁTICO (varejo, sem data de fim): em pedidos A PARTIR DE R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' em produtos, o FRETE é GRÁTIS pra todo o Brasil, em qualquer opção de envio (PAC, SEDEX ou Transportadora). É AUTOMÁTICO no fechamento (aqui na Athena e no site) — o cliente NÃO precisa digitar cupom nenhum; NÃO peça nem mencione o cupom FRETEZERO. NÃO ACUMULA com cupom, promoção nem com o benefício de ' + DESCONTO_ATHENA_PCT + '% da Athena: quando o pedido tem outro benefício, o resumo do pedido mostra as DUAS opções (frete grátis OU o desconto) com o valor de cada uma e o CLIENTE escolhe a que preferir. NUNCA diga que o cliente ganha o frete grátis E o desconto juntos. Única exceção: VALE-COMPRAS (é como dinheiro) funciona junto com o frete grátis. Abaixo de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' o frete é cobrado normalmente. No ATACADO a regra é outra (lá o frete já é grátis). SEMPRE que o cliente perguntar de frete grátis, promoção ou desconto, explique isso; se o pedido estiver perto de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ', avise quanto falta pro frete sair de graça. SEGURO: o seguro grátis contra apreensão e extravio CONTINUA VALENDO com o frete grátis, desde que o envio seja por TRANSPORTADORA; PAC e SEDEX (Correios) NÃO têm seguro, com ou sem frete grátis — o frete grátis não muda nada nisso. Como a Transportadora também sai grátis nesses pedidos, recomende a Transportadora.');
   }
   if (promoIndepAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — INDEPENDÊNCIA 9.9 (07 a 09/09): 15% OFF em TODO o site (varejo) com o cupom INDEPENDENCIA99, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo, qualquer quantidade. NÃO vale no atacado. NÃO acumula com outros cupons ou promoções nem com o benefício de 3% da Athena — vale sempre o MAIOR (os 15% do cupom vencem os 3%). SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE a Independência 9.9 e diga pra usar o cupom INDEPENDENCIA99 no fechamento. ALGUNS produtos já estão com PREÇO ESPECIAL de 9.9 e por isso NÃO aceitam o cupom (o desconto já está no preço) — se o cliente disser que o cupom não pegou num produto, explique que esse item já está com preço promocional especial. NÃO fale de frete grátis/FRETEZERO nem "Compre 2 Leve 3" (não estão ativos).');
@@ -1150,6 +1153,8 @@ const MSG_FRETE_AUTO = `🚚 *FRETE GRÁTIS PRA TODO O BRASIL!* 🎉
 Em pedidos *a partir de R$ ${Number(FRETE_GRATIS_AUTO.min).toLocaleString('pt-BR')}* em produtos, o *frete é por nossa conta* — em qualquer opção de envio (PAC, SEDEX ou Transportadora). 🇧🇷
 
 ✅ É *automático*: não precisa de cupom, nem aqui comigo nem no site.
+
+🛡️ O *seguro grátis* contra apreensão e extravio *continua valendo* com o frete grátis — desde que o envio seja por *Transportadora*. PAC e SEDEX (Correios) não têm seguro.
 
 _Não acumula com cupom, promoção nem com os 3% da Athena: se o seu pedido tiver outro benefício, eu te mostro as duas opções com o valor de cada uma e *você escolhe*. O vale-compras é a exceção — funciona junto com o frete grátis. 😉_`;
 // Promoção antiga (27 a 30/09): FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
@@ -3797,7 +3802,8 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
         `*A)* 🚚 Frete grátis — economiza ${_m(freteCheio)} → total *${_m(_totA)}*${fgModo === 'frete' ? ' ✅' : ''}\n` +
         `*B)* 🏷️ ${_rot.join(' + ')} — economiza ${_m(_ecoOutros)} → total *${_m(_totB)}*${fgModo === 'desconto' ? ' ✅' : ''}\n` +
         (_escolheu ? `_Apliquei a opção que você escolheu (✅).` : `_Já deixei marcada a que mais economiza pra você (✅).`) +
-        ` Pra trocar, digite *${fgModo === 'frete' ? 'B' : 'A'}*._`;
+        ` Pra trocar, digite *${fgModo === 'frete' ? 'B' : 'A'}*._` +
+        `\n_🛡️ O seguro grátis vale nas duas opções, desde que o envio seja por Transportadora (PAC e SEDEX não têm seguro)._`;
     }
     if (fgModo === 'frete') {
       // ficou com o frete grátis: produtos a PREÇO CHEIO, sem 3%/cupom/faixa/promo, e o cupom digitado NÃO é consumido.
@@ -3806,7 +3812,10 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
       descNormais = 0; descPromo = 0; descCupomAcc = 0; descAthenaAcc = 0; labelNormais = ''; baseSemana = 0;
       cupomDocId = null; cupomCodigo = null;
       freteValorFinal = 0;
-      linhaFreteGratis = `🎉 *Frete grátis automático* — pedido a partir de R$ ${reais(FRETE_GRATIS_AUTO.min)}, sem cupom.\n`;
+      linhaFreteGratis = `🎉 *Frete grátis automático* — pedido a partir de R$ ${reais(FRETE_GRATIS_AUTO.min)}, sem cupom.\n` +
+        (/transp/i.test(String(frete.label || ''))
+          ? `🛡️ _O seguro grátis contra apreensão e extravio continua valendo com o frete grátis._\n`
+          : `⚠️ _O frete grátis não muda o seguro: PAC e SEDEX (Correios) não têm o seguro grátis — ele vale só na Transportadora, que também sai com frete grátis._\n`);
     }
   }
 
