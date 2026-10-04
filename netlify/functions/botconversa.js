@@ -1,5 +1,11 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v86 (04/10/2026 — conversa real de 03/10, 22:23: na pergunta "Quantas unidades deseja?" o cliente digitou "Hormônio" e recebeu a
+//   lista de "Kit de Aplicação para Hormônios" — a palavra foi buscada como NOME DE PRODUTO). Resto = v85.
+//   NOME DE CATEGORIA digitado (emagrecedores, peptídeos, hormônios, gh, estética, sarms, farmácia) agora abre a categoria também
+//   quando o cliente está navegando nos produtos (lista, submenus, busca, quantidade, "quer ver…?"), não só no menu. E aceita a
+//   palavra dentro de um pedido curto: "quero hormônio", "tem hormônios?", "quero ver os hormônios" (antes ia pra IA).
+//   Checkout (carrinho, frete, confirmação, dados) e atacado NÃO mudam. O carrinho é preservado.
 // v85 (02/10/2026 — 2ª leitura das conversas, as que tinham ficado sem ler + as respostas do Thiago). Resto = v84.
 //   1) BLOCO DE DADOS (Nome/CPF/endereço) fora da coleta — cliente corrigindo o endereço depois do pedido — virava "Você quis dizer
 //      Stanozolol?". Agora avisa a equipe no Telegram e responde MSG_DADOS_REENVIADOS (texto aprovado pelo Thiago em 02/10).
@@ -2778,6 +2784,37 @@ async function iniciarStack(session, sid, entries, respond) {
   return await resolverReconhecido({ ...session, stackFila: fila, errosSeguidos:0, pendenteRec:null }, sid, primeiro, respondStack);
 }
 
+// v86 — NOME DE CATEGORIA digitado pelo cliente → número da opção do menu de compra (1 a 7), ou NaN.
+// Aceita a palavra sozinha ("hormonio", "peptideos") e dentro de um pedido curto ("quero hormonio", "tem hormonios?",
+// "quero ver os hormonios", "lista de peptideos"). Recebe o texto JÁ normalizado (norm()).
+function categoriaPorTexto(nt0) {
+  const _nt = String(nt0 || '').trim().replace(/[?!.,]+$/, '').trim()
+    .replace(/^(eu )?(quero ver|quero comprar|queria ver|gostaria de ver|quero|queria|ver|tem|voces tem|vcs tem|vc tem|voce tem|me mostra|me mostre|mostra|mostrar|quais|quais sao|lista de|lista dos|lista das|categoria|categoria de)\s+/, '')
+    .replace(/^(os|as|o|a|de|dos|das|algum|alguns|alguma|algumas)\s+/, '')
+    .replace(/\s+(disponiveis|disponivel|por favor|pfv|pf|ai|tem)$/, '').trim();
+  if (/^(emagrecedor(es)?|emagrecimento|emagrecer)$/.test(_nt)) return 1;
+  if (/^(peptideo(s)?)$/.test(_nt)) return 2;
+  if (/^(hormonio(s)?|hormonal|hormonais)$/.test(_nt)) return 3;
+  if (/^(gh|hgh|somatropina|hormonio do crescimento)$/.test(_nt)) return 4;
+  if (/^(estetica|esteticos?)$/.test(_nt)) return 5;
+  if (/^(sarm(s)?)$/.test(_nt)) return 6;
+  if (/^(farmacia|farmacos?)$/.test(_nt)) return 7;
+  return NaN;
+}
+const CATEGORIA_NOME = { 1:'Emagrecedores', 2:'Peptídeos', 3:'Hormônios', 4:'GH', 5:'Estética', 6:'SARMS', 7:'Farmácia' };
+// v86 — abre a categoria (mesmas telas das opções 1 a 7 do menu de compra). O carrinho é preservado.
+async function abrirCategoria(session, sid, cat, respond) {
+  if (cat === 2) { await saveSession(sid, { ...session, state:'PEPTIDEOS' }); return respond(MENU_PEPTIDEOS); }
+  if (cat === 3) { await saveSession(sid, { ...session, state:'HORMONIOS' }); return respond(MENU_HORMONIOS); }
+  const LISTAS = { 1:['emagrecedores','*💊 EMAGRECEDORES*'], 4:['gh','*⚡ GH*'], 5:['estetica','*💅 ESTÉTICA*'], 6:['sarms','*🧬 SARMS*'], 7:['farmacia','*💊 FARMÁCIA*'] };
+  const L = LISTAS[cat]; if (!L) return respond(buildMenuPrincipal());
+  const dados = await buscarCache(L[0]);
+  const linhas = dados.split('\n').filter(Boolean);
+  if (!linhas.length) return respond('Nenhum produto encontrado. *Digite menu* para voltar.');
+  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
+  return respond(`${L[1]}\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
+}
+
 async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // Quer PARCELAR → simula na hora (total do pedido/carrinho, ou valor que ele disser).
   if (ehPedidoParcelamento(nMsg)) {
@@ -2841,6 +2878,20 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
       pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], ester:e.ester||'', marca: detectarMarca(nMsg) || '' }
     });
     return respond(`Você quis dizer *${e.label}*? 🤔\n\n1️⃣ Sim\n2️⃣ Não`);
+  }
+  // v86 — a palavra é um NOME DE CATEGORIA ("hormonio", "peptideos"…): abre a categoria. Antes caía na busca abaixo, que
+  // procura o texto no NOME dos produtos — "hormonio" trazia só os "Kit de Aplicação para Hormônios" (conversa real, 03/10).
+  // Com carrinho, pergunta antes (carrinho preservado), igual ao que já acontece com nome de produto.
+  const _catTxt = categoriaPorTexto(nMsg);
+  if (!isNaN(_catTxt)) {
+    if ((session.carrinho || []).length > 0) {
+      const _lb = CATEGORIA_NOME[_catTxt];
+      await saveSession(sid, { ...session, errosSeguidos:0, state:'CONFIRMAR_VER_PRODUTO',
+        pendenteRec: { label:_lb, tipo:'categoria', cat:_catTxt, colecao:'', filtro:[], ester:'', marca:'' } });
+      return respond(`Quer ver *${_lb}*? Seu carrinho fica salvo. 🛒\n\n1️⃣ Sim, ver ${_lb}\n2️⃣ Não, continuar de onde parei`);
+    }
+    await limparHistoricoIA(sid);
+    return await abrirCategoria({ ...session, errosSeguidos:0, pendenteRec:null }, sid, _catTxt, respond);
   }
   // ── FALLBACK DETERMINÍSTICO (catálogo real, 900+ produtos) ──────────────────
   // O nome digitado NÃO está no DICT_PRODUTOS, mas pode EXISTIR no catálogo. Antes de
@@ -4391,27 +4442,25 @@ exports.handler = async (event) => {
     // Nome de CATEGORIA vale na TRIAGEM e no MENU (na triagem, pula direto pro MENU com a
     // categoria — o cliente não precisa digitar "1" antes). Opções da triagem por texto
     // ("comprar", "prazos", "dúvidas") valem só na TRIAGEM. Nos outros estados nada muda.
-    if (isNaN(num) && (session.state === 'MENU' || session.state === 'TRIAGEM' || !session.state)) {
-      const _nt = n.trim();
-      let _cat = NaN;
-      if (/^(emagrecedor(es)?|emagrecimento|emagrecer)$/.test(_nt)) _cat = 1;
-      else if (/^(peptideo(s)?)$/.test(_nt)) _cat = 2;
-      else if (/^(hormonio(s)?|hormonal|hormonais)$/.test(_nt)) _cat = 3;
-      else if (/^(gh|hgh|somatropina|hormonio do crescimento)$/.test(_nt)) _cat = 4;
-      else if (/^(estetica|esteticos?)$/.test(_nt)) _cat = 5;
-      else if (/^(sarm(s)?)$/.test(_nt)) _cat = 6;
-      else if (/^(farmacia|farmacos?)$/.test(_nt)) _cat = 7;
-      else if (/^(promocao|promocoes|promocao do momento|promo do momento|ofertas?)$/.test(_nt)) _cat = 8;
-      else if (/^(atacado)$/.test(_nt)) _cat = 9;
+    // v86: nome de CATEGORIA DE PRODUTO (1 a 7) vale também enquanto o cliente NAVEGA nos produtos. Caso real 03/10: na
+    // pergunta "Quantas unidades deseja?" o cliente digitou "Hormônio" e a palavra foi buscada como nome de produto — veio a
+    // lista de "Kit de Aplicação para Hormônios". Promoção (8) e atacado (9) continuam só no MENU/TRIAGEM, como antes.
+    const _NAVEGANDO = ['PEPTIDEOS','HORMONIOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','BUSCA_LIVRE','LISTA_PRODUTOS','QUANTIDADE','CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO'].indexOf(session.state) >= 0;
+    if (isNaN(num) && (session.state === 'MENU' || session.state === 'TRIAGEM' || !session.state || _NAVEGANDO)) {
+      const _nt0 = n.trim();
+      let _cat = categoriaPorTexto(_nt0);   // v86: 1 a 7, ou NaN
+      if (!isNaN(_cat)) {}
+      else if (!_NAVEGANDO && /^(promocao|promocoes|promocao do momento|promo do momento|ofertas?)$/.test(_nt0)) _cat = 8;
+      else if (!_NAVEGANDO && /^(atacado)$/.test(_nt0)) _cat = 9;
       if (!isNaN(_cat)) {
         num = _cat;
         session.state = 'MENU';   // categoria digitada na triagem = já está escolhendo no MENU
       } else if (session.state === 'TRIAGEM') {
-        if (/^(comprar|comprar produtos|produtos|ver produtos|quero comprar|comprar produto)$/.test(_nt)) num = 1;
-        else if (/^(prazos?|fretes?|rastreio|rastrear|prazos, fretes e rastreio|prazo e frete|prazos e fretes)$/.test(_nt)) num = 2;
-        else if (/^(duvidas?|protocolos?|tabelas? de fracionamento|fracionamento|duvidas, protocolos e tabelas de fracionamento)$/.test(_nt)) num = 3;
+        if (/^(comprar|comprar produtos|produtos|ver produtos|quero comprar|comprar produto)$/.test(_nt0)) num = 1;
+        else if (/^(prazos?|fretes?|rastreio|rastrear|prazos, fretes e rastreio|prazo e frete|prazos e fretes)$/.test(_nt0)) num = 2;
+        else if (/^(duvidas?|protocolos?|tabelas? de fracionamento|fracionamento|duvidas, protocolos e tabelas de fracionamento)$/.test(_nt0)) num = 3;
       }
-      if (!isNaN(num)) console.log('[OPCAO-POR-TEXTO] state:', session.state, '| texto:', _nt, '-> opcao', num);
+      if (!isNaN(num)) console.log('[OPCAO-POR-TEXTO] state:', session.state, '| texto:', _nt0, '-> opcao', num);
     }
 
     const state = session.state || 'MENU';
@@ -5275,7 +5324,11 @@ exports.handler = async (event) => {
 
     if (state === 'CONFIRMAR_VER_PRODUTO') {
       // Cliente tinha carrinho e pediu outro produto. 1 = ver o produto (carrinho preservado). 2 = volta ao carrinho.
-      if (num === 1) { const e = session.pendenteRec || {}; return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond, e.marca || ''); }
+      if (num === 1) {
+        const e = session.pendenteRec || {};
+        if (e.tipo === 'categoria') return await abrirCategoria({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e.cat, respond);   // v86
+        return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond, e.marca || '');
+      }
       if (num === 2) {
         const carrinho = session.carrinho || [];
         await saveSession(sid, { ...session, state:'CARRINHO', pendenteRec:null, errosSeguidos:0 });
