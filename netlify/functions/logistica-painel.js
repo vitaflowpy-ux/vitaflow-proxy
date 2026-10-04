@@ -1106,7 +1106,9 @@ function acaoManualInfo(am) {
 }
 function ocorrenciasLista(peds, vistos, agora) {
   var V = (vistos && typeof vistos === 'object') ? vistos : {};
-  return (peds || []).filter(function (p) { return p.am && !p.final && !p.naoPagou && p.st !== 'ENTREGUE'; }).map(function (p) {
+  /* fora: entregue, cancelado, não pago e os status em que a logística JÁ decidiu (apreendido, extraviado, devolvido, suspenso,
+     reembolsado) — os mesmos que o Rastreamento tira da fila; o aviso que sobrou neles é antigo */
+  return (peds || []).filter(function (p) { return p.am && !p.final && !p.naoPagou && p.st !== 'ENTREGUE' && !/APREEND|EXTRAVIAD|DEVOLV|SUSPENS|REEMBOLS|CANCELAD/.test(p.st || ''); }).map(function (p) {
     var i = acaoManualInfo(p.am), v = V[p.k], visto = !!(v && String(v.am || '') === p.am.slice(0, 80));
     return { k: p.k, pedido: p.pedido, pacote_de: p.pai || '', nome: p.nome, tipo: i.tipo, titulo: i.titulo, sugestao: txt(i.sugestao, 60), frase: txt(i.frase, 200), oque: i.oque,
       status: p.status, transportadora: p.transp, codigo: p.cod || '', fornecedor: p.forn, data: String(p.data || '').slice(0, 10), revendedor: ehRevendedor(p.pai || p.pedido),
