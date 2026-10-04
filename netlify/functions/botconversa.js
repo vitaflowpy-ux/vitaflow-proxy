@@ -1,5 +1,14 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v87 (04/10/2026 — pedido do Thiago: "frete grátis para pedidos acima de 1000 reais… de forma automática onde o cliente não necessite
+//   colocar o cupom FRETEZERO… caso ele coloque algum cupom ele deve ter a opção de escolher o que for melhor para ele"). Resto = v86.
+//   FRETE GRÁTIS AUTOMÁTICO (FRETE_GRATIS_AUTO): varejo, pedido a partir de R$ 1.000 em produtos (preço cheio), qualquer modalidade, sem
+//   cupom e sem data de fim (pra desligar: ativo:false). NÃO ACUMULA (regra nº 9): quando o pedido também tem outro benefício (3% da
+//   Athena, cupom, Semana do Cliente, preço promocional), o resumo mostra as DUAS opções com o valor de cada uma, já deixa marcada a que
+//   mais economiza e o cliente troca digitando A ou B. Única exceção: VALE-COMPRAS (é dinheiro) funciona junto com o frete grátis.
+//   Atacado não entra (lá o frete já é grátis). O frete escolhido passa a guardar o valor cheio (freteSelecionado.valorCheio): antes,
+//   depois de um cupom de frete, o valor virava 0 na sessão e um 2º cupom digitado mantinha o frete zerado junto com o desconto.
+//   Textos: opção 8 / "promo" (MSG_FRETE_AUTO) e contextoPromo da IA. ⚠️ A MESMA regra existe no carrinho do site e no Orçamento.
 // v86 (04/10/2026 — conversa real de 03/10, 22:23: na pergunta "Quantas unidades deseja?" o cliente digitou "Hormônio" e recebeu a
 //   lista de "Kit de Aplicação para Hormônios" — a palavra foi buscada como NOME DE PRODUTO). Resto = v85.
 //   NOME DE CATEGORIA digitado (emagrecedores, peptídeos, hormônios, gh, estética, sarms, farmácia) agora abre a categoria também
@@ -1070,12 +1079,17 @@ async function contextoPromo(){
       });
     }
   } catch (e) {}
+  if (freteGratisAutoAtivo()) {
+    linhas.push('FRETE GRÁTIS AUTOMÁTICO (varejo, sem data de fim): em pedidos A PARTIR DE R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' em produtos, o FRETE é GRÁTIS pra todo o Brasil, em qualquer opção de envio (PAC, SEDEX ou Transportadora). É AUTOMÁTICO no fechamento (aqui na Athena e no site) — o cliente NÃO precisa digitar cupom nenhum; NÃO peça nem mencione o cupom FRETEZERO. NÃO ACUMULA com cupom, promoção nem com o benefício de ' + DESCONTO_ATHENA_PCT + '% da Athena: quando o pedido tem outro benefício, o resumo do pedido mostra as DUAS opções (frete grátis OU o desconto) com o valor de cada uma e o CLIENTE escolhe a que preferir. NUNCA diga que o cliente ganha o frete grátis E o desconto juntos. Única exceção: VALE-COMPRAS (é como dinheiro) funciona junto com o frete grátis. Abaixo de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' o frete é cobrado normalmente. No ATACADO a regra é outra (lá o frete já é grátis). SEMPRE que o cliente perguntar de frete grátis, promoção ou desconto, explique isso; se o pedido estiver perto de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ', avise quanto falta pro frete sair de graça.');
+  }
   if (promoIndepAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — INDEPENDÊNCIA 9.9 (07 a 09/09): 15% OFF em TODO o site (varejo) com o cupom INDEPENDENCIA99, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo, qualquer quantidade. NÃO vale no atacado. NÃO acumula com outros cupons ou promoções nem com o benefício de 3% da Athena — vale sempre o MAIOR (os 15% do cupom vencem os 3%). SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE a Independência 9.9 e diga pra usar o cupom INDEPENDENCIA99 no fechamento. ALGUNS produtos já estão com PREÇO ESPECIAL de 9.9 e por isso NÃO aceitam o cupom (o desconto já está no preço) — se o cliente disser que o cupom não pegou num produto, explique que esse item já está com preço promocional especial. NÃO fale de frete grátis/FRETEZERO nem "Compre 2 Leve 3" (não estão ativos).');
   } else if (promoFreteAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — FRETE GRÁTIS (de 27/09 só até quarta 30/09 às 23h59): em pedidos ACIMA DE R$ 1.000, o FRETE é GRÁTIS pra todo o Brasil com o cupom FRETEZERO. O cliente usa/digita o cupom FRETEZERO no fechamento (aqui na Athena ou no site) e o frete zera — o mínimo é R$ 1.000 em produtos. É desconto NO FRETE, NÃO é desconto no preço do produto e NÃO é brinde/"compre 2 leve 3". O FRETEZERO NÃO acumula com NADA: nem com outro cupom, nem com promoção, nem com o benefício de 3% da Athena. No fechamento o sistema aplica sozinho o que for MAIOR pro cliente: OU o frete grátis OU os 3% nos produtos — nunca os dois. NUNCA diga que o cliente ganha o frete grátis E os 3% juntos. SEMPRE que o cliente perguntar de promoção/desconto/frete, DIVULGUE o Frete Grátis (frete grátis acima de R$ 1.000 com FRETEZERO, só até quarta 30/09 às 23h59). Se o pedido for ABAIXO de R$ 1.000, o cupom NÃO aplica — nesse caso, ofereça o frete normal e os 3% de desconto, e convide o cliente a completar R$ 1.000 pra ganhar o frete grátis. NÃO mencione a Semana do Cliente, a Independência 9.9/INDEPENDENCIA99 nem "15% OFF" (já encerraram).');
   } else if (!PROMO_GENESIS_3x1.ativa) {
-    linhas.push('NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
+    linhas.push(freteGratisAutoAtivo()
+      ? 'Além do benefício padrão de 3% e do FRETE GRÁTIS AUTOMÁTICO descrito acima, NÃO há outra promoção especial ativa. NÃO existe "Compre 2 Leve 3", brinde, nem cupom FRETEZERO — não fale disso.'
+      : 'NÃO há promoção especial ativa além do benefício padrão de 3%. NÃO existe "Compre 2 Leve 3", brinde, nem frete grátis/FRETEZERO — não fale disso.');
   }
   if (PROMO_GENESIS_3x1.ativa) {
     linhas.push('PROMOÇÃO RELÂMPAGO ATIVA AGORA — GÊNESIS PEPTÍDEOS: na compra de 3 peptídeos da marca Gênesis (pode misturar os produtos da linha), o cliente ganha 1 GHK-Cu 100mg GRÁTIS. Válida só enquanto durar o estoque. É a marca Gênesis Peptídeos (NÃO confundir com "Biogenesis", que é outra marca). O brinde (GHK-Cu 100mg) é conferido/aplicado no fechamento pela equipe — a Athena só divulga. SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE esta promo. O benefício padrão de 3% continua valendo normalmente nos produtos. NÃO existe frete grátis/FRETEZERO nem "Compre 2 Leve 3" no momento — a única promoção ativa é esta.');
@@ -1126,7 +1140,19 @@ const PROMO_GENESIS = { ativa: false };
 // Pra desligar antes: ativa:false. Pra trocar o prazo: edite .ini/.fim.
 const PROMO_FRETE = { ativa: true, ini: '2026-09-27T00:00:00-03:00', fim: '2026-09-30T23:59:59-03:00' };
 function promoFreteAtiva(){ return PROMO_FRETE.ativa && Date.now() >= new Date(PROMO_FRETE.ini).getTime() && Date.now() <= new Date(PROMO_FRETE.fim).getTime(); }
-// Promoção atual (única): FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
+// ── v87: FRETE GRÁTIS AUTOMÁTICO (varejo) — pedido a partir de R$ 1.000 em produtos, qualquer modalidade, SEM cupom. ──
+// Sem data de fim. Pra desligar: ativo:false. Pra mudar o valor mínimo: min (em reais).
+// ⚠️ A MESMA regra existe no carrinho do site (main-cart-footer.liquid) e no Orçamento — mudou aqui, mude lá.
+const FRETE_GRATIS_AUTO = { ativo: true, min: 1000 };
+function freteGratisAutoAtivo(){ return !!FRETE_GRATIS_AUTO.ativo; }
+const MSG_FRETE_AUTO = `🚚 *FRETE GRÁTIS PRA TODO O BRASIL!* 🎉
+
+Em pedidos *a partir de R$ ${Number(FRETE_GRATIS_AUTO.min).toLocaleString('pt-BR')}* em produtos, o *frete é por nossa conta* — em qualquer opção de envio (PAC, SEDEX ou Transportadora). 🇧🇷
+
+✅ É *automático*: não precisa de cupom, nem aqui comigo nem no site.
+
+_Não acumula com cupom, promoção nem com os 3% da Athena: se o seu pedido tiver outro benefício, eu te mostro as duas opções com o valor de cada uma e *você escolhe*. O vale-compras é a exceção — funciona junto com o frete grátis. 😉_`;
+// Promoção antiga (27 a 30/09): FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
 const MSG_PROMO_FRETE = `🚚 *FRETE GRÁTIS PRA TODO O BRASIL!* 🎉
 
 Em pedidos *acima de R$ 1.000*, o *frete é por nossa conta* pra todo o Brasil! 🇧🇷
@@ -1179,6 +1205,11 @@ function msgPromoAtual(){
   }
   if (promoFreteAtiva()) {
     return MSG_PROMO_FRETE;
+  }
+  // v87: o frete grátis automático é a promoção permanente — aparece SEMPRE aqui (regra de 13/09), junto com o sorteio.
+  if (freteGratisAutoAtivo()) {
+    return MSG_FRETE_AUTO + (SORTEIO.ativa ? `\n\n━━━━━━━━━━\n\n` + msgSorteio() : '') +
+      `\n\n_E nos pedidos abaixo de R$ ${reais(FRETE_GRATIS_AUTO.min)}, comprando comigo você ganha *3% de desconto* nos produtos! 😉_`;
   }
   if (SORTEIO.ativa) {
     return msgSorteio() + `\n\n_E comprando comigo você já ganha *3% de desconto* em todos os produtos! 😉_`;
@@ -3620,11 +3651,25 @@ async function incrementarUsoCupom(docId) {
 async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   const carrinho = session.carrinho || [];
   const frete = session.freteSelecionado || {};
+  // v87: valor CHEIO do frete escolhido. session.freteSelecionado.valor é regravado com o valor FINAL (0 quando sai grátis),
+  // então numa 2ª passada (cupom digitado depois, troca A/B) o valor original só existe em valorCheio.
+  const freteCheio = (typeof frete.valorCheio === 'number') ? frete.valorCheio : (frete.valor || 0);
   const _promoP = await lerPromoPrecos(true);      // no FECHAMENTO lê fresco (ignora cache de 60s): mudança na lista vale na hora
   aplicarPromoPreco(carrinho, _promoP);            // sobrescreve o preço dos itens de promo (base/precoN)
   if (_promoP) session.totalProd = carrinho.reduce((s,i)=>s+(i.preco||0)*(i.qtd||0),0);
-  const totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
+  let totalProd = session.totalProd || carrinho.reduce((s,i)=>s+i.preco*i.qtd,0);
   const _semDesc = await lerSemDescontoNomes(true); // idem: bloqueio SEMPRE atual no checkout (não pesa na cota — fechamento é raro)
+  // v87: total dos produtos a PREÇO CHEIO (sem o preço promocional por quantidade) — é a base do frete grátis automático.
+  const _precoCheio = i => { const g = grupoPromoDoItem(i.nome, _promoP); return g ? g.base : (i.preco || 0); };
+  const totalCheio = carrinho.reduce((s, i) => s + _precoCheio(i) * (i.qtd || 0), 0);
+  // Pedido que já tem o frete grátis automático NÃO precisa de cupom de frete (FRETEZERO): o cupom é ignorado (e não é consumido),
+  // senão ele tiraria o cliente da regra nova e esconderia a escolha entre o frete grátis e o desconto.
+  let _notaCupomFrete = '';
+  if (FRETE_GRATIS_AUTO.ativo && !session.atacado && freteCheio > 0 && totalCheio >= FRETE_GRATIS_AUTO.min
+      && cupomResultado && cupomResultado.ok && cupomResultado.tipo === 'frete') {
+    _notaCupomFrete = `_O frete grátis já é automático neste pedido — nem precisa do cupom ${cupomResultado.codigo}. 😉_\n`;
+    cupomResultado = null;
+  }
 
   // ── DESCONTO (Option B: cada produto leva UM desconto — o MAIOR; nunca soma) ──
   // Candidatos por produto: promo Dia dos Pais (10% se comprado em 2+), cupom, e o benefício
@@ -3686,7 +3731,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   }
 
   // Frete grátis via cupom
-  let freteValorFinal = frete.valor || 0;
+  let freteValorFinal = freteCheio;
   let linhaFreteGratis = '';
   if (cupomResultado && cupomResultado.ok && cupomResultado.tipo === 'frete') {
     if (cupomResultado.freteGratis) {
@@ -3705,17 +3750,63 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     // v76 (Thiago, 27/09): cupom de FRETE NÃO acumula com os 3% da Athena — vale o MAIOR pro cliente:
     // ou o desconto no frete, ou os 3% nos produtos. Nunca os dois.
     if (linhaFreteGratis && descAthenaAcc > 0 && descCupomAcc === 0) {
-      const _ganhoFrete = Math.max(0, (frete.valor || 0) - freteValorFinal);
+      const _ganhoFrete = Math.max(0, freteCheio - freteValorFinal);
       if (_ganhoFrete >= descAthenaAcc) {
         descNormais = 0; labelNormais = ''; descAthenaAcc = 0;
         linhaFreteGratis += `_(Neste pedido o frete grátis é o maior benefício pra você — apliquei ele no lugar dos ${DESCONTO_ATHENA_PCT}% da Athena. Não acumulam.)_
 `;
       } else {
-        freteValorFinal = frete.valor || 0; linhaFreteGratis = '';
+        freteValorFinal = freteCheio; linhaFreteGratis = '';
         cupomDocId = null; cupomCodigo = null;   // o cupom não foi usado: não consome
         linhaFreteGratis = `_(Os ${DESCONTO_ATHENA_PCT}% da Athena valem mais que o cupom ${cupomResultado.codigo} neste pedido — mantive os ${DESCONTO_ATHENA_PCT}%, que é o melhor pra você. Não acumulam.)_
 `;
       }
+    }
+  }
+
+  // ── v87: FRETE GRÁTIS AUTOMÁTICO (varejo, pedido a partir de R$ 1.000 em produtos a preço cheio, qualquer modalidade, sem cupom) ──
+  // NÃO acumula: ou o frete grátis, ou os outros benefícios (3% Athena, cupom, Semana do Cliente, preço promocional).
+  // Havendo os dois, o resumo mostra as DUAS opções com o valor de cada uma e o cliente escolhe (A/B) — já sai marcada a maior.
+  // Exceção: vale-compras (é dinheiro) funciona JUNTO com o frete grátis. Cupom de frete (FRETEZERO) segue a regra antiga (v76).
+  let fgModo = '', fgTemEscolha = false, fgLinhaOpcoes = '', fgEscolhaSalvar = '';
+  const _cupomFreteOk = !!(_cupomOk && cupomResultado.tipo === 'frete');
+  if (FRETE_GRATIS_AUTO.ativo && !session.atacado && !_cupomFreteOk && freteCheio > 0 && totalCheio >= FRETE_GRATIS_AUTO.min) {
+    const _descSemanaPrev = (_cupomVale === 0) ? descontoSemanaCliente(baseSemana) : 0;
+    const _semanaGanha = _descSemanaPrev > (descNormais + descPromo);
+    const _descProdOutros = (_cupomVale > 0) ? 0 : Math.max(descNormais + descPromo, _descSemanaPrev);   // com vale, os outros já não valem
+    const _ecoPromoPreco = Math.max(0, totalCheio - totalProd);
+    const _ecoOutros = _ecoPromoPreco + _descProdOutros;
+    if (_ecoOutros < 0.005) {
+      fgModo = 'frete';
+    } else {
+      fgTemEscolha = true;
+      const _codAgora = _cupomOk ? String(cupomResultado.codigo || '') : '';
+      const _codAntes = (session.cupomUlt && session.cupomUlt.codigo) ? String(session.cupomUlt.codigo) : '';
+      const _esc = (_codAgora === _codAntes) ? session.fgEscolha : '';        // cupom novo: volta a marcar sozinho o maior
+      const _escolheu = (_esc === 'frete' || _esc === 'desconto');
+      fgModo = _escolheu ? _esc : (freteCheio >= _ecoOutros ? 'frete' : 'desconto');
+      fgEscolhaSalvar = _escolheu ? _esc : '';
+      const _m = v => `R$ ${v.toFixed(2).replace('.',',')}`;
+      const _totA = Math.max(0, totalCheio - Math.min(_cupomVale, totalCheio));
+      const _totB = Math.max(0, totalProd - _descProdOutros + freteCheio - Math.min(_cupomVale, totalProd + freteCheio));
+      const _rot = [];
+      if (_descProdOutros > 0) _rot.push(_semanaGanha ? 'Semana do Cliente' : (labelNormais || 'Desconto'));
+      if (_ecoPromoPreco > 0) _rot.push('Preço promocional');
+      fgLinhaOpcoes =
+        `\n\n🎁 *Seu pedido tem 2 benefícios — você escolhe* _(não acumulam)_:\n` +
+        `*A)* 🚚 Frete grátis — economiza ${_m(freteCheio)} → total *${_m(_totA)}*${fgModo === 'frete' ? ' ✅' : ''}\n` +
+        `*B)* 🏷️ ${_rot.join(' + ')} — economiza ${_m(_ecoOutros)} → total *${_m(_totB)}*${fgModo === 'desconto' ? ' ✅' : ''}\n` +
+        (_escolheu ? `_Apliquei a opção que você escolheu (✅).` : `_Já deixei marcada a que mais economiza pra você (✅).`) +
+        ` Pra trocar, digite *${fgModo === 'frete' ? 'B' : 'A'}*._`;
+    }
+    if (fgModo === 'frete') {
+      // ficou com o frete grátis: produtos a PREÇO CHEIO, sem 3%/cupom/faixa/promo, e o cupom digitado NÃO é consumido.
+      carrinho.forEach(i => { const g = grupoPromoDoItem(i.nome, _promoP); if (g) i.preco = g.base; });
+      totalProd = totalCheio;
+      descNormais = 0; descPromo = 0; descCupomAcc = 0; descAthenaAcc = 0; labelNormais = ''; baseSemana = 0;
+      cupomDocId = null; cupomCodigo = null;
+      freteValorFinal = 0;
+      linhaFreteGratis = `🎉 *Frete grátis automático* — pedido a partir de R$ ${reais(FRETE_GRATIS_AUTO.min)}, sem cupom.\n`;
     }
   }
 
@@ -3775,12 +3866,12 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   if (descPromo > 0) {
     linhasDesc += `🎁 Promo Dia dos Pais (compre 2): -R$ ${descPromo.toFixed(2).replace('.',',')}\n`;
   }
-  const linhaCupomInfo = (_cupomPct > 0 && descCupomAcc === 0 && !_nomesPromoPreco.length && !_nomesSemDesc.length)
+  const linhaCupomInfo = (fgModo !== 'frete' && _cupomPct > 0 && descCupomAcc === 0 && !_nomesPromoPreco.length && !_nomesSemDesc.length)
     ? `\n_(Seu cupom não superou o desconto que já apliquei — usei sempre o melhor pra você 😉)_` : '';
   // Explica, com o NOME do produto, por que o cupom não entrou nele. Só aparece quando o
   // cliente realmente informou um cupom — senão viraria ruído no resumo de quem nem usou.
   let linhaCupomNaoPega = '';
-  if (_cupomOk && (_nomesPromoPreco.length || _nomesSemDesc.length)) {
+  if (fgModo !== 'frete' && _cupomOk && (_nomesPromoPreco.length || _nomesSemDesc.length)) {
     const _lista = (arr) => arr.map(x => `*${x}*`).join(', ');
     if (_nomesPromoPreco.length) {
       linhaCupomNaoPega += _nomesPromoPreco.length === 1
@@ -3800,14 +3891,14 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
         : `\n_Nos outros itens do seu pedido o desconto foi aplicado normalmente._`;
     }
   }
-  const linhaConviteCupom = (!cupomDocId && totalProd > 0)
+  const linhaConviteCupom = (!cupomDocId && totalProd > 0 && !(fgModo === 'frete' && _cupomOk))
     ? `\n\n🏷️ *TEM UM CUPOM DE DESCONTO?*\nÉ *AGORA*: digite o *código do cupom* antes de confirmar. 👇` : '';
   // Promo Gênesis: mostra o brinde (3º grátis) já escolhido no resumo
   const linhaBrinde = session.brinde
     ? `🎁 *Brinde (3º grátis — Gênesis):* ${session.brinde}\n` : '';
 
   let linhaPromoPreco = '';
-  if (_promoP) {
+  if (_promoP && fgModo !== 'frete') {
     _promoP.forEach(g => {
       let q = 0;
       carrinho.forEach(i => { if (g.nomes[_normNomeProd(String(i.nome || ''))]) q += (i.qtd || 0); });
@@ -3837,18 +3928,20 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
     (freteValorFinal > 0
       ? `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${freteValorFinal.toFixed(2).replace('.',',')}\n`
-      : `🚚 Frete *${frete.label}* — ${session.estadoCliente}: ~~R$ ${(frete.valor||0).toFixed(2).replace('.',',')}~~ *GRÁTIS* 🎉\n`) +
-    linhaFreteGratis + linhaBrinde +
+      : `🚚 Frete *${frete.label}* — ${session.estadoCliente}: ~~R$ ${freteCheio.toFixed(2).replace('.',',')}~~ *GRÁTIS* 🎉\n`) +
+    linhaFreteGratis + _notaCupomFrete + linhaBrinde +
     linhasDesc + linhaCupomInfo +
-    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*` + linhaCupomNaoPega + linhaSemana +
+    `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*` + linhaCupomNaoPega + linhaSemana + fgLinhaOpcoes +
     `\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._` +
     linhaConviteCupom;
-  const freteParaSalvar = { ...frete, valor: freteValorFinal };
+  const freteParaSalvar = { ...frete, valor: freteValorFinal, valorCheio: freteCheio };
   await saveSession(sid, {
     ...session, state:'CONFIRMAR', freteSelecionado: freteParaSalvar, totalProd,
     descontoReais, descontoPromo: descPromo, descontoLabel: labelNormais,
     total: totalComDesconto,
-    descontoTipo: cupomDocId ? 'cupom' : 'athena', cupomDocId, cupomCodigo
+    descontoTipo: cupomDocId ? 'cupom' : 'athena', cupomDocId, cupomCodigo,
+    // v87: guarda a escolha frete grátis x desconto e o cupom validado, pra troca A/B refazer a conta sem perder o cupom
+    fgOpcoes: fgTemEscolha, fgModo, fgEscolha: fgEscolhaSalvar, cupomUlt: _cupomOk ? cupomResultado : null
   });
   return respond(resumo);
 }
@@ -5806,6 +5899,16 @@ exports.handler = async (event) => {
           return respond(msgPerguntaBrinde(carrinho));
         }
         return await gerarLinkPedido(session, sid, respond, nomeAssistente);
+      }
+      // v87: o resumo mostrou as duas opções (frete grátis x desconto) → o cliente troca digitando A ou B.
+      if (session.fgOpcoes) {
+        const _fgT = norm(mensagem || '').replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+        const _fgNova = /^(a|opcao a|letra a)$/.test(_fgT) ? 'frete'
+          : /^(b|opcao b|letra b)$/.test(_fgT) ? 'desconto'
+          : /^(trocar|troca|mudar)$/.test(_fgT) ? (session.fgModo === 'frete' ? 'desconto' : 'frete') : '';
+        if (_fgNova) {
+          return await fecharResumoNormal({ ...session, fgEscolha: _fgNova, cupomDocId:null, cupomCodigo:null }, sid, session.cupomUlt || null, respond);
+        }
       }
       // Quer simular PARCELAMENTO na hora de fechar → mostra e mantém o pedido pronto.
       if (ehPedidoParcelamento(mensagem)) {
