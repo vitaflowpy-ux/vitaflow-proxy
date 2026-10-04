@@ -1,6 +1,10 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v11  ·  04/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v12  ·  04/10/2026
+   v12 (pedido do Thiago, 04/10: "colocasse no aviso do painel da logística o resultado depois de cada passada"; ele escolheu "as duas" e
+       "quadro no painel"): codigos_pendentes devolve `rastreio.passadas` — o resultado das últimas passadas do rastreio automático,
+       gravado pelo Rastreamento v20 em vitaflow_sync/logistica/rastreio_passadas (só números). As rodadas de códigos já iam em
+       `rodadas`. Resto = v11.
    v11 (pedido do Thiago, 04/10: "Esse aviso vai para o painel da logística??" / "Sim, pode fazer e publicar"): PEDIDOS QUE O RASTREIO
        NÃO CONSEGUE CONSULTAR POR FALTA DE DADO (hoje: J&T sem CPF na planilha). O Rastreamento v19 grava a lista no fim de cada passada
        completa em vitaflow_sync/logistica/rastreio_sem_consulta; codigos_pendentes devolve `rastreio.sem_consulta` (a aba Códigos mostra).
@@ -1068,6 +1072,18 @@ function textoSemConsulta(novos, emAberto, painelUrl) {
   L.push('Enquanto o dado não for preenchido na planilha, o status desses pedidos não atualiza. Ao todo há ' + emAberto + ' nessa situação. Veja na aba *Códigos* do painel' + (painelUrl ? ': ' + painelUrl : '.'));
   return L.join('\n');
 }
+/* v12: resultado das passadas do rastreio automático (gravado pelo Rastreamento v20). Só números; a mais nova primeiro. */
+var RAST_PASSADAS = RAIZ + '/rastreio_passadas';
+var PASSADA_CAMPOS = ['ts', 'ini', 'consultados', 'atualizados', 'entregues', 'via_onlog', 'pv', 'sem_pv', 'sem_consulta', 'execs', 'incompleta', 'faltaram'];
+function passadasLista(no) {
+  var l = (no && no.lista && typeof no.lista === 'object') ? no.lista : {};
+  return Object.keys(l).map(function (k) {
+    var x = l[k]; if (!x || typeof x !== 'object' || !(Number(x.ts) > 0)) return null;
+    var o = { tipo: x.tipo === 'rapida' ? 'rapida' : 'completa' };
+    PASSADA_CAMPOS.forEach(function (c) { if (x[c] !== undefined && x[c] !== null && isFinite(Number(x[c]))) o[c] = Number(x[c]); });
+    return o;
+  }).filter(Boolean).sort(function (a, b) { return b.ts - a.ts; }).slice(0, 12);
+}
 async function avisoSemConsulta(op) {
   var agora = op.agora || Date.now(), cfg = op.cfg || {}, lista = op.lista || [];
   var av = (await fbLerOu(SEM_CONS_AVISADOS)) || {};
@@ -1337,11 +1353,11 @@ async function acaoAdminV3(acao, d, uid, agora) {
     var pedsP = montarPedidos(base);
     var pend = pendentesCodigo(pedsP, agora, cfg.codigos_janela_dias);
     var lidos = await Promise.all([fbLerOu(COD + '/ultima'), fbLerOu(COD + '/rodadas', 'orderBy=' + encodeURIComponent('"$key"') + '&limitToLast=10'),
-      fbLerOu(ONLOG_ST), fbLerOu(ONLOG_VISTOS), fbLerOu(COD + '/status_ultima'), fbLerOu(SEM_CONS)]);
+      fbLerOu(ONLOG_ST), fbLerOu(ONLOG_VISTOS), fbLerOu(COD + '/status_ultima'), fbLerOu(SEM_CONS), fbLerOu(RAST_PASSADAS)]);
     var mapaO = lidos[2] || {}, noSC = lidos[5] || null;
     return resp({ ok: true, gerado_ts: agora,
       /* v11: pedidos que o rastreio não consegue consultar por falta de dado */
-      rastreio: { sem_consulta: semConsultaLista(pedsP, noSC, agora), lido_ts: (noSC && Number(noSC.ts)) || 0 },
+      rastreio: { sem_consulta: semConsultaLista(pedsP, noSC, agora), lido_ts: (noSC && Number(noSC.ts)) || 0, passadas: passadasLista(lidos[6]) },   /* v12: passadas */
       /* v9: situação dos objetos na Onlog */
       onlog: { alertas: onlogAlertas(pedsP, mapaO, lidos[3] || {}, agora, cfg.onlog_parado_dias), acompanhados: Object.keys(mapaO).length,
         ultima: lidos[4] || null, parado_dias: Math.max(1, Number(cfg.onlog_parado_dias) || 2),
@@ -2174,7 +2190,7 @@ exports.handler = async function (event) {
 };
 
 /* usado pela logistica-atrasos.js (agendada) e pelos testes */
-exports.lib = { semConsultaLista: semConsultaLista, textoSemConsulta: textoSemConsulta, avisoSemConsulta: avisoSemConsulta, lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros: calcularNumeros, calcularAtrasos: calcularAtrasos,
+exports.lib = { passadasLista: passadasLista, semConsultaLista: semConsultaLista, textoSemConsulta: textoSemConsulta, avisoSemConsulta: avisoSemConsulta, lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros: calcularNumeros, calcularAtrasos: calcularAtrasos,
   decidirEnvio: decidirEnvio, ehRevendedor: ehRevendedor, montarEmail: montarEmail, enviarBrevo: enviarBrevo, htmlEmail: htmlEmail, conferirAdmin: conferirAdmin,
   EMAIL_PADRAO: EMAIL_PADRAO, EMAIL_CFG_PADRAO: EMAIL_CFG_PADRAO, transpNome: transpNome, fornNome: fornNome, RAIZ: RAIZ,
   /* v3 */
