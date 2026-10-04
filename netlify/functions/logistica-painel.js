@@ -1,6 +1,18 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v8  ·  04/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v9  ·  04/10/2026
+   v9 (ordem do Thiago, 04/10: "resolva DEFINITIVAMENTE" — ele escolheu "ler a Onlog e avisar"): SITUAÇÃO DOS OBJETOS NA ONLOG.
+       · a rodada de códigos passa a ler também a SITUAÇÃO de cada objeto em aberto no site da Onlog (consulta por código, vários
+         de uma vez; abre o detalhe só do que mudou). Fica em vitaflow_sync/logistica/onlog_status/<pedido> — o Rastreamento v17 lê
+         de lá: Loggi e Fastpack (sem API) passam a atualizar por ali, e a J&T com leitura fresca não gasta o PacoteVício.
+       · AVISOS na aba Códigos (codigos_pendentes devolve `onlog.alertas`): objeto CANCELADO, DEVOLVIDO/voltando, com PROBLEMA
+         (endereço errado, pacote problemático…) e PARADO na Onlog antes de chegar à transportadora (2 dias úteis ou mais —
+         config onlog_parado_dias). ✔ Visto por pedido (acao 'codigos_onlog_visto') — some até a situação mudar.
+       · objeto CANCELADO ou DEVOLVIDO na Onlog NUNCA é gravado sozinho num pedido (caso VF-2009-S016: a rodada de 01/10 gravou o
+         código de um objeto cancelado). Vira dúvida "cancelado" quando o pedido não tem outro objeto.
+       · o detalhe do objeto agora é lido evento por evento (título, detalhe, data) — antes a linha de detalhe ("(cidade) ENDEREÇO
+         INCORRETO.") era lida como se fosse o status.
+       · ticket: 45 min (a leitura da situação alonga a rodada). Resto = v8.
    v8 (pedido do Thiago, 03-04/10): EXCLUIR CUPOM DA LISTA (acao 'cupons_excluir'). E-mail JÁ ENVIADO → só sai da lista (o cupom
        continua valendo). E-mail NÃO enviado (a logística decidiu não mandar) → o cupom é CANCELADO (ativo:false no Firestore: some de
        "Meus cupons" e o carrinho recusa) e sai da lista. Cupom já usado → só sai da lista. O registro fica (oculto_ts), então a rodada
@@ -160,7 +172,8 @@ var EMAIL_CFG_PADRAO = { email_atraso_modo: 'desligado', email_atraso_max: 3, em
   email_postagem_modo: 'desligado', email_postagem_janela_dias: 45,   /* v6 */
   email_pacotes_modo: 'ligado', codigos_janela_dias: 45, codigos_duvida_dias: 15,   /* v3 */
   /* v4 */ cupom_atraso_modo: 'desligado', cupom_atraso_pct: 5, cupom_atraso_dias: 45, cupom_atraso_prefixo: 'DESCULPA', cupom_atraso_janela_dias: 60,
-  cupom_atraso_desde: 0, cupom_atraso_max_rodada: 12, parados_dias: 3, parados_janela_dias: 60, parados_whatsapp: 'ligado' };
+  cupom_atraso_desde: 0, cupom_atraso_max_rodada: 12, parados_dias: 3, parados_janela_dias: 60, parados_whatsapp: 'ligado',
+  /* v9 */ onlog_parado_dias: 2, onlog_janela_dias: 60 };
 
 function preencher(t, v) { return String(t || '').replace(/\{([A-Z_]+)\}/g, function (a, k) { return (v[k] != null) ? String(v[k]) : a; }); }
 function escH(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -524,7 +537,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq38
 var COD = RAIZ + '/codigos';
 var LOTE_GAS = 8;                  /* itens por chamada ao Apps Script. Na 1ª rodada real (01/10) 15 itens passaram de 22 s e a chamada caiu 2 vezes (o Apps Script gravou, mas a rodada perdeu o registro do lote). Com 8 fica em ~10 s. */
 var ENTRADA_VALE_MS = 60 * 60000;  /* o que veio do site do Daniel / da Onlog vale 1 h */
-var TICKET_VALE_MS = 30 * 60000;
+var TICKET_VALE_MS = 45 * 60000;   /* v9: 45 min (era 30) — a leitura da situação na Onlog alonga a rodada */
 var MAX_DIAS_PAR = 20;             /* código criado até 20 dias depois da confirmação do pedido */
 var ORIGEM_NOME = { SP: 'São Paulo/SP', CP: 'Campinas/SP', MS: 'Ponta Porã/MS', RJ: 'Rio de Janeiro/RJ', PY: 'Ciudad del Este (Paraguai)' };   /* v4: CP */
 
@@ -636,6 +649,138 @@ function filaOnlog(pend, agora, max) {
     .map(function (x) { return { cpf: x.cpf, desde: ddmmaa(x.desde) }; });
 }
 
+/* ============================ v9: SITUAÇÃO DOS OBJETOS NA ONLOG ============================ */
+var ONLOG_ST = RAIZ + '/onlog_status';       /* <pedido> = { cod, aa, real, op, st, det, q, lido, desde, cls, cru, pre, direto, acao, voltando, dev, hist:[[ts, frase]…] } */
+var ONLOG_VISTOS = RAIZ + '/onlog_vistos';   /* <pedido> = { st, tipo, ts, uid } */
+var ONLOG_MAX_OBJ = 300;
+function tituloFrase(s) { s = String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+/* Situação de UM objeto, pelo status (como a Onlog escreve) e pelo detalhe do evento. Função pura — testada.
+   cls: cancelado · devolucao · problema · entregue · pre (ainda não está com a transportadora) · transito
+   cru: a frase que entra no Rastreamento como "frase da transportadora" ('' = não entra: cancelado e devolvido só SINALIZAM).
+        NUNCA leva o nome "Onlog": essa frase pode aparecer para o cliente na página de rastreio.
+        Cada frase foi conferida na equivalência do Rastreamento v17 (teste t17.js). */
+function onlogSituacao(st, det) {
+  var u = R.semAcentoUp(st).replace(/\s+/g, ' ').trim();
+  if (!u) return { cls: '', cru: '', pre: false };
+  if (/CANCELAD/.test(u)) return { cls: 'cancelado', cru: '', pre: false };
+  if (/DEVOLU|DEVOLVID|RETORNADO PARA O CLIENTE|RETORN[A-Z]* AO REMETENTE/.test(u)) return { cls: 'devolucao', cru: '', pre: false };
+  if (/PROBLEMATIC/.test(u)) {
+    var motivo = String(det || '').replace(/^\s*\([^)]*\)\s*/, '').replace(/[.\s]+$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    return { cls: 'problema', cru: 'Pacote problemático' + (motivo ? ': ' + motivo : ' (motivo não informado pela transportadora)'), pre: false };
+  }
+  if (/NAO ENTREG|ENDERECO (ERRADO|INCORRETO|INSUFICIENTE|INCOMPLETO|NAO)|AUSENTE|RECUSAD|ENTREGA PREJUDICADA|AGUARDANDO (REENVIO|TRATATIVA)|EXTRAVI|AVARIA|ROUBO|SINISTRO|TENTATIVA|FISCALIZA|RETID|APREEN/.test(u))
+    return { cls: 'problema', cru: tituloFrase(st), pre: false };
+  if (/^(OBJETO )?ENTREGUE( AO DESTINATARIO)?$|ASSINATURA DE ENCOMENDA|ENTREGA REALIZADA|ENTREGA EFETUADA/.test(u)) return { cls: 'entregue', cru: 'Objeto entregue ao destinatário', pre: false };
+  if (u === 'OBJETO CRIADO') return { cls: 'pre', cru: 'Objeto criado', pre: true };
+  if (u === 'ETIQUETA EMITIDA') return { cls: 'pre', cru: 'Etiqueta emitida', pre: true };
+  if (u === 'ENTRADA NO CENTRO DE DISTRIBUICAO') return { cls: 'pre', cru: 'Objeto criado (em preparação para a postagem)', pre: true };
+  if (/^ENCAMINHADO PARA O OPERADOR|^INTEGRACAO INICIADA$|^ARQUIVO INTEGRADO$/.test(u)) return { cls: 'pre', cru: 'Objeto criado (pronto para a coleta da transportadora)', pre: true };
+  if (/^COLETA DE ENCOMENDA|^COLETAD/.test(u)) return { cls: 'transito', cru: 'Coletado pela transportadora', pre: false };
+  if (u === 'VOLUMETRIZADO' || u === 'CONFERIDO') return { cls: 'transito', cru: 'Objeto recebido pela transportadora', pre: false };
+  if (/^BIPE DE (EXPEDICAO|RECEBIMENTO)/.test(u)) return { cls: 'transito', cru: 'Em transferência entre unidades', pre: false };
+  if (/SAIDA PARA ENTREGA|SAIU PARA ENTREGA/.test(u)) return { cls: 'transito', cru: 'Saiu para entrega', pre: false };
+  return { cls: 'transito', cru: tituloFrase(st), pre: false };
+}
+/* quais pedidos a rodada acompanha na Onlog: em aberto, com o AA da Onlog ou com código de pedido Geovanna/Respect (ou ainda
+   sem fornecedor marcado). Envio direto do Daniel e dos outros fornecedores não passa pela Onlog. */
+function objetosOnlog(peds, agora, mapa, janelaDias) {
+  var ini = agora - Math.max(7, Number(janelaDias) || 60) * DIA, out = [];
+  mapa = mapa || {};
+  peds.forEach(function (p) {
+    if (p.naoPagou || p.final || p.st === 'ENTREGUE' || !p.tConf || p.tConf < ini) return;
+    var cod = (p.cod && p.cod !== MOTOBOY) ? p.cod : '';
+    if (!p.onlog && !cod) return;
+    var gr = p.fams.indexOf('GEOVANNA') >= 0 || p.fams.indexOf('RESPECT') >= 0;
+    if (!p.onlog && !gr && p.fams.length) return;
+    var a = mapa[p.k]; if (a && (a.cod || '') !== cod) a = null;   /* o código do pedido mudou: a leitura antiga não vale */
+    out.push({ p: p, k: p.k, cod: cod, c: p.onlog || (a && a.aa) || cod, s: a ? (a.st || '') : '', m: (a && a.q) ? 0 : 1, lido: a ? (Number(a.lido) || 0) : 0 });
+  });
+  out.sort(function (x, y) { return x.lido - y.lido; });   /* quem está há mais tempo sem leitura vai primeiro */
+  return out.slice(0, ONLOG_MAX_OBJ);
+}
+/* o registro de UM pedido, a partir do que a rodada leu (it) e do registro anterior (ant) */
+function onlogRegistro(alvo, it, ant, agora) {
+  var evs = (Array.isArray(it.evs) ? it.evs : []).filter(function (e) { return e && e[0]; });
+  var st = String(it.st || ''), stU = R.semAcentoUp(st), det = '', q = 0, voltando = false, dev = '', hist = null;
+  if (evs.length) {
+    var iSt = -1, i;
+    for (i = evs.length - 1; i >= 0; i--) { if (R.semAcentoUp(evs[i][0]) === stU) { iSt = i; break; } }
+    var e = iSt >= 0 ? evs[iSt] : evs[evs.length - 1];
+    det = e[1] || ''; q = tsDe(e[2]);
+    /* depois que o objeto entra em devolução, bipes como VOLUMETRIZADO/RETIRADO não o tiram da devolução */
+    var iDev = -1, iVolta = -1;
+    evs.forEach(function (x, n) {
+      var c = onlogSituacao(x[0], x[1]).cls;
+      if (c === 'devolucao' || c === 'cancelado') iDev = n;
+      if (c === 'entregue' || /SAIDA PARA ENTREGA/.test(R.semAcentoUp(x[0]))) iVolta = n;
+    });
+    if (iDev >= 0 && iVolta < iDev) { voltando = true; dev = txt(evs[iDev][0], 80) + (evs[iDev][2] ? ' em ' + String(evs[iDev][2]).slice(0, 10) : ''); }
+    /* a linha do tempo, já nas frases do Rastreamento (sem repetir a mesma frase em seguida) — só é usada para quem não tem API */
+    hist = [];
+    evs.forEach(function (x) {
+      var c = onlogSituacao(x[0], x[1]), tq = tsDe(x[2]);
+      if (!c.cru || !tq || (hist.length && hist[hist.length - 1][1] === c.cru)) return;
+      hist.push([tq, c.cru]);
+    });
+    hist = hist.slice(-15);
+  } else if (ant && ant.st === st) { det = ant.det || ''; q = Number(ant.q) || 0; voltando = !!ant.voltando; dev = ant.dev || ''; hist = ant.hist || null; }
+  var s = onlogSituacao(st, det);
+  if (voltando && s.cls !== 'cancelado' && s.cls !== 'devolucao' && s.cls !== 'entregue') s = { cls: 'devolucao', cru: '', pre: false };
+  var fmt = transpPorFormato(alvo.cod);
+  var direto = !(fmt === 'J&T' || fmt === 'JADLOG' || fmt === 'CORREIOS' || fmt === 'TOTAL EXPRESS' || fmt === 'SPX');   /* Loggi, Fastpack e o que não tem API */
+  var quando = q ? ' em ' + ddmmaa(q) : '';
+  var acao = s.cls === 'cancelado' ? ('VERIFICAR: objeto CANCELADO na Onlog | ' + txt(st, 60) + quando)
+    : (s.cls === 'devolucao' ? ('VERIFICAR: objeto DEVOLVIDO ou voltando (Onlog) | ' + (dev || (txt(st, 60) + quando))) : '');
+  return { cod: alvo.cod || '', aa: limparCod(it.aa) || (ant && ant.aa) || alvo.p.onlog || '', real: limparCod(it.real) || (ant && ant.real) || '', op: txt(it.op, 30) || (ant && ant.op) || '',
+    st: txt(st, 80), det: txt(det, 120), q: q || 0, lido: agora, desde: (ant && ant.st === st && ant.desde) ? ant.desde : (q || agora),
+    cls: s.cls, cru: s.cru, pre: !!s.pre, direto: direto, acao: acao, voltando: voltando, dev: dev,
+    hist: (direto && !acao && hist && hist.length) ? hist : null };
+}
+/* junta a leitura da rodada (itens) com os pedidos → o mapa novo de onlog_status. Função pura — testada. */
+function onlogMontar(peds, itens, velho, agora, janelaDias) {
+  velho = velho || {};
+  var alvos = objetosOnlog(peds, agora, velho, janelaDias), porAA = {}, porReal = {};
+  (itens || []).forEach(function (it) {
+    if (!it) return;
+    var aa = limparCod(it.aa), real = limparCod(it.real), c = limparCod(it.c);
+    if (/^AA\d{10}$/.test(aa)) porAA[aa] = it;
+    if (real && !/^AA\d{10}$/.test(real)) porReal[real] = it;
+    if (it.n && c) { if (/^AA\d{10}$/.test(c)) porAA[c] = porAA[c] || it; else porReal[c] = porReal[c] || it; }
+  });
+  var mapa = {}, lidos = 0, nao = 0, sem = 0;
+  alvos.forEach(function (a) {
+    var ant = velho[a.k]; if (ant && (ant.cod || '') !== a.cod) ant = null;
+    var it = (a.p.onlog && porAA[a.p.onlog]) || (a.cod && porReal[a.cod]) || (ant && ant.aa && porAA[ant.aa]) || null;
+    if (!it || it.n || !it.st) { if (ant) mapa[a.k] = ant; if (it && it.n) nao++; else sem++; return; }
+    lidos++;
+    mapa[a.k] = onlogRegistro(a, it, ant, agora);
+  });
+  return { mapa: mapa, alvos: alvos.length, lidos: lidos, nao_achados: nao, sem_leitura: sem };
+}
+/* os AVISOS do painel: cancelado · devolvido/voltando · com problema · parado na Onlog antes de chegar à transportadora */
+var ONLOG_ORDEM = { cancelado: 0, devolucao: 1, problema: 2, parado: 3 };
+function onlogAlertas(peds, mapa, vistos, agora, limDU) {
+  var out = []; mapa = mapa || {}; vistos = vistos || {};
+  var lim = Math.max(1, Number(limDU) || 2);
+  peds.forEach(function (p) {
+    var a = mapa[p.k]; if (!a || typeof a !== 'object') return;
+    if (p.naoPagou || p.final || p.st === 'ENTREGUE') return;
+    var cod = (p.cod && p.cod !== MOTOBOY) ? p.cod : '';
+    if ((a.cod || '') !== cod) return;
+    var dias = a.desde ? R.duEntre(Number(a.desde), agora) : 0, tipo = '';
+    if (a.cls === 'cancelado' || a.cls === 'devolucao' || a.cls === 'problema') tipo = a.cls;
+    else if (a.pre && a.desde && dias >= lim) tipo = 'parado';
+    if (!tipo) return;
+    var v = vistos[p.k];
+    out.push({ k: p.k, pedido: p.pedido, pacote_de: p.pai || '', nome: p.nome, tipo: tipo, situacao: a.st || '', detalhe: a.det || '', historico: a.dev || '',
+      desde: a.desde ? ddmmaa(Number(a.desde)) : '', dias: dias, codigo: cod, onlog: a.aa || p.onlog || '', transportadora: p.transpTxt || transpOnlog(a.op, cod) || '',
+      status: p.status, fornecedor: p.forn, revendedor: ehRevendedor(p.pai || p.pedido), lido: Number(a.lido) || 0,
+      visto: !!(v && v.st === (a.st || '') && v.tipo === tipo), visto_em: (v && v.ts) ? R.ddmm(v.ts) : '' });
+  });
+  out.sort(function (x, y) { return (ONLOG_ORDEM[x.tipo] - ONLOG_ORDEM[y.tipo]) || (y.dias - x.dias) || (x.pedido < y.pedido ? -1 : 1); });
+  return out;
+}
+
 /* ============================ CASAMENTO (função pura — testada) ============================ */
 /* Cada candidato (um código novo) vai para o pedido pendente MAIS RECENTE confirmado até o dia dele (e no máximo 20 dias
    antes). Só é CERTO quando é 1 código para 1 pedido, sem outro pedido do mesmo cliente no mesmo dia. O resto vira DÚVIDA. */
@@ -674,7 +819,7 @@ function casarCodigos(e) {
   });
   pend.forEach(function (p) { if (p.cpf.length === 11) (pendCpf[p.cpf] = pendCpf[p.cpf] || []).push(p); });
 
-  var aplicar = [], duvidas = [], res = { pendentes: pend.length, daniel_pedidos: 0, onlog_cpfs: 0, onlog_objetos: 0, sem_pedido: 0, antigos: 0, sem_cpf: 0, onlog_erros: 0 };
+  var aplicar = [], duvidas = [], res = { pendentes: pend.length, daniel_pedidos: 0, onlog_cpfs: 0, onlog_objetos: 0, sem_pedido: 0, antigos: 0, sem_cpf: 0, onlog_erros: 0, onlog_cancelados: 0 };
   var certos = [];   /* {fonte, r, item} — conferidos no fim: o mesmo pedido não pode receber de duas fontes */
   function duvida(fonte, tipo, c, rows, por) {
     var cod = c.cods && c.cods[0] || c.real || '';
@@ -767,7 +912,7 @@ function casarCodigos(e) {
     if (cpf.length !== 11) return;
     res.onlog_cpfs++;
     if (it.erro) { res.onlog_erros++; return; }
-    var cands = [];
+    var cands = [], mortos = [];   /* v9: mortos = objetos cancelados/devolvidos na Onlog */
     (it.objetos || []).forEach(function (ob) {
       var aa = limparCod(ob.aa), real = limparCod(ob.real);
       if (!/^AA\d{10}$/.test(aa)) aa = '';
@@ -776,26 +921,39 @@ function casarCodigos(e) {
       res.onlog_objetos++;
       var transp = real ? transpOnlog(ob.op, real) : '';
       var sit = txt((ob.status || '') + (ob.quando ? ' ' + ob.quando : ''), 80);
-      if (aa && usados[aa]) {   /* o AA já está num pedido: se ele ainda não tem o código real, completa */
+      var clsOb = ob.dev ? 'devolucao' : onlogSituacao(ob.status, '').cls;   /* v9 */
+      var morto = (clsOb === 'cancelado' || clsOb === 'devolucao');
+      if (aa && usados[aa]) {   /* o AA já está num pedido: se ele ainda não tem o código real, completa (v9: menos se o objeto morreu) */
         var dono = usados[aa];
-        if (!dono.cod && real && !usados[real] && !ign[real]) aplicar.push({ pedido: dono.pedido, codigo: real, onlog: aa, transportadora: transp, _fonte: 'onlog', _tipo: 'codigo', _info: sit });
+        if (!morto && !dono.cod && real && !usados[real] && !ign[real]) aplicar.push({ pedido: dono.pedido, codigo: real, onlog: aa, transportadora: transp, _fonte: 'onlog', _tipo: 'codigo', _info: sit });
         return;
       }
       if (real && usados[real]) return;
       if ((aa && ign[aa]) || (real && ign[real])) return;
-      cands.push({ ts: tsDe(ob.criado), aa: aa, real: real, transp: transp, cpf: cpf, cep: cepDe(ob.cep), situacao: sit, nome: txt(ob.nome, 60) });
+      var cand = { ts: tsDe(ob.criado), aa: aa, real: real, transp: transp, cpf: cpf, cep: cepDe(ob.cep), situacao: sit, nome: txt(ob.nome, 60) };
+      if (morto) { res.onlog_cancelados++; mortos.push(cand); return; }   /* v9: objeto cancelado/devolvido NUNCA é gravado sozinho */
+      cands.push(cand);
     });
+    mortos = mortos.filter(function (c) { return c.ts; });
     cands = cands.filter(function (c) { return c.ts; });
     var rows = (pendCpf[cpf] || []).filter(function (r) { return !r.onlog && (!r.fams.length || r.fams.indexOf('GEOVANNA') >= 0 || r.fams.indexOf('RESPECT') >= 0); });
     var temGR = function (r) { return r.fams.indexOf('GEOVANNA') >= 0 || r.fams.indexOf('RESPECT') >= 0; };
     if (rows.some(temGR)) rows = rows.filter(temGR);
-    var par = parear(cands, rows);
+    var par = parear(cands, rows), comObjeto = {};
     par.certos.forEach(function (x) {
       var c = x.c, r = x.r;
+      comObjeto[r.k] = 1;
       if (c.cep && r.cep && c.cep !== r.cep) { duvida('onlog', 'cep_diferente', c, [r], 'o CEP do envio é diferente do CEP do pedido'); return; }
       certos.push({ fonte: 'onlog', r: r, itens: [{ pedido: r.pedido, codigo: c.real || '', onlog: c.aa || '', transportadora: c.transp, _fonte: 'onlog', _tipo: c.real ? 'codigo' : 'onlog', _info: c.situacao }], c: c });
     });
-    par.duvidas.forEach(function (x) { duvida('onlog', 'escolher', x.c, x.rows, x.por); });
+    par.duvidas.forEach(function (x) { x.rows.forEach(function (r) { comObjeto[r.k] = 1; }); duvida('onlog', 'escolher', x.c, x.rows, x.por); });
+    /* v9: objeto cancelado/devolvido — só vira dúvida (aviso) se o pedido que ele casaria ficou sem nenhum outro objeto */
+    if (mortos.length) {
+      var MOTIVO_MORTO = 'este objeto está CANCELADO ou DEVOLVIDO na Onlog — não foi gravado';
+      var pm = parear(mortos, rows.filter(function (r) { return !comObjeto[r.k]; }));
+      pm.certos.forEach(function (x) { duvida('onlog', 'cancelado', x.c, [x.r], MOTIVO_MORTO); });
+      pm.duvidas.forEach(function (x) { duvida('onlog', 'cancelado', x.c, x.rows, MOTIVO_MORTO); });
+    }
     /* par.fora: objeto mais antigo que os pedidos pendentes (envio anterior do mesmo cliente) → ignora */
   });
 
@@ -857,13 +1015,33 @@ function limparEntrada(fonte, itens) {
     return { oc: txt(o.oc, 30), st: txt(o.st, 20), c1: txt(o.c1, 40), c2: txt(o.c2, 40), rg: txt(o.rg, 12), cpf: cpf11(o.cpf).slice(0, 14),
       nome: txt(o.nome, 60), cep: cepDe(o.cep), cr: tsDe(o.cr) };
   });
+  if (fonte === 'onlog_status') return itens.slice(0, 400).map(function (o) {   /* v9: situação dos objetos (consulta por código) */
+    o = o || {};
+    return { c: txt(o.c, 40), aa: txt(o.aa, 14), real: txt(o.real, 40), op: txt(o.op, 30), st: txt(o.st, 80), n: o.n ? 1 : 0, igual: o.igual ? 1 : 0,
+      evs: (Array.isArray(o.evs) ? o.evs : []).slice(-25).map(function (e) { e = Array.isArray(e) ? e : []; return [txt(e[0], 80), txt(e[1], 120), txt(e[2], 20)]; }) };
+  });
   return itens.slice(0, 80).map(function (o) {
     o = o || {};
     return { cpf: cpf11(o.cpf).slice(0, 14), erro: txt(o.erro, 60), objetos: (Array.isArray(o.objetos) ? o.objetos : []).slice(0, 12).map(function (b) {
       b = b || {};
-      return { aa: txt(b.aa, 14), real: txt(b.real, 40), op: txt(b.op, 30), criado: tsDe(b.criado), status: txt(b.status, 60), quando: txt(b.quando, 20), cep: cepDe(b.cep), nome: txt(b.nome, 60) };
+      return { aa: txt(b.aa, 14), real: txt(b.real, 40), op: txt(b.op, 30), criado: tsDe(b.criado), status: txt(b.status, 60), quando: txt(b.quando, 20), cep: cepDe(b.cep), nome: txt(b.nome, 60), dev: b.dev ? 1 : 0 };
     }) };
   });
+}
+/* v9: processa a leitura da situação dos objetos (chamado quando o coletor termina — fim:true — ou pelo painel) */
+async function onlogStatusProcessar(agora) {
+  var lidos = await Promise.all([lerBase(false), fbLerOu(COD + '/entrada_status'), fbLerOu(ONLOG_ST)]);
+  var base = lidos[0], ent = lidos[1], velho = lidos[2] || {};
+  if (!ent || !Array.isArray(ent.itens) || agora - Number(ent.ts) > ENTRADA_VALE_MS) return { ok: false, erro: 'sem_entrada' };
+  var cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {}), peds = montarPedidos(base);
+  var r = onlogMontar(peds, ent.itens, velho, agora, cfg.onlog_janela_dias);
+  await fbReq('PUT', ONLOG_ST, r.mapa);
+  var al = onlogAlertas(peds, r.mapa, {}, agora, cfg.onlog_parado_dias), cont = {};
+  al.forEach(function (a) { cont[a.tipo] = (cont[a.tipo] || 0) + 1; });
+  var resumo = { ts: agora, acompanhados: r.alvos, lidos: r.lidos, nao_achados: r.nao_achados, sem_leitura: r.sem_leitura, alertas: al.length, por_tipo: cont };
+  await fbReq('PUT', COD + '/status_ultima', resumo);
+  await fbReq('DELETE', COD + '/entrada_status');
+  return Object.assign({ ok: true }, resumo);
 }
 
 /* ---- a rodada: casa o que veio (Daniel + Onlog) com os pendentes e grava os certos ---- */
@@ -1022,7 +1200,21 @@ async function acaoComTicket(acao, d, agora) {
   if (!(await conferirTicket(d.ticket, agora))) return resp({ ok: false, erro: 'ticket inválido ou vencido' }, 401);
   if (acao === 'codigos_fila') {
     var base = await lerBase(false), cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
-    return resp({ ok: true, cpfs: filaOnlog(pendentesCodigo(montarPedidos(base), agora, cfg.codigos_janela_dias), agora, 40) });
+    var pedsF = montarPedidos(base), stF = (await fbLerOu(ONLOG_ST)) || {};
+    return resp({ ok: true, cpfs: filaOnlog(pendentesCodigo(pedsF, agora, cfg.codigos_janela_dias), agora, 40),
+      /* v9: os objetos para ler a SITUAÇÃO (c = código a consultar · s = último status conhecido · m = 1: abrir o detalhe) */
+      objetos: objetosOnlog(pedsF, agora, stF, cfg.onlog_janela_dias).map(function (a) { return { c: a.c, s: a.s, m: a.m }; }) });
+  }
+  if (d.fonte === 'onlog_status') {   /* v9 */
+    var itS = limparEntrada('onlog_status', d.itens);
+    if (d.acumular) {
+      var jaS = await fbLerOu(COD + '/entrada_status');
+      if (jaS && agora - Number(jaS.ts) < ENTRADA_VALE_MS && Array.isArray(jaS.itens)) itS = jaS.itens.concat(itS).slice(0, 500);
+    }
+    await fbReq('PUT', COD + '/entrada_status', { ts: agora, itens: itS });
+    var proc = null;
+    if (d.fim) { try { proc = await onlogStatusProcessar(agora); } catch (eS) { proc = { ok: false, erro: String(eS && eS.message || eS) }; } }
+    return resp({ ok: true, fonte: 'onlog_status', recebidos: itS.length, processado: proc });
   }
   var fonte = d.fonte === 'onlog' ? 'onlog' : (d.fonte === 'daniel' ? 'daniel' : '');
   if (!fonte) return resp({ ok: false, erro: 'fonte inválida' }, 400);
@@ -1038,9 +1230,15 @@ async function acaoAdminV3(acao, d, uid, agora) {
   if (acao === 'codigos_ticket') return resp({ ok: true, ticket: await novoTicket(uid, agora), vale_min: TICKET_VALE_MS / 60000 });
   if (acao === 'codigos_pendentes') {
     var base = await lerBase(false), cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
-    var pend = pendentesCodigo(montarPedidos(base), agora, cfg.codigos_janela_dias);
-    var lidos = await Promise.all([fbLerOu(COD + '/ultima'), fbLerOu(COD + '/rodadas', 'orderBy=' + encodeURIComponent('"$key"') + '&limitToLast=10')]);
+    var pedsP = montarPedidos(base);
+    var pend = pendentesCodigo(pedsP, agora, cfg.codigos_janela_dias);
+    var lidos = await Promise.all([fbLerOu(COD + '/ultima'), fbLerOu(COD + '/rodadas', 'orderBy=' + encodeURIComponent('"$key"') + '&limitToLast=10'),
+      fbLerOu(ONLOG_ST), fbLerOu(ONLOG_VISTOS), fbLerOu(COD + '/status_ultima')]);
+    var mapaO = lidos[2] || {};
     return resp({ ok: true, gerado_ts: agora,
+      /* v9: situação dos objetos na Onlog */
+      onlog: { alertas: onlogAlertas(pedsP, mapaO, lidos[3] || {}, agora, cfg.onlog_parado_dias), acompanhados: Object.keys(mapaO).length,
+        ultima: lidos[4] || null, parado_dias: Math.max(1, Number(cfg.onlog_parado_dias) || 2) },
       pendentes: pend.sort(function (a, b) { return a.tConf - b.tConf; }).map(function (p) {
         return { pedido: p.pedido, nome: p.nome, cpf: p.cpf, data: String(p.data || '').slice(0, 10), status: p.status, fornecedor: p.forn, comprado: p.fams.length > 0,
           onlog: p.onlog, pacote_de: p.pai, dias: R.duEntre(p.tConf, agora), revendedor: ehRevendedor(p.pedido) };
@@ -1049,6 +1247,18 @@ async function acaoAdminV3(acao, d, uid, agora) {
       config: { email_pacotes_modo: cfg.email_pacotes_modo, teste: cfg.email_atraso_teste || '' } });
   }
   if (acao === 'codigos_casar') return resp(await rodadaCodigos({ agora: agora, aplicar: d.aplicar === true }));
+  if (acao === 'codigos_onlog_processar') return resp(await onlogStatusProcessar(agora));   /* v9: se o coletor parou antes do fim */
+  if (acao === 'codigos_onlog_visto') {   /* v9: ✔ Visto num aviso da Onlog — some até a situação mudar */
+    var kV = String(d.k || '');
+    if (!/^[A-Za-z0-9_-]{3,40}$/.test(kV)) return resp({ ok: false, erro: 'pedido inválido' }, 400);
+    if (d.desfazer === true) { await fbReq('DELETE', ONLOG_VISTOS + '/' + kV); return resp({ ok: true, k: kV, visto: false }); }
+    var regV = await fbLerOu(ONLOG_ST + '/' + kV);
+    if (!regV) return resp({ ok: false, erro: 'esse pedido não tem leitura da Onlog' });
+    var tipoV = ['cancelado', 'devolucao', 'problema', 'parado'].indexOf(String(d.tipo)) >= 0 ? String(d.tipo) : '';
+    if (!tipoV) return resp({ ok: false, erro: 'tipo inválido' }, 400);
+    await fbReq('PUT', ONLOG_VISTOS + '/' + kV, { st: regV.st || '', tipo: tipoV, ts: agora, uid: uid });
+    return resp({ ok: true, k: kV, visto: true });
+  }
   if (acao === 'codigos_aplicar') {   /* resolver uma dúvida à mão (painel) */
     var itens = (Array.isArray(d.itens) ? d.itens : []).slice(0, 10).map(function (i) {
       i = i || {};
@@ -1116,7 +1326,8 @@ function coletorDaniel(ticket) {
 }
 function coletorOnlog(ticket) {
   var FN = 'https://vitaflow-proxy.netlify.app/.netlify/functions/logistica-painel';
-  var S = window._vfOnlog = { estado: 'iniciando', total: 0, feitos: 0, com_objeto: 0, objetos: 0, erros: 0, msg: '' };
+  var S = window._vfOnlog = { estado: 'iniciando', total: 0, feitos: 0, com_objeto: 0, objetos: 0, erros: 0, msg: '',
+    /* v9: leitura da situação dos objetos */ fase: 'cpf', st_total: 0, st_feitos: 0, st_lidos: 0, st_detalhes: 0, st_erros: 0, st_resultado: null };
   /* A aba da Onlog costuma ficar em 2º plano: lá o Chrome segura o setTimeout da página (até 1 por minuto). O relógio de um
      Worker não é segurado. Sem Worker (bloqueado), cai no setTimeout normal. */
   var relogio = null, esperas = {}, nEsp = 0;
@@ -1143,9 +1354,10 @@ function coletorOnlog(ticket) {
   function token() { var e = document.querySelector('[name=cf-turnstile-response]'); return !!(e && e.value); }
   function linhas(e) { return String((e && e.innerText) || '').split('\n').map(function (x) { return x.replace(/\s+/g, ' ').trim(); }).filter(Boolean); }
   var DATA = /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/;
-  /* bloco de UM objeto: "OBJETO <código real>" · AA… · operador · [DESTINATÁRIO…] · eventos (título, [cidade], data) */
+  function sem(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim(); }
+  /* bloco de UM objeto: "OBJETO <código real>" · AA… · operador · [DESTINATÁRIO…] · eventos (título, [detalhe], data), do mais antigo ao mais novo */
   function lerDetalhe(raiz) {
-    var ls = linhas(raiz), o = { aa: '', real: '', op: '', criado: '', status: '', quando: '', cep: '', nome: '' }, i;
+    var ls = linhas(raiz), o = { aa: '', real: '', op: '', criado: '', status: '', quando: '', cep: '', nome: '', det: '', evs: [], dev: 0 }, i, ini = -1;
     for (i = 0; i < ls.length; i++) {
       var mA = ls[i].match(/^AA\d{10}$/);
       if (mA && !o.aa) {
@@ -1157,11 +1369,25 @@ function coletorOnlog(ticket) {
       }
       var mN = ls[i].match(/^DESTINAT[ÁA]RIO:\s*(.+)$/i); if (mN) o.nome = mN[1];
       var mC = ls[i].match(/\d{5}-\d{3}(?!\d)/); if (mC && !DATA.test(ls[i])) o.cep = mC[0];
-      if (/^OBJETO CRIADO$/i.test(ls[i]) && DATA.test(ls[i + 1] || '')) o.criado = ls[i + 1];
+      if (/^OBJETO CRIADO$/i.test(ls[i]) && DATA.test(ls[i + 1] || '')) { o.criado = ls[i + 1]; if (ini < 0) ini = i; }
     }
-    for (i = ls.length - 1; i > 0; i--) {
-      if (DATA.test(ls[i])) { o.quando = ls[i]; o.status = /^[^\d]+ - [A-Z]{2}$/.test(ls[i - 1]) ? (ls[i - 2] || ls[i - 1]) : ls[i - 1]; break; }
-    }
+    /* v9: evento por evento — a linha de detalhe ("(cidade) ENDEREÇO INCORRETO." / "SAO PAULO - SP") não é o status */
+    var datas = [];
+    for (i = 0; i < ls.length; i++) if (DATA.test(ls[i])) datas.push(i);
+    datas.forEach(function (di, n) {
+      var a = (n === 0) ? ((ini >= 0 && ini < di) ? ini : di - 1) : datas[n - 1] + 1;
+      if (a < 0 || a > di - 1) return;
+      o.evs.push([ls[a], ls.slice(a + 1, di).join(' '), ls[di]]);
+    });
+    if (o.evs.length) { var u = o.evs[o.evs.length - 1]; o.status = u[0]; o.det = u[1]; o.quando = u[2]; }
+    /* o objeto entrou em devolução/cancelamento e não voltou a sair para entrega? (bipes posteriores não mudam isso) */
+    var iD = -1, iV = -1;
+    o.evs.forEach(function (e, n) {
+      var t = sem(e[0]);
+      if (/CANCELAD|DEVOLU|DEVOLVID|RETORNADO PARA O CLIENTE/.test(t)) iD = n;
+      if (/SAIDA PARA ENTREGA|^(OBJETO )?ENTREGUE|ASSINATURA DE ENCOMENDA/.test(t)) iV = n;
+    });
+    o.dev = (iD >= 0 && iV < iD) ? 1 : 0;
     return o;
   }
   async function fecharModal() {
@@ -1213,12 +1439,93 @@ function coletorOnlog(ticket) {
       if (b && abertos < 6) {
         abertos++; b.click();
         var abriu = await ate(function () { var m = document.querySelector('.modal.show'); return !!(m && String(m.innerText || '').indexOf(o.aa) >= 0); }, 8000);
-        if (abriu) { var det = lerDetalhe(document.querySelector('.modal.show')); if (det.aa === o.aa) { det.cep = det.cep || o.cep; if (!det.criado) det.criado = o.criado; o = det; } }
+        if (abriu) { var det = lerDetalhe(document.querySelector('.modal.show')); if (det.aa === o.aa) { det.cep = det.cep || o.cep; if (!det.criado) det.criado = o.criado; var stTab = o.status; o = det; if (stTab) o.status = stTab; } }   /* v9: o status que vale é o da tabela (o da Onlog) */
         await fecharModal(); await espera(400);
       }
+      delete o.evs; delete o.det;
       objs.push(o);
     }
     return { objetos: objs };
+  }
+  /* ---------------- v9: SITUAÇÃO dos objetos (consulta POR CÓDIGO, vários de uma vez) ---------------- */
+  async function consultarObjetos(codigos) {
+    var campo = document.querySelector('#txtObjetos'), div = document.getElementById('divRetornoRastreio'), btn = document.getElementById('btnConsultar');
+    var aba = document.querySelector('.btnTipo[data-tipo=objeto]');
+    if (!campo || !div || !btn || !aba || !window.jQuery) return { erro: 'a página da Onlog mudou' };
+    await fecharModal(); fecharAviso();
+    if (!(await ate(function () { return terminadas >= enviadas; }, 30000))) return { erro: 'a Onlog não respondeu a consulta anterior' };
+    if (!(await ate(token, 30000))) return { erro: 'verificacao', parar: true };   /* o Cloudflare não liberou sozinho → PARA (ninguém clica nele) */
+    aba.click(); await espera(200);
+    div.innerHTML = '';
+    window.jQuery(campo).val(codigos.join(',')).trigger('input').trigger('change');
+    var env0 = enviadas, ter0 = terminadas;
+    btn.click();
+    var semToken = false;
+    var voltou = await ate(function () {
+      if (!token()) semToken = true;
+      if (enviadas > env0) return terminadas > ter0 && terminadas >= enviadas;
+      return div.children.length > 0 || (semToken && token());
+    }, 25000);
+    if (!voltou) return { erro: 'a Onlog não respondeu' };
+    await espera(600);
+    fecharAviso();
+    var trs = [].slice.call(div.querySelectorAll('tbody tr'));
+    if (!trs.length) { var u = div.children.length ? lerDetalhe(div) : null; return { linhas: [], unico: (u && (u.aa || u.real)) ? u : null }; }
+    return { linhas: trs.map(function (tr) {
+      var tds = [].slice.call(tr.children).map(function (td) { return String(td.innerText || '').replace(/\s+/g, ' ').trim(); });
+      var aa = (tds[0] || '').match(/AA\d{10}/);
+      return aa ? { aa: aa[0], status: tds[3] || '', tr: tr } : null;
+    }).filter(Boolean) };
+  }
+  async function abrirDetalhe(l) {
+    var b = l.tr.querySelector('.btnVisualizarRastreio');
+    if (!b) return null;
+    b.click();
+    var modal = function () { return document.querySelector('.modal.show') || document.querySelector('#modal-default'); };
+    var abriu = await ate(function () { var m = modal(); return !!(m && String(m.innerText || '').indexOf(l.aa) >= 0); }, 8000);
+    if (!abriu) return null;
+    var det = lerDetalhe(modal());
+    return det.aa === l.aa ? det : null;
+  }
+  async function mandarStatus(itens, acumular, fim) {
+    var r = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ acao: 'codigos_entrada', ticket: ticket, fonte: 'onlog_status', itens: itens, acumular: acumular, fim: fim }) });
+    return r.json();
+  }
+  /* alvos: [{c: código a consultar (AA ou o da transportadora), s: último status conhecido, m: 1 = abrir o detalhe}] */
+  async function varrerStatus(alvos) {
+    S.fase = 'status'; S.st_total = alvos.length;
+    var conhecido = {}, saida = [], primeiro = true, detalhes = 0, t0 = Date.now(), parou = false, ultimaResp = null;
+    alvos.forEach(function (a) { conhecido[a.c] = a; });
+    for (var i = 0; i < alvos.length; i += 20) {
+      var lote = alvos.slice(i, i + 20), res;
+      try { res = await consultarObjetos(lote.map(function (a) { return a.c; })); } catch (e) { res = { erro: String(e && e.message || e).slice(0, 60) }; }
+      if (res.parar) { parou = true; S.msg = 'O Cloudflare da Onlog pediu confirmação durante a leitura da situação: clique no quadradinho na página e peça a rodada de novo.'; break; }
+      if (res.erro) { S.st_erros++; await espera(3500); continue; }
+      if (res.unico) { saida.push({ aa: res.unico.aa, real: res.unico.real, op: res.unico.op, st: res.unico.status, evs: res.unico.evs.slice(-25) }); S.st_lidos++; }
+      var achados = {};
+      for (var j = 0; j < res.linhas.length; j++) {
+        var l = res.linhas[j], k = conhecido[l.aa], it = { aa: l.aa, real: '', op: '', st: l.status, evs: [] };
+        achados[l.aa] = 1;
+        var precisa = !k || k.m || sem(k.s) !== sem(l.status);
+        if (!precisa) it.igual = 1;
+        else if (detalhes < 170 && Date.now() - t0 < 15 * 60000) {
+          var det = null;
+          try { det = await abrirDetalhe(l); } catch (e2) { det = null; }
+          if (det) { detalhes++; it.real = det.real; it.op = det.op; it.evs = det.evs.slice(-25); if (det.real) achados[det.real] = 1; }
+          await espera(500);
+        }
+        saida.push(it); S.st_lidos++; S.st_detalhes = detalhes;
+      }
+      await fecharModal();
+      /* consultado pelo AA e não veio na resposta = a Onlog não tem esse objeto */
+      lote.forEach(function (a) { if (/^AA\d{10}$/.test(a.c) && !achados[a.c] && !(res.unico && res.unico.aa === a.c)) saida.push({ c: a.c, n: 1 }); });
+      S.st_feitos = Math.min(alvos.length, i + 20);
+      if (saida.length >= 40) { ultimaResp = await mandarStatus(saida, !primeiro, false); primeiro = false; saida = []; }
+      await espera(3500);   /* sem pressa, como na consulta por CPF */
+    }
+    ultimaResp = await mandarStatus(saida, !primeiro, true);   /* fim: a função processa o que chegou (mesmo se parou no meio) */
+    S.st_resultado = (ultimaResp && ultimaResp.processado) || ultimaResp || null;
+    return !parou;
   }
   async function mandar(itens, acumular) {
     var r = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ acao: 'codigos_entrada', ticket: ticket, fonte: 'onlog', itens: itens, acumular: acumular }) });
@@ -1229,9 +1536,9 @@ function coletorOnlog(ticket) {
       var rf = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ acao: 'codigos_fila', ticket: ticket }) });
       var fila = await rf.json();
       if (!fila || !fila.ok) { S.estado = 'erro'; S.msg = (fila && fila.erro) || 'fila'; return; }
-      var cpfs = fila.cpfs || [], lote = [], primeiro = true;
-      S.total = cpfs.length; S.estado = 'rodando';
-      if (!cpfs.length) { await mandar([], false); S.estado = 'fim'; return; }
+      var cpfs = fila.cpfs || [], lote = [], primeiro = true, objetosSt = fila.objetos || [];
+      S.total = cpfs.length; S.st_total = objetosSt.length; S.estado = 'rodando';
+      if (!cpfs.length) await mandar([], false);
       for (var i = 0; i < cpfs.length; i++) {
         var res;
         try { res = await consultar(cpfs[i].cpf, cpfs[i].desde); } catch (e) { res = { erro: String(e && e.message || e).slice(0, 60) }; }
@@ -1243,6 +1550,8 @@ function coletorOnlog(ticket) {
         await espera(3500);   /* sem pressa: uma consulta de cada vez, como uma pessoa faria */
       }
       if (lote.length) await mandar(lote, !primeiro);
+      /* v9: depois dos CPFs, a SITUAÇÃO dos objetos em aberto (só se o Cloudflare não parou a 1ª parte) */
+      if (S.estado === 'rodando' && objetosSt.length) { var okSt = await varrerStatus(objetosSt); if (!okSt) S.estado = 'parado'; }
       if (S.estado === 'rodando') S.estado = 'fim';
     } catch (e) { S.estado = 'erro'; S.msg = String(e && e.message || e).slice(0, 120); }
   })();
@@ -1770,4 +2079,6 @@ exports.lib = { lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros:
   cuponsAtraso: cuponsAtraso, foraDoPrazo: foraDoPrazo, prazoMaximo: prazoMaximo, montarEmailCupom: montarEmailCupom, cuponsGerados: cuponsGerados,
   cupomSituacao: cupomSituacao, cfgCupom: cfgCupom, calcularParados: calcularParados, avisoParados: avisoParados, textoParados: textoParados,
   codigoCupomNovo: codigoCupomNovo, fsLerCupom: fsLerCupom, cuponsEnviar: cuponsEnviar, vistoVale: vistoVale /* v5 */, textoAtrasosPostagem: textoAtrasosPostagem /* v7 */,
-  calcularPostagens: calcularPostagens, decidirPostagem: decidirPostagem, montarEmailPostagem: montarEmailPostagem, frasesAviso: frasesAviso /* v6 */ };
+  calcularPostagens: calcularPostagens, decidirPostagem: decidirPostagem, montarEmailPostagem: montarEmailPostagem, frasesAviso: frasesAviso /* v6 */,
+  /* v9 */ onlogSituacao: onlogSituacao, objetosOnlog: objetosOnlog, onlogRegistro: onlogRegistro, onlogMontar: onlogMontar, onlogAlertas: onlogAlertas,
+  onlogStatusProcessar: onlogStatusProcessar, coletorOnlog: coletorOnlog };
