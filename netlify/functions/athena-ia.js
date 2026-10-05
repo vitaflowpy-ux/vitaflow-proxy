@@ -536,6 +536,10 @@ async function montarLista(colecao, termo, semLoja){
         else if (lj.disponiveis.length) linhas = lj.disponiveis;
       } catch (e) {}
     }
+    // a IA pediu DOIS produtos numa lista só ("enantato cipionato"): cada palavra existe, só não existem juntas → mostra os dois
+    if (!linhas.length && !esgotado && ach.fortes.length >= 2 && ach.fortes.length <= 3 && ach.fortes.every(function(w){ return ach.conhecidas.indexOf(w) >= 0; })) {
+      linhas = ciLinhas(ciPorTermos(prods, ach.fortes));
+    }
   } else {
     const dados = (colecao && COLECOES.indexOf(colecao) >= 0) ? await buscarCache(colecao) : '';
     linhas = String(dados || '').split('\n').filter(Boolean);
@@ -544,10 +548,25 @@ async function montarLista(colecao, termo, semLoja){
   return { linhas: unicas, produtoLista: parseProdutos(unicas), esgotado: esgotado };
 }
 // v90: a IA mandou abrir uma lista e ela veio VAZIA → resposta honesta (antes ficava só a fala "já te mostro 👇", sem lista).
-function msgListaVazia(abertura, termo){
+// Se a fala da IA já era uma EXPLICAÇÃO (texto longo), ela é mantida — só sai o "👇" que ficaria apontando para nada.
+function msgListaVazia(abertura, termo, fala){
   const fim = '\n\nMe diga outro produto ou digite *menu* para ver as categorias.';
-  if (abertura && abertura.esgotado) return abertura.esgotado + fim;
+  const f = String(fala || '').replace(/\s*👇\s*$/, '').trim();
+  const longa = f.length >= 200;
+  if (abertura && abertura.esgotado) return (longa ? f + '\n\n' : '') + abertura.esgotado + fim;
+  if (longa) return f;
   return 'Não encontrei *' + String(termo).trim() + '* disponível no momento. 😕' + fim;
+}
+// v90: a parte FIXA do prompt (regras + fichas + catálogo) vai marcada para o cache da Anthropic — o catálogo agora vai
+// completo (maior) e, com o cache, a chamada fica mais rápida e mais barata. O que muda a cada mensagem vai num 2º bloco.
+const FIM_CATALOGO = '=== FIM DO CATÁLOGO ===';
+function sysComCache(sys){
+  const s = String(sys || ''), i = s.indexOf(FIM_CATALOGO);
+  if (i < 0) return s;
+  const a = s.slice(0, i + FIM_CATALOGO.length), b = s.slice(i + FIM_CATALOGO.length).trim();
+  const blocos = [{ type: 'text', text: a, cache_control: { type: 'ephemeral' } }];
+  if (b) blocos.push({ type: 'text', text: b });
+  return blocos;
 }
 
 // ── SYSTEM: cópia FIEL do prompt da athena-ia-background.js ───────────────────
@@ -685,7 +704,7 @@ async function chamarModelo(modelo, sys, mensagens, maxTokens, timeoutMs){
     const r = await fetchT('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: modelo, max_tokens: maxTokens || 500, system: sys, messages: mensagens })
+      body: JSON.stringify({ model: modelo, max_tokens: maxTokens || 500, system: sysComCache(sys), messages: mensagens })
     }, timeoutMs || 7000);
     const d = await r.json();
     if (r.status === 200 && d && d.content && d.content[0] && d.content[0].text) return d.content[0].text.trim();
@@ -1086,7 +1105,7 @@ exports.handler = async (event) => {
 
     let sys = SYSTEM
       + '\n\n=== FICHAS TÉCNICAS OFICIAIS (fonte da verdade p/ composição/o que é — use SÓ isto; NÃO invente) ===\n' + FICHAS_TECNICAS
-      + '\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n' + catalogo;
+      + '\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n' + catalogo + '\n' + FIM_CATALOGO;
     if (promoContext) {
       sys += '\n\n=== PROMOÇÕES E DESCONTOS (regras REAIS de hoje — use SOMENTE isto, NÃO invente promoção) ===\n' + promoContext;
     }
@@ -1201,7 +1220,7 @@ exports.handler = async (event) => {
         return { statusCode:200, headers, body: JSON.stringify({ resposta: corpo, abriuLista:true }) };
       }
       if (String(termo).trim()) {   // v90: lista vazia → fala a verdade (esgotado / não encontrei), sem "👇" pendurado
-        const vazia = msgListaVazia(abertura, termo);
+        const vazia = msgListaVazia(abertura, termo, replyLimpo);
         await salvarHistorico(phone, historico.concat([{ role:'user', content: mensagem }, { role:'assistant', content: vazia }]));
         console.log('[IA-SYNC] LISTA vazia | termo:', termo, '| esgotado:', !!(abertura && abertura.esgotado));
         return { statusCode:200, headers, body: JSON.stringify({ resposta: vazia, abriuLista:false }) };
