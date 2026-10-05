@@ -263,6 +263,8 @@ const IA_SYNC_ATIVA = process.env.IA_SYNC_ATIVA !== 'false';
 // antigo de 7,5s (6,5s de prazo interno) as mais lentas caíam no 👀 sem necessidade.
 // Estourou mesmo assim: cai no comportamento antigo, sem prejuízo.
 const IA_SYNC_TIMEOUT_MS = parseInt(process.env.IA_SYNC_TIMEOUT_MS || '8200', 10);
+// v90: a Athena também tenta a resposta direta. Para voltar ao "👀" sempre: IA_SYNC_ATHENA=false no Netlify.
+const IA_SYNC_ATHENA = process.env.IA_SYNC_ATHENA !== 'false';
 
 // Chama o cérebro síncrono. Devolve o texto pronto, ou '' se não deu tempo/falhou.
 async function iaSincrona(phone, mensagem, contexto){
@@ -272,7 +274,8 @@ async function iaSincrona(phone, mensagem, contexto){
       body: JSON.stringify({
         phone: phone, mensagem: mensagem, contexto: contexto || '',
         promoContext: await contextoPromo(),
-        prazoMs: IA_SYNC_TIMEOUT_MS - 700
+        prazoMs: IA_SYNC_TIMEOUT_MS - 700,
+        semParcial: ASSISTENTE_ATUAL === 'Athena'   // v90: a Athena tem o caminho do "👀" — só aceita resposta COMPLETA
       })
     }, IA_SYNC_TIMEOUT_MS);
     if (!r.ok) { console.log('[IA-SYNC] HTTP', r.status); return ''; }
@@ -297,6 +300,12 @@ async function responderComIA(sid, mensagem, contexto, respond){
     // o lead continua tendo pra onde ir e a venda continua possível.
     console.log('[IA-SYNC] sem texto a tempo — devolvendo o menu em vez do 👀 (Stella).');
     return respond(MSG_IA_SEM_RESPOSTA + '\n\n' + buildMenuPrincipal());
+  }
+  // v90: a Athena também tenta a resposta direta (1 mensagem, sem "👀"). Não deu tempo → segue o caminho de sempre.
+  if (IA_SYNC_ATIVA && IA_SYNC_ATHENA) {
+    const textoA = await iaSincrona(sid, mensagem, contexto);
+    if (textoA && textoA.trim()) return respond(textoA);
+    console.log('[IA-SYNC] Athena: sem resposta completa a tempo — segue pelo 👀 (IA assíncrona).');
   }
   await dispararIA(sid, mensagem, contexto);   // AGUARDA o disparo sair (Background Function responde 202 na hora); sem o await o Lambda congela no return e o POST nunca chega
   return respond('Deixa eu ver isso pra você… 👀');

@@ -702,6 +702,9 @@ FARMÁCIA E ESTÉTICA: Clembuterol (beta-2 agonista, termogênico — NÃO é ho
 // v90: resposta em FLUXO. Antes, se o modelo não terminasse de escrever dentro do prazo, a resposta inteira era jogada fora
 // e o lead recebia "preciso de um minutinho" + menu (dúvida longa ficava SEM resposta). Agora o texto vai sendo recebido aos
 // poucos: se o prazo acabar, devolve o que já foi escrito, cortado no fim da última frase completa.
+// Quem chama decide: a Stella aceita a resposta parcial (não tem outro caminho); a Athena manda semParcial:true,
+// porque para ela existe o segundo caminho ("👀" + resposta completa pela IA assíncrona).
+let ACEITA_PARCIAL = true;
 function cortarNoFimDaFrase(txt){
   let t = String(txt || '').replace(/\[\[[^\]]*$/, '');   // marcador pela metade nunca vai para o cliente
   let fim = -1;
@@ -751,7 +754,7 @@ async function chamarModelo(modelo, sys, mensagens, maxTokens, timeoutMs){
     console.log('[IA-SYNC] modelo', modelo, 'interrompido:', e.message, '| ja escrito:', texto.length, 'caracteres');
   } finally { clearTimeout(timer); }
   if (completo) return texto.trim() || null;
-  if (status === 200 && texto.length >= 150) {   // o prazo acabou no meio: devolve o que já veio
+  if (ACEITA_PARCIAL && status === 200 && texto.length >= 150) {   // o prazo acabou no meio: devolve o que já veio
     const cortado = cortarNoFimDaFrase(texto);
     if (cortado.length >= 120) { console.log('[IA-SYNC] prazo acabou — devolvendo resposta PARCIAL:', cortado.length, 'de', texto.length); return cortado; }
   }
@@ -1136,6 +1139,7 @@ exports.handler = async (event) => {
     const mensagem = (body.mensagem || '').toString().trim();
     const contexto = (body.contexto || '').toString().trim();
     const promoContext = (body.promoContext || '').toString().trim();
+    ACEITA_PARCIAL = !body.semParcial;   // v90: Athena pede só resposta COMPLETA (senão cai no "👀")
     // Prazo total desta function. O Netlify corta em 10s e o botconversa.js ainda precisa
     // responder depois — então trabalhamos com folga.
     const PRAZO_MS = Math.max(3000, Math.min(8000, parseInt(body.prazoMs, 10) || 7000));
