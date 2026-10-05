@@ -1,5 +1,26 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v90 (05/10/2026 — ordem do Thiago depois de duas conversas reais: "ela não reconhece nada… não reconheceu a linha diamond da
+//   Landerlan nem o produto DHB… tem que reprogramá-la para ficar inteligente… veja o que ela tem que melhorar e resolva
+//   definitivamente"). Resto = v89.
+//   CAUSA: o reconhecimento dependia de listas escritas à mão (DICT_PRODUTOS, MARCAS, termos dos menus) e do cache só com produto
+//   disponível. O catálogo foi renomeado ("Deca", "Cipionato", "Durateston", "Landerlan Diamond/Gold/Silver") e as listas não.
+//   Medido contra o catálogo real de 05/10: "nandrolona" → "não está disponível" (20 Decas à venda); "deca" → "Você quis dizer
+//   Nandrolona?" → não disponível; menu Hormônios › 8 vazio; Cipionato e Deca caíam em "Outros hormônios"; "linha diamond", "dhb",
+//   "t3", "t4", "tg", "clomid" iam para a IA; "primobolan landerlan diamond" mostrava a Landerlan SILVER; pergunta de preço com
+//   "?" ia para a IA em vez de abrir a lista; a coleção "outros" do cache está parada desde 21/08 e trazia produto e preço velhos.
+//   O QUE MUDOU (bloco "CATÁLOGO INTELIGENTE", igual nos 3 arquivos da Athena):
+//   1) o pedido do cliente é comparado com o CATÁLOGO DO DIA, palavra por palavra (nome, dosagem, marca, linha, sinônimos da
+//      substância) — qualquer produto, marca ou linha que existir no site é reconhecido sem precisar cadastrar nada aqui;
+//   2) saudação e "quanto está o valor da…", "tem…?", "linha…" são tirados antes de procurar; pergunta de PREÇO/ESTOQUE com
+//      produto abre a lista (dúvida de uso continua indo para a IA);
+//   3) marca/linha/dosagem pedida que não está disponível: a Athena diz isso e mostra as opções do produto (nunca mais mostra
+//      outra linha calada);
+//   4) nada disponível: pergunta à LOJA se o produto existe e está ESGOTADO e responde "está esgotado no momento";
+//   5) menus de Hormônios e o dicionário passam a achar os produtos pelos sinônimos (Deca = nandrolona, Cipionato = testosterona…);
+//      palavra que já é o nome no catálogo ("deca", "durateston") abre direto, sem "Você quis dizer…?";
+//   6) coleção do cache parada há mais de 7 dias é ignorada;
+//   7) a IA recebe o que o catálogo e a loja acharam para a mensagem (disponível / esgotado / não existe).
 // v89 (04/10/2026 — Thiago, depois de aprovar o pop-up e a página de Promoções: "agora pode configurar a athena e publicar"). Só
 //   DIVULGAÇÃO, nenhuma conta muda: (1) MSG_FRETE_AUTO (opção 8 / "promo") com o mesmo texto do pop-up — ênfase no frete grátis,
 //   SEGURO GRÁTIS em destaque, "não acumula / você escolhe" discreto, sem listar PAC/SEDEX; (2) aviso do frete grátis na saudação
@@ -2412,6 +2433,373 @@ function aplicarExclusao(linhas, excluir){
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// CATÁLOGO INTELIGENTE (bloco "ci") — 05/10/2026 — MESMO BLOCO em 3 arquivos: botconversa.js,
+// athena-ia.js e athena-ia-background.js. Mudou aqui → mudar nos 3.
+// Por que existe (ordem do Thiago, 05/10: "ela não reconhece nada… tem que reprogramá-la para ficar
+// inteligente… resolva definitivamente"): o reconhecimento de produto dependia de LISTAS ESCRITAS À
+// MÃO (dicionário, marcas, termos de menu). Quando os nomes do catálogo mudaram ("Deca", "Cipionato",
+// "Durateston", linha "Landerlan Diamond"…), as listas ficaram para trás: "nandrolona" respondia
+// "não está disponível" com 20 Decas à venda, "linha diamond" e "DHB" iam para a IA, que negava.
+// Agora o entendimento sai DO PRÓPRIO CATÁLOGO, a cada mensagem:
+//   1) cada produto vira um conjunto de palavras (nome, dosagem, marca, linha) + sinônimos da
+//      substância (CI_SINONIMOS: deca ↔ nandrolona, cipionato → testosterona, stanozolol ↔ winstrol…);
+//   2) o pedido do cliente é limpo (saudação, "quanto está o valor da", "linha", "tem"…) e cada
+//      palavra que sobra tem que existir no produto (exata, início de palavra, código colado ou
+//      1 letra errada em palavra longa);
+//   3) nada disponível com aquelas palavras → pergunta à LOJA (busca pública do site) se o produto
+//      existe e está ESGOTADO — a Athena passa a dizer "está esgotado no momento" em vez de "não consta";
+//   4) coleção do cache parada há mais de 7 dias é ignorada (a "outros" estava parada desde 21/08 e
+//      trazia produto e preço antigos).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','outros','10-mais-vendidos'];
+const CI_VALIDADE_MS = 7 * 24 * 3600 * 1000;
+const CI_LOJA_SUGGEST = 'https://vitaflowoficial.com/search/suggest.json';
+const CI_LOJA_TIMEOUT_MS = 2500;
+
+// palavra do NOME do produto → palavras que o cliente também usa para ele (substância, nome de
+// referência, apelido). Só conhecimento estável de farmacologia/mercado; nada de preço ou estoque.
+const CI_SINONIMOS = {
+  deca: ['nandrolona','durabolin','decadurabolin','decanoato'], decamix: ['nandrolona','deca'],
+  npp: ['nandrolona','fenilpropionato'],
+  cipionato: ['testosterona','cipio','cypionate','deposteron'],
+  durateston: ['testosterona','sustanon','dura'],
+  stanozolol: ['winstrol','stano','wins','estano','estanozolol'],
+  oxandrolona: ['anavar','oxa','oxan'],
+  hemogenin: ['anadrol','oximetolona','hemo'],
+  dianabol: ['metandienona','dbol','diana','metandrostenolona'],
+  primobolan: ['metenolona','primo'],
+  boldenona: ['equipoise','bold','undecilenato'],
+  masteron: ['drostanolona','master','maste'],
+  trembolona: ['tren','trembo','trenbolona','trenbolone','parabolan'],
+  trembo: ['trembolona','tren'], tritrembo: ['trembolona','tren'], tritrembolona: ['trembolona','tren','tritrembo'],
+  halotestin: ['fluoximesterona','halo'], turinabol: ['tbol','clorodehidrometiltestosterona'],
+  proviron: ['mesterolona'], superdrol: ['metildrostanolona','metasterona'],
+  trestolona: ['ment'], dhb: ['dihidroboldenona','dihydroboldenone','dihidro','1testosterona'],
+  clomifeno: ['clomid','indux'], tamoxifeno: ['nolvadex','tamox'], anastrozol: ['arimidex'],
+  cabergolina: ['dostinex'], exemestano: ['aromasin'],
+  t3: ['cytomel','liotironina'], t4: ['levotiroxina','puran'],
+  clembuterol: ['clenbuterol','clen','clembu','clenbu','lavizoo'],
+  hcg: ['gonadotrofina','gonadotropina','pregnyl'],
+  pramil: ['viagra','sildenafila','sildenafil'], tadalafila: ['cialis','tadalafil'],
+  stavigile: ['modafinil','modafinila'], metilfenidato: ['ritalina'], ritalina: ['metilfenidato'],
+  venvanse: ['vyvanse','lisdexanfetamina','venvans'],
+  isotretinoina: ['roacutan','acutan'], zolpidem: ['stilnox'], clonazepam: ['rivotril'], rivotril: ['clonazepam'],
+  semaglutida: ['ozempic','wegovy','sema','semaglutide'],
+  tirzepatida: ['mounjaro','tirze','tirzepatide'],
+  // marcas comerciais de tirzepatida no catálogo (confirmadas pelo Thiago em 23/09/2026)
+  tg: ['tirzepatida'], tirzec: ['tirzepatida'], lipoland: ['tirzepatida'], lipoless: ['tirzepatida'], mounjaro: ['tirzepatida'],
+  t36: ['tirzepatida'], slimex: ['tirzepatida'], tirzedral: ['tirzepatida'], gluconex: ['tirzepatida'],
+  retatrutida: ['reta','retatrutide'],
+  gh: ['hgh','somatropina','somatotropina'],
+  botox: ['toxina','botulinica'], bacteriostatica: ['bac','bacteriostatic'],
+  igf1: ['igf'], ghkcu: ['ghk'], bpc157: ['bpc'], tb500: ['tb','timosina'], motsc: ['mots'], pt141: ['bremelanotide','bremelanotida'],
+  ipamorelin: ['ipa','ipamo','ipamorelina'], tesamorelin: ['tesa','tesamorelina'], sermorelin: ['sermorelina'],
+  melanotan: ['mt2','melanotan2'], epitalon: ['epithalon'], kisspeptin: ['kisspeptina'],
+  ostarine: ['mk2866','ostarina'], ligandrol: ['lgd','lgd4033'], cardarine: ['gw501516','gw','cardarina'],
+  mk677: ['ibutamoren'], rad140: ['testolone','rad'], andarine: ['s4','andarina'], stenabolic: ['sr9009'],
+  ii: ['2'], '2': ['ii'], iii: ['3'],
+  minoxidil: ['rogaine'], melatonina: ['melatonin'], sibutramina: ['sibutramine']
+};
+// palavras do pedido que NÃO são nome de produto (saudação, intenção, ligação)
+const CI_STOP = ('a o e as os um uma uns umas de da do das dos em no na nos nas pra pro pras pros para por com sem que qual quais ' +
+  'oi ola opa ei bom boa dia tarde noite tudo bem blz beleza obrigado obrigada valeu por favor pfv pf ' +
+  'eu me meu minha voce voces vc vcs te tem teria teriam tenho ter queria quero gostaria preciso procuro procurando busco ' +
+  'comprar compro ver saber olhar conhecer pegar levar pedir encomendar adquirir interesse interessado interessada ' +
+  'quanto quanta quantos esta estao ta tao fica ficam sai saem custa custam custo valor valores preco precos tabela ' +
+  'disponivel disponiveis disponibilidade estoque trabalha trabalham vende vendem chegou chegaram ainda agora hoje ' +
+  'linha linhas marca marcas fabricante laboratorio lab produto produtos item itens opcao opcoes tipo tipos versao ' +
+  'ai aqui la esse essa esses essas este esta isso aquele aquela dele dela ' +
+  'so somente apenas tambem mais muito pouco algum alguma alguns algumas outro outra outros outras ' +
+  'pode podem posso poderia consegue manda mandar passa passar mostra mostrar me informa informar diz dizer fala falar ' +
+  'sobre mesmo mesma ne nao sim ok certo entao como onde quando porque').split(/\s+/).reduce(function(o,w){ o[w]=1; return o; }, {});
+// palavras de FORMA/APRESENTAÇÃO: sozinhas não identificam produto nenhum
+const CI_FRACAS = ('oral injetavel aquoso oleoso caneta total ampola ampolas frasco frascos bujao bujoes unico unica ' +
+  'liofilizada liofilizado diluida diluido comprimidos comprimido capsulas capsula tablets tabletes plus forte mix black pen ' +
+  'doses dose cliques generico manipulado manipulada caixa refil spray nasal creme gel gotas').split(/\s+/).reduce(function(o,w){ o[w]=1; return o; }, {});
+
+function ciNorm(s){
+  return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ç/g, 'c');
+}
+// texto → palavras; junta número + unidade ("100 mg" → "100mg", "5000 UI" → "5000ui", "12,5mg" → "12.5mg")
+function ciPalavras(s){
+  var t = ciNorm(s).replace(/(\d),(\d)/g, '$1.$2')
+    .replace(/(\d+(?:\.\d+)?)\s*(mcg|mg|ml|ui|iu|kg|g|u)\b/g, function(_m, n, u){ return n + (u === 'iu' || u === 'u' ? 'ui' : u); });
+  return t.split(/[^a-z0-9.+\-]+/).map(function(w){ return w.replace(/^[.\-+]+|[.\-]+$/g, ''); }).filter(Boolean);
+}
+function ciColar(w){ return String(w).replace(/[.\-+]/g, ''); }
+function ciEhDose(w){ return /^\d+(\.\d+)?(mcg|mg|ml|ui|kg|g)?$/.test(w); }
+// 1 letra de diferença (troca, falta ou sobra)
+function ciDiff1(a, b){
+  if (a === b) return true;
+  var la = a.length, lb = b.length; if (Math.abs(la - lb) > 1) return false;
+  var i = 0, j = 0, d = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++d > 1) return false;
+    if (la > lb) i++; else if (lb > la) j++; else { i++; j++; }
+  }
+  return d + (la - i) + (lb - j) <= 1;
+}
+// português/inglês e plural: "tirzepatide" ~ "tirzepatida", "seringas" ~ "seringa"
+function ciRaiz(w){
+  var t = String(w).replace(/ph/g, 'f').replace(/th/g, 't').replace(/y/g, 'i').replace(/([a-z])\1+/g, '$1');
+  if (t.length > 5) t = t.replace(/(ina|ine|in)$/, 'in').replace(/(ida|ide|id)$/, 'id').replace(/(ona|one|on)$/, 'on').replace(/(ol|ole)$/, 'ol');
+  if (t.length > 4) t = t.replace(/(oes|aes)$/, 'ao').replace(/s$/, '');
+  return t;
+}
+
+// Um produto do catálogo, pronto para comparar. linha = "Nome|preço" (formato do cache).
+function ciProduto(linha, fonte){
+  var nome = String(linha).split('|')[0].trim();
+  var i = nome.lastIndexOf(' - ');
+  if (i > 0 && (nome.slice(i).indexOf(')') >= 0 || nome.slice(i).indexOf('(') >= 0)) i = -1;   // " - " dentro de parênteses não separa marca
+  var base = i > 0 ? nome.slice(0, i) : nome, marca = i > 0 ? nome.slice(i + 3) : '';
+  var set = {}, raizes = {};
+  function add(w){ if (!w) return; set[w] = 1; var c = ciColar(w); if (c) set[c] = 1; if (!ciEhDose(c) && c.length >= 4) raizes[ciRaiz(c)] = 1; }
+  var ws = ciPalavras(nome);
+  for (var k = 0; k < ws.length; k++) {
+    add(ws[k]);
+    var partes = ws[k].split(/[.\-+]/).filter(Boolean);
+    if (partes.length > 1 && !ciEhDose(ws[k])) partes.forEach(add);            // "bpc-157" → bpc, 157
+    var ld = ciColar(ws[k]).match(/^([a-z]{2,})(\d+)$/);                        // "igf1" → igf, 1 · "rad140" → rad, 140
+    if (ld) { add(ld[1]); add(ld[2]); }
+    if (k + 1 < ws.length) {
+      var par = ciColar(ws[k]) + ciColar(ws[k + 1]);
+      if (/[a-z]/.test(ws[k]) && /^\d/.test(ws[k + 1]) && !ciEhDose(ws[k + 1]) || ws[k].length <= 3 && /^\d+$/.test(ws[k + 1])) set[par] = 1;   // "mk 677" → mk677
+    }
+  }
+  // sinônimos da substância
+  for (var volta = 0; volta < 3; volta++) {      // em cadeia: lipoless → tirzepatida → mounjaro
+    var novos = 0;
+    Object.keys(set).forEach(function(w){ var s = CI_SINONIMOS[w]; if (s) s.forEach(function(x){ if (!set[x]) { set[x] = 1; novos++; if (x.length >= 4) raizes[ciRaiz(x)] = 1; } }); });
+    if (!novos) break;
+  }
+  // família = o que vem antes da dosagem ("Enantato de testosterona", "Primobolan oral", "GH")
+  var fam = [], bw = base.split(/\s+/);
+  for (var q = 0; q < bw.length; q++) {
+    if (/^\(/.test(bw[q])) break;
+    if (q > 0 && /^\d+([.,]\d+)?(mcg|mg|ml|ui|iu|kg|g|u|%)$/i.test(bw[q])) break;
+    fam.push(bw[q]);
+  }
+  return { linha: String(linha), nome: nome, base: base, marca: marca, familia: fam.join(' ').trim() || base, set: set, raizes: raizes, fonte: fonte || '' };
+}
+// a palavra do cliente existe neste produto?  vocab = todas as palavras do catálogo (para decidir exata × início)
+function ciCasa(w, p, vocab){
+  var c = ciColar(w);
+  if (p.set[w] || p.set[c]) return true;
+  if (ciEhDose(c)) return false;                                   // dosagem só exata (100mg ≠ 1000mg)
+  if (vocab && (vocab[w] || vocab[c])) return false;               // a palavra existe no catálogo → só vale exata ("deca" não casa "decamix")
+  if (c.length >= 4) {
+    if (p.raizes[ciRaiz(c)]) return true;
+    for (var k in p.set) { if (k.length > c.length && k.indexOf(c) === 0 && !/^\d/.test(k)) return true; }   // início: "primo" → primobolan
+  }
+  if (c.length >= 6) { for (var k2 in p.set) { if (k2.length >= 5 && !/^\d/.test(k2) && ciDiff1(c, k2)) return true; } }   // 1 letra errada
+  return false;
+}
+// limpa o pedido: tira saudação/intenção e devolve só as palavras que podem ser de produto
+function ciPalavrasDoPedido(texto){
+  var ws = ciPalavras(String(texto || '').replace(/(\d),(\d)/g, '$1.$2').replace(/[?!¿¡"'“”‘’()\[\]{}<>*_~`|\\\/:;,]+/g, ' '));
+  var out = [], visto = {};
+  for (var i = 0; i < ws.length; i++) {
+    var w = ws[i];
+    if (CI_STOP[w] && !/\d/.test(w)) continue;
+    if (w.length < 2 && !/\d/.test(w)) continue;
+    if (!visto[w]) { visto[w] = 1; out.push(w); }
+  }
+  return out;
+}
+function ciVocab(prods){ var v = {}; prods.forEach(function(p){ for (var k in p.set) v[k] = 1; }); return v; }
+function ciUnicos(prods){ var v = {}, o = []; prods.forEach(function(p){ if (!v[p.linha]) { v[p.linha] = 1; o.push(p); } }); return o; }
+
+// Lê o cache. Coleção parada há mais de 7 dias fica de fora (dado velho = produto e preço errados).
+var _ciMem = { em: 0, prods: null, velhas: [] };
+function ciDataMs(v){ if (v == null || v === '') return 0; if (typeof v === 'number') return v; var t = Date.parse(String(v)); return isNaN(t) ? 0 : t; }
+async function ciCarregar(lerColecao){
+  var agora = Date.now();
+  if (_ciMem.prods && agora - _ciMem.em < 60000) return _ciMem.prods;
+  var brutos = await Promise.all(CI_COLECOES.map(function(c){ return lerColecao(c).catch(function(){ return null; }); }));
+  var prods = [], velhas = [];
+  brutos.forEach(function(d, i){
+    if (!d) return;
+    var dados = (typeof d === 'string') ? d : (d.dados || '');
+    var quando = (typeof d === 'string') ? 0 : ciDataMs(d.atualizado_em);
+    if (quando && agora - quando > CI_VALIDADE_MS) { velhas.push(CI_COLECOES[i]); return; }
+    String(dados).split('\n').forEach(function(l){ l = l.trim(); if (l && l.indexOf('|') > 0) prods.push(ciProduto(l, CI_COLECOES[i])); });
+  });
+  prods = ciUnicos(prods);
+  if (velhas.length) console.log('[CI] colecoes ignoradas (cache parado ha mais de 7 dias):', velhas.join(', '));
+  if (prods.length) _ciMem = { em: agora, prods: prods, velhas: velhas };
+  return prods;
+}
+
+// Procura o pedido no catálogo DISPONÍVEL.
+//   exatos   = produtos que têm TODAS as palavras do pedido
+//   proximos = quando não há exato: os que têm mais palavras FORTES do pedido (+ quais faltaram)
+function ciProcurar(texto, prods){
+  var ws = ciPalavrasDoPedido(texto), vocab = ciVocab(prods);
+  var fortes = ws.filter(function(w){ return !CI_FRACAS[w] && !ciEhDose(ciColar(w)); });
+  var r = { palavras: ws, fortes: fortes, exatos: [], proximos: [], faltou: [], conhecidas: [], todasConhecidas: false };
+  if (!ws.length) return r;
+  // palavra "conhecida" = existe em pelo menos 1 produto
+  r.conhecidas = ws.filter(function(w){ return prods.some(function(p){ return ciCasa(w, p, vocab); }); });
+  r.exatos = prods.filter(function(p){ return ws.every(function(w){ return ciCasa(w, p, vocab); }); });
+  if (!fortes.length) { if ((ws.length > 1 && r.exatos.length > 12) || ws.every(function(w){ return ciEhDose(ciColar(w)); })) r.exatos = []; return r; }   // só forma/dose: vale a palavra sozinha ("caneta", como sempre foi) ou um conjunto bem específico ("mix 6")
+  if (r.exatos.length) { r.todasConhecidas = true; return r; }
+  var melhor = 0, cand = [];
+  prods.forEach(function(p){
+    var okF = fortes.filter(function(w){ return ciCasa(w, p, vocab); }).length;
+    if (!okF || okF * 2 < fortes.length) return;   // precisa casar pelo menos METADE das palavras fortes (senão é frase, não pedido)
+    var ok = ws.filter(function(w){ return ciCasa(w, p, vocab); }).length;
+    var nota = okF * 10 + ok;
+    if (nota > melhor) { melhor = nota; cand = [p]; } else if (nota === melhor) cand.push(p);
+  });
+  r.proximos = cand;
+  if (cand.length) r.faltou = ws.filter(function(w){ return !ciCasa(w, cand[0], vocab); });
+  // "mais próximo" só é resposta quando cada palavra forte EXISTE no catálogo (só não existem juntas: "primobolan landerlan
+  // diamond", "deca 500mg"). Palavra desconhecida no meio ("posso misturar na seringa", "gold standard") = frase, não pedido.
+  r.todasConhecidas = fortes.every(function(w){ return r.conhecidas.indexOf(w) >= 0; });
+  return r;
+}
+// produtos que têm QUALQUER um dos termos (cada termo = palavras que têm que estar todas)
+function ciPorTermos(prods, termos, excluir){
+  var vocab = ciVocab(prods);
+  var ts = (termos || []).map(function(t){ return ciPalavras(t); }).filter(function(a){ return a.length; });
+  var ex = (excluir || []).map(function(t){ return ciPalavras(t); }).filter(function(a){ return a.length; });
+  return prods.filter(function(p){
+    if (!ts.some(function(a){ return a.every(function(w){ return ciCasa(w, p, vocab); }); })) return false;
+    return !ex.some(function(a){ return a.every(function(w){ return p.set[w] || p.set[ciColar(w)]; }); });
+  });
+}
+function ciLinhas(prods){ return prods.map(function(p){ return p.linha; }); }
+function ciFamilias(prods){ var v = {}, o = []; prods.forEach(function(p){ var k = ciNorm(p.familia); if (!v[k]) { v[k] = 1; o.push(p.familia); } }); return o; }
+function ciPrecoBR(v){
+  var n = Number(String(v).replace(',', '.')); if (isNaN(n)) return String(v || '');
+  var s = n.toFixed(2).split('.'); return s[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + s[1];
+}
+// Pergunta à LOJA (busca pública do site) pelos produtos com TODAS as palavras do pedido.
+// Devolve { ok, esgotados:[{nome,preco}], disponiveis:[linha "nome|preço"] }. Falhou/demorou → ok:false (segue sem).
+async function ciLoja(texto, prods){
+  var out = { ok: false, esgotados: [], disponiveis: [] };
+  var ws = ciPalavrasDoPedido(texto);
+  if (!ws.length || !ws.some(function(w){ return !CI_FRACAS[w] && !ciEhDose(ciColar(w)); })) return out;
+  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var timer = ctrl ? setTimeout(function(){ try { ctrl.abort(); } catch (e) {} }, CI_LOJA_TIMEOUT_MS) : null;
+  try {
+    var url = CI_LOJA_SUGGEST + '?q=' + encodeURIComponent(ws.join(' ')) + '&resources[type]=product&resources[limit]=10' +
+      '&resources[options][unavailable_products]=show&resources[options][fields]=title';
+    var r = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: ctrl ? ctrl.signal : undefined });
+    if (!r || !r.ok) return out;
+    var j = await r.json();
+    var ps = (j && j.resources && j.resources.results && j.resources.results.products) || [];
+    var vocab = ciVocab(prods || []);
+    ps.forEach(function(x){
+      var titulo = String(x.title || '').trim(); if (!titulo) return;
+      var p = ciProduto(titulo + '|' + ciPrecoBR(x.price), 'loja');
+      Object.keys(p.set).forEach(function(k){ vocab[k] = 1; });
+    });
+    ps.forEach(function(x){
+      var titulo = String(x.title || '').trim(); if (!titulo) return;
+      var p = ciProduto(titulo + '|' + ciPrecoBR(x.price), 'loja');
+      if (!ws.every(function(w){ return ciCasa(w, p, vocab); })) return;      // a busca do site traz ruído: só vale quem tem TODAS as palavras
+      if (x.available === false) out.esgotados.push({ nome: titulo, preco: ciPrecoBR(x.price) });
+      else out.disponiveis.push(p.linha);
+    });
+    out.ok = true;
+    return out;
+  } catch (e) { return out; }
+  finally { if (timer) clearTimeout(timer); }
+}
+function ciFraseEsgotado(esg){
+  var nomes = esg.slice(0, 4).map(function(e){ return '*' + e.nome + '*'; });
+  if (nomes.length === 1) return '😕 ' + nomes[0] + ' está *esgotado no momento*.';
+  return '😕 ' + nomes.slice(0, -1).join(', ') + ' e ' + nomes[nomes.length - 1] + ' estão *esgotados no momento*.';
+}
+// ═════════════════════════════════════ fim do bloco "ci" ═══════════════════════════════════════
+
+// ── ligação do bloco "ci" com este arquivo ──
+async function ciCatalogo() { try { return await ciCarregar(buscarCacheObj); } catch (e) { return []; } }
+// Pergunta de PREÇO / ESTOQUE / "quero" (abre a lista) × dúvida de USO (vai para a IA).
+function ehPerguntaDePreco(nMsg) {
+  const t = ' ' + String(nMsg || '').replace(/[?!.,]+/g, ' ') + ' ';
+  if (/ como |como us|como tom|como aplic|protocolo|pra que serve|para que serve|dosagem| dose |colateral|faz mal| ciclo| tpc |diferenc|melhor|recomend| indica|monta|explica|pode tomar|pode usar|quantas vezes|quanto tempo|serve p|funciona| o que e | o que eh |efeito/.test(t)) return false;
+  return /(quanto|valor|preco|custa|custo| tem | teria| vende| trabalha|disponi|estoque|chegou|quero|queria|gostaria|comprar|procur| busco)/.test(t);
+}
+// Título da lista aberta pelo catálogo: "PRIMOBOLAN ORAL" (família, quando é uma só) ou as palavras do pedido.
+function ciTitulo(achado, prods) {
+  const fams = ciFamilias(prods);
+  let base = (fams.length === 1) ? fams[0] : achado.palavras.join(' ');
+  const marcas = {}; prods.forEach(p => { marcas[p.marca] = 1; });
+  const ms = Object.keys(marcas);
+  if (fams.length === 1 && ms.length === 1 && ms[0] && prods.length > 1) base += ' — ' + ms[0];
+  return String(base).toUpperCase();
+}
+// O que o catálogo e a loja acharam para esta mensagem — vai no contexto da IA, pra ela não negar o que existe nem prometer conferir.
+function ciContextoIA(achado, loja) {
+  const partes = [];
+  if (achado && achado.exatos && achado.exatos.length) {
+    partes.push('CATÁLOGO — produtos DISPONÍVEIS hoje que batem com a mensagem do cliente (preço real): ' +
+      achado.exatos.slice(0, 15).map(p => p.nome + ' — R$ ' + (p.linha.split('|')[1] || '')).join('; ') +
+      (achado.exatos.length > 15 ? '; … (+' + (achado.exatos.length - 15) + ')' : '') + '.');
+  }
+  if (achado && !achado.exatos.length && achado.proximos && achado.proximos.length && achado.proximos.length <= 15) {
+    partes.push('CATÁLOGO — não há produto DISPONÍVEL com todas as palavras da mensagem; os mais próximos disponíveis hoje: ' +
+      achado.proximos.map(p => p.nome + ' — R$ ' + (p.linha.split('|')[1] || '')).join('; ') + '.');
+  }
+  if (loja && loja.esgotados && loja.esgotados.length) {
+    partes.push('LOJA — ESGOTADO hoje: ' + loja.esgotados.map(e => e.nome).join('; ') + '. Se o cliente perguntar por ele, diga que está ESGOTADO NO MOMENTO (NÃO diga que não trabalhamos nem que não consta) e NÃO prometa conferir depois.');
+  } else if (loja && loja.ok && achado && achado.fortes.length && !achado.exatos.length && !achado.conhecidas.length) {
+    partes.push('A busca no catálogo e na loja NÃO achou nenhum produto com "' + achado.palavras.join(' ') + '" (nem esgotado). Não invente e NÃO prometa "vou conferir": diga que não encontrou esse nome e peça o nome do produto ou ofereça o *menu*.');
+  }
+  return partes.join('\n');
+}
+// Numa DÚVIDA o nome do produto vem no meio da frase ("o dhb faz mal pro fígado"): separa as palavras que SÃO do catálogo
+// (para a IA receber os produtos e preços reais) e procura as desconhecidas na loja (para ela saber o que está esgotado).
+async function ciParaDuvida(achado, prods) {
+  const out = { achado: achado, loja: null };
+  if (!achado || !achado.fortes.length || achado.exatos.length) return out;
+  const conhecidas = achado.fortes.filter(w => achado.conhecidas.indexOf(w) >= 0);
+  if (conhecidas.length) {
+    const so = ciProcurar(conhecidas.join(' '), prods);
+    if (so.exatos.length) { out.achado = so; return out; }
+  }
+  const novas = achado.fortes.filter(w => achado.conhecidas.indexOf(w) < 0 && w.length >= 3 && !/^\d/.test(w)).slice(0, 4);
+  if (!novas.length) return out;
+  try {
+    const rs = await Promise.all(novas.map(w => ciLoja(w, prods).catch(() => null)));
+    const lj = { ok: false, esgotados: [], disponiveis: [] }, visto = {};
+    rs.forEach(r => { if (!r) return; if (r.ok) lj.ok = true; r.esgotados.forEach(e => { if (!visto[e.nome]) { visto[e.nome] = 1; lj.esgotados.push(e); } }); });
+    lj.esgotados = lj.esgotados.slice(0, 8);
+    out.loja = lj.esgotados.length ? lj : null;   // sem achado: não afirma "não existe" numa frase de dúvida
+  } catch (e) {}
+  return out;
+}
+function ciJuntaContexto(a, b) { return [a, b].filter(Boolean).join('\n'); }
+// Abre uma lista (linhas "nome|preço") no formato de sempre.
+async function ciAbrirLista(session, sid, linhas, titulo, respond, antes) {
+  const unicas = [...new Set(linhas)];
+  await limparHistoricoIA(sid);
+  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(unicas), errosSeguidos:0, pendenteRec:null });
+  return respond(`${antes ? antes + '\n\n' : ''}*${titulo}*\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
+}
+// Produtos de uma entrada do DICT_PRODUTOS: a busca de sempre (filtro + nomes formais) MAIS os sinônimos/apelidos como palavra
+// inteira do catálogo — é o que faz "Nandrolona (Deca)" achar os produtos "Deca 200mg…".
+function ciProdutosDaEntrada(e, prods, dadosTexto) {
+  const vistos = {}; const out = [];
+  const termos = termosCategoria(e);
+  if (termos.length && dadosTexto) {
+    const linhas = {}; filtrarCache(dadosTexto, termos).forEach(l => { linhas[l] = 1; });
+    prods.forEach(p => { if (linhas[p.linha] && !vistos[p.linha]) { vistos[p.linha] = 1; out.push(p); } });
+  }
+  const palavras = [].concat(e.filtro || [], e.canonico || [], e.apelidos || []).filter(t => t && norm(t).length >= 3);
+  ciPorTermos(prods, palavras, []).forEach(p => { if (!vistos[p.linha]) { vistos[p.linha] = 1; out.push(p); } });
+  if (e.excluir && e.excluir.length) {
+    const ok = {}; aplicarExclusao(out.map(p => p.linha), e.excluir).forEach(l => { ok[l] = 1; });
+    return out.filter(p => ok[p.linha]);
+  }
+  return out;
+}
+
 function reconhecerProduto(nMsg) {
   if (!nMsg) return null;
   for (const e of DICT_PRODUTOS) {
@@ -2762,7 +3150,7 @@ function filtrarEster(dados, ester, base) {
   return [...new Set(res)];
 }
 
-async function resolverReconhecido(session, sid, e, respond, marca) {
+async function resolverReconhecido(session, sid, e, respond, marca, q) {
   e = e || {};
   // Cliente trocou de produto (digitou o nome) → zera a memória da IA pra não vazar o
   // assunto anterior. Continuidade dentro do novo produto é reconstruída nas próximas trocas.
@@ -2785,11 +3173,46 @@ async function resolverReconhecido(session, sid, e, respond, marca) {
     await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(unicas), errosSeguidos:0, pendenteRec:null });
     return respond(`Não trabalhamos com *Saxenda*, mas tenho opções ainda mais procuradas para emagrecimento! 🔥\n\n${formatarLista(unicas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
   }
+  // v90: lista aberta pelo CATÁLOGO INTELIGENTE (veio de "Quer ver X? Seu carrinho fica salvo")
+  if (e.tipo === 'busca_ci') {
+    const _pr = await ciCatalogo();
+    const _ac = ciProcurar(e.q || e.label || '', _pr);
+    if (_ac.exatos.length) return await ciAbrirLista(session, sid, ciLinhas(_ac.exatos), ciTitulo(_ac, _ac.exatos), respond);
+    await saveSession(sid, { ...session, state:'MENU', errosSeguidos:0, pendenteRec:null });
+    return respond(`*${e.label}* não está disponível no momento. 😕\n\nDigite *menu* para ver as outras opções.`);
+  }
   let dados;
   if (e.tipo === 'busca_tudo') dados = await buscarTodosCache();
   else dados = await buscarCache(e.colecao);
   let linhas;
-  if (e.tipo === 'categoria' || !e.filtro || !e.filtro.length) {
+  if (e.tipo === 'lista' && e.filtro && e.filtro.length) {
+    // v90: os produtos da entrada saem do catálogo (busca de sempre + sinônimos). Se o cliente pediu MARCA, LINHA ou DOSAGEM junto
+    // ("primobolan landerlan diamond", "deca 300mg"), filtra por TODAS as palavras; se não houver, diz isso e mostra as opções.
+    const _pr = await ciCatalogo();
+    const _tudoTxt = await buscarTodosCache();
+    const _daEntrada = ciProdutosDaEntrada(e, _pr, _tudoTxt);
+    const _pedido = String(q || marca || '').trim();
+    if (_daEntrada.length && _pedido) {
+      const _sub = ciProcurar(_pedido, _daEntrada);
+      if (_sub.exatos.length && _sub.exatos.length < _daEntrada.length) {
+        return await ciAbrirLista(session, sid, ciLinhas(_sub.exatos), ciTitulo(_sub, _sub.exatos), respond);
+      }
+      if (!_sub.exatos.length && _sub.palavras.length > 1) {
+        const _loja = await ciLoja(_pedido, _pr);
+        if (_loja.disponiveis.length) return await ciAbrirLista(session, sid, _loja.disponiveis, _sub.palavras.join(' ').toUpperCase(), respond);
+        // marca/linha pedida que existe em OUTROS produtos: avisa ("de LANDERLAN DIAMOND tenho 5 produtos")
+        const _vocE = ciVocab(_daEntrada);
+        const _resto = _sub.palavras.filter(w => !CI_FRACAS[w] && !ciEhDose(ciColar(w)) && !_daEntrada.every(p => ciCasa(w, p, _vocE)));
+        const _daMarca = _resto.length ? ciProcurar(_resto.join(' '), _pr).exatos : [];
+        const _dica = _daMarca.length ? `\n\n💡 De *${_resto.join(' ').toUpperCase()}* tenho ${_daMarca.length} ${_daMarca.length === 1 ? 'produto disponível' : 'produtos disponíveis'} — digite *${_resto.join(' ')}* para ver.` : '';
+        const _aviso = _loja.esgotados.length
+          ? ciFraseEsgotado(_loja.esgotados) + _dica + `\n\nOutras opções de *${e.label}* disponíveis 👇`
+          : `Não tenho *${e.label}* ${_sub.faltou.length ? 'com *' + _sub.faltou.join(' ') + '* ' : ''}disponível no momento. 😕` + _dica + `\n\nOpções de *${e.label}* disponíveis 👇`;
+        return await ciAbrirLista(session, sid, ciLinhas(_daEntrada), (e.label || '').toUpperCase(), respond, _aviso);
+      }
+    }
+    linhas = ciLinhas(_daEntrada);
+  } else if (e.tipo === 'categoria' || !e.filtro || !e.filtro.length) {
     linhas = dados.split('\n').filter(Boolean);
   } else {
     const _termos = termosCategoria(e);
@@ -2805,6 +3228,15 @@ async function resolverReconhecido(session, sid, e, respond, marca) {
   }
   let unicas = [...new Set(linhas)];
   if (!unicas.length) {
+    // v90: antes de dizer "não está disponível", pergunta à loja — pode estar ESGOTADO, ou ter acabado de entrar.
+    try {
+      const _lj = await ciLoja(String(q || e.label || ''), await ciCatalogo());
+      if (_lj.disponiveis.length) return await ciAbrirLista(session, sid, _lj.disponiveis, (e.label || '').toUpperCase(), respond);
+      if (_lj.esgotados.length) {
+        await saveSession(sid, { ...session, state:'MENU', errosSeguidos:0, pendenteRec:null });
+        return respond(ciFraseEsgotado(_lj.esgotados) + `\n\nMe diga outro produto ou digite *menu* para ver as categorias.`);
+      }
+    } catch (eLj) {}
     await saveSession(sid, { ...session, state:'MENU', errosSeguidos:0, pendenteRec:null });
     return respond(`*${e.label}* não está disponível no momento. 😕\n\nDigite *menu* para ver as outras opções.`);
   }
@@ -2893,46 +3325,83 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
     await saveSession(sid, { ...session, state:'PROTO_CLIENTE', fracFluxo:false, errosSeguidos:0 });
     return respond(`Adoro montar protocolo! 💪\n\nO protocolo *completo e personalizado* (suas doses, ciclo e cuidados) eu monto *depois da compra* — é cortesia exclusiva pra *cliente VitaFlow*.\n\n${msgGerador()}\n\nVocê *já é cliente* nossa? _(responde *sim* ou *não*)_`);
   }
+  // v90 — CATÁLOGO INTELIGENTE: o que o catálogo do dia tem para esta mensagem (ver o bloco "ci").
+  const _ciProds = await ciCatalogo();
+  const _ci = ciProcurar(nMsg, _ciProds);
+  const rec = reconhecerProduto(nMsg);
+  const _temCarrinho = (session.carrinho || []).length > 0;
   // Dúvida/pergunta (protocolo, como usar, dose, "?"...) → a IA RESPONDE, mesmo que cite um
   // produto. Só abre a lista quando é intenção de ver/comprar, não quando é pergunta.
-  if (ehDuvida(nMsg)) {
+  // v90: pergunta de PREÇO/ESTOQUE com produto ("quanto está o valor da primobolan diamond?", "tem dhb?") NÃO é dúvida — abre a lista.
+  const _precoComProduto = ehPerguntaDePreco(nMsg) && (_ci.exatos.length > 0 || !!rec || (_ci.fortes.length > 0 && _ci.fortes.length <= 5));
+  // v90: o cliente digitou o NOME de um produto que contém palavra-gatilho de dúvida ("TPC PRO 500mg") → é produto, não pergunta.
+  const _ehSoNome = !/\\?\\s*$/.test(nMsg) && _ci.exatos.length > 0 && _ci.todasConhecidas && ciPalavras(nMsg).every(function (w) { return _ci.exatos.some(function (p) { return ciCasa(w, p); }); });
+  if (ehDuvida(nMsg) && !_precoComProduto && !_ehSoNome) {
     await saveSession(sid, { ...session, errosSeguidos: 0 });
-    return await responderComIA(sid, nMsg, contextoLista(session), respond);
+    const _dv = await ciParaDuvida(_ci, _ciProds);
+    return await responderComIA(sid, nMsg, ciJuntaContexto(contextoLista(session), ciContextoIA(_dv.achado, _dv.loja)), respond);
   }
   // Combo/stack (2+ produtos juntos, ex.: "testo e deca"): conduz UM de cada vez, deixando
   // claro que entendeu TODOS e encadeando o próximo — nenhum produto fica pendente.
-  if (ehPedidoStack(nMsg)) {
+  if (ehPedidoStack(nMsg) && !(_ci.exatos.length && _ci.exatos.length <= 40)) {
     return await iniciarStack(session, sid, reconhecerVarios(nMsg), respond);
   }
-  const rec = reconhecerProduto(nMsg);
-  if (rec) {
-    const temCarrinho = (session.carrinho || []).length > 0;
+  // Palavra genérica SOZINHA com fluxo guiado no dicionário ("testosterona" → qual éster?, "enantato" → de quê?, "gh", "saxenda").
+  let _guiado = false;
+  if (rec && ['submenu_testo','ester','saxenda','categoria'].indexOf(rec.entry.tipo) >= 0) {
+    _guiado = (_ci.palavras.length <= 1) || rec.entry.tipo === 'saxenda';
+    // a palavra é o próprio nome no catálogo e existe de UMA ou DUAS famílias só ("cipionato", "decanoato", "durateston", "dura")
+    // → abre direto, sem "de quê?" nem "Você quis dizer…?". "testo" (muitas famílias) continua perguntando o éster.
+    if (_guiado && rec.entry.tipo !== 'saxenda' && _ci.exatos.length && ciFamilias(_ci.exatos).length <= 2 && (rec.entry.tipo === 'ester' || rec.modo === 'apelido')) _guiado = false;
+  }
+  // v86 — NOME DE CATEGORIA ("hormonio", "quero ver os peptideos") vem ANTES da busca: "hormônio" não é o Kit de Aplicação para Hormônios.
+  const _catTxt = categoriaPorTexto(nMsg);
+  // 1) O catálogo tem produto com TODAS as palavras do pedido → abre a lista.
+  const _soEntrada = !!(rec && _ci.palavras.length === 1 && rec.entry.tipo === 'lista');
+  // palavra genérica por APELIDO com muitas famílias ("testo", "tt"): segue o dicionário ("Você quis dizer Testosterona?")
+  const _apelidoGenerico = !!(rec && rec.modo === 'apelido' && _ci.palavras.length <= 1 && rec.entry.tipo !== 'lista' && ciFamilias(_ci.exatos).length > 2);
+  // (com carrinho + palavra do dicionário: a pergunta "Quer ver X?" sai do passo 2, que guarda a entrada inteira)
+  if (!_guiado && !_apelidoGenerico && isNaN(_catTxt) && _ci.exatos.length && !(_temCarrinho && _soEntrada)) {
+    // palavra do dicionário com exclusão própria ("nandrolona" = Deca, sem NPP — igual à opção do menu)
+    if (_soEntrada && rec.entry.excluir && rec.entry.excluir.length) {
+      const _ok = {}; aplicarExclusao(ciLinhas(_ci.exatos), rec.entry.excluir).forEach(l => { _ok[l] = 1; });
+      const _f = _ci.exatos.filter(p => _ok[p.linha]); if (_f.length) _ci.exatos = _f;
+    }
+    const _titulo = _soEntrada ? String(rec.entry.label).toUpperCase() : ciTitulo(_ci, _ci.exatos);
+    if (_temCarrinho) {
+      const _lb = _soEntrada ? rec.entry.label : _titulo;
+      await saveSession(sid, { ...session, errosSeguidos:0, state:'CONFIRMAR_VER_PRODUTO',
+        pendenteRec: { label:_lb, tipo:'busca_ci', q:_ci.palavras.join(' '), colecao:'', filtro:[], ester:'', marca:'' } });
+      return respond(`Quer ver *${_lb}*? Seu carrinho fica salvo. 🛒\n\n1️⃣ Sim, ver ${_lb}\n2️⃣ Não, continuar de onde parei`);
+    }
+    return await ciAbrirLista(session, sid, ciLinhas(_ci.exatos), _titulo, respond);
+  }
+  // 2) Dicionário (sinônimos, apelidos e fluxos guiados).
+  if (rec && isNaN(_catTxt)) {
     // Se o cliente tem carrinho e pede outro produto, pergunta antes (carrinho fica salvo).
-    if (temCarrinho) {
+    if (_temCarrinho) {
       const e = rec.entry;
       await saveSession(sid, {
         ...session, errosSeguidos:0, state:'CONFIRMAR_VER_PRODUTO',
-        pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], ester:e.ester||'', marca: detectarMarca(nMsg) || '' }
+        pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], canonico:e.canonico||[], apelidos:e.apelidos||[], excluir:e.excluir||[], ester:e.ester||'', marca: detectarMarca(nMsg) || '', q: _ci.palavras.join(' ') }
       });
       return respond(`Quer ver *${e.label}*? Seu carrinho fica salvo. 🛒\n\n1️⃣ Sim, ver ${e.label}\n2️⃣ Não, continuar de onde parei`);
     }
-    if (rec.modo === 'canonico') {
-      // se citou substância + MARCA ("masteron da zphc"), já abre filtrado pela marca
-      return await resolverReconhecido(session, sid, rec.entry, respond, detectarMarca(nMsg));
+    // nome formal, OU apelido acompanhado de marca/linha/dosagem ("deca landerlan diamond") → resolve direto
+    if (rec.modo === 'canonico' || _ci.palavras.length > 1) {
+      return await resolverReconhecido(session, sid, rec.entry, respond, detectarMarca(nMsg), _ci.palavras.join(' '));
     }
     const e = rec.entry;
     await saveSession(sid, {
       ...session, errosSeguidos:0, state:'CONFIRMAR_PRODUTO',
-      pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], ester:e.ester||'', marca: detectarMarca(nMsg) || '' }
+      pendenteRec: { label:e.label, tipo:e.tipo, colecao:e.colecao, filtro:e.filtro||[], canonico:e.canonico||[], apelidos:e.apelidos||[], excluir:e.excluir||[], ester:e.ester||'', marca: detectarMarca(nMsg) || '', q: _ci.palavras.join(' ') }
     });
     return respond(`Você quis dizer *${e.label}*? 🤔\n\n1️⃣ Sim\n2️⃣ Não`);
   }
-  // v86 — a palavra é um NOME DE CATEGORIA ("hormonio", "peptideos"…): abre a categoria. Antes caía na busca abaixo, que
-  // procura o texto no NOME dos produtos — "hormonio" trazia só os "Kit de Aplicação para Hormônios" (conversa real, 03/10).
+  // v86 — a palavra é um NOME DE CATEGORIA ("hormonio", "peptideos"…): abre a categoria.
   // Com carrinho, pergunta antes (carrinho preservado), igual ao que já acontece com nome de produto.
-  const _catTxt = categoriaPorTexto(nMsg);
   if (!isNaN(_catTxt)) {
-    if ((session.carrinho || []).length > 0) {
+    if (_temCarrinho) {
       const _lb = CATEGORIA_NOME[_catTxt];
       await saveSession(sid, { ...session, errosSeguidos:0, state:'CONFIRMAR_VER_PRODUTO',
         pendenteRec: { label:_lb, tipo:'categoria', cat:_catTxt, colecao:'', filtro:[], ester:'', marca:'' } });
@@ -2941,32 +3410,31 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
     await limparHistoricoIA(sid);
     return await abrirCategoria({ ...session, errosSeguidos:0, pendenteRec:null }, sid, _catTxt, respond);
   }
-  // ── FALLBACK DETERMINÍSTICO (catálogo real, 900+ produtos) ──────────────────
-  // O nome digitado NÃO está no DICT_PRODUTOS, mas pode EXISTIR no catálogo. Antes de
-  // mandar pra IA (que só enxerga parte do catálogo e às vezes NEGA produto que existe),
-  // procura o texto em TODAS as coleções do cache. Achou → abre a lista REAL na hora.
-  // filtrarCache exige que TODAS as palavras (>2 letras) estejam no nome do produto —
-  // é preciso, não pega frase solta ("tem algo pra dormir" não casa com nada).
-  try {
-    const _tudoCat = await buscarTodosCache();
-    const _achadosCat = [...new Set(filtrarCache(_tudoCat, nMsg))];
-    if (_achadosCat.length) {
-      const _labelBusca = (nMsg || '').trim();
-      if ((session.carrinho || []).length > 0) {
-        // tem carrinho: pergunta antes pra não atropelar o pedido (igual ao fluxo do DICT)
-        await saveSession(sid, { ...session, errosSeguidos:0, state:'CONFIRMAR_VER_PRODUTO',
-          pendenteRec: { label:_labelBusca, tipo:'busca_tudo', colecao:'', filtro:[nMsg], ester:'', marca:'' } });
-        return respond(`Quer ver *${_labelBusca}*? Seu carrinho fica salvo. 🛒\n\n1️⃣ Sim, ver ${_labelBusca}\n2️⃣ Não, continuar de onde parei`);
-      }
-      await limparHistoricoIA(sid);
-      await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(_achadosCat), errosSeguidos:0, pendenteRec:null });
-      return respond(`*${_labelBusca.toUpperCase()}*\n\n${formatarLista(_achadosCat)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
+  // 3) Nada disponível com todas as palavras. Se o pedido parece nome de produto (poucas palavras), pergunta à LOJA:
+  //    existe e está ESGOTADO? acabou de entrar e o cache ainda não tem? Senão, mostra o mais próximo. Frase solta segue pra IA.
+  let _loja = null;
+  if (_ci.fortes.length && _ci.palavras.length <= 5) {
+    try { _loja = await ciLoja(nMsg, _ciProds); } catch (e) { _loja = null; }
+    if (_loja && _loja.disponiveis.length && !_temCarrinho) {
+      return await ciAbrirLista(session, sid, _loja.disponiveis, _ci.palavras.join(' ').toUpperCase(), respond);
     }
-  } catch (e) {}
+    const _proximos = (_ci.todasConhecidas && _ci.proximos.length && _ci.proximos.length <= 40) ? _ci.proximos : [];
+    if (_loja && _loja.esgotados.length) {
+      const _fr = ciFraseEsgotado(_loja.esgotados);
+      if (_proximos.length && !_temCarrinho) return await ciAbrirLista(session, sid, ciLinhas(_proximos), ciTitulo(_ci, _proximos), respond, _fr + '\n\nO mais próximo que tenho disponível 👇');
+      await saveSession(sid, { ...session, errosSeguidos: 0 });
+      return respond(_fr + '\n\nMe diga outro produto ou digite *menu* para ver as categorias.');
+    }
+    if (_proximos.length && !_temCarrinho && _ci.palavras.length <= 4) {
+      const _pedidoTxt = _ci.palavras.join(' ');
+      return await ciAbrirLista(session, sid, ciLinhas(_proximos), ciTitulo(_ci, _proximos), respond,
+        `Não encontrei *${_pedidoTxt}* exatamente assim${_ci.faltou.length ? ' (sem *' + _ci.faltou.join(' ') + '* disponível no momento)' : ''}. 😕\n\nO mais próximo que tenho 👇`);
+    }
+  }
   // Não reconheceu como produto → em vez do "não entendi" robótico, deixa a IA responder
   // de forma inteligente e assíncrona (sem timeout). Mantém o contexto/estado atual.
   await saveSession(sid, { ...session, errosSeguidos: (session.errosSeguidos || 0) + 1 });
-  return await responderComIA(sid, nMsg, contextoLista(session), respond);
+  return await responderComIA(sid, nMsg, ciJuntaContexto(contextoLista(session), ciContextoIA(_ci, _loja)), respond);
 }
 
 // ── System prompt exclusivo para protocolos ───────────────────────────────────
@@ -3966,12 +4434,20 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   });
   return respond(resumo);
 }
-async function buscarCache(colecao) {
+async function buscarCacheObj(colecao) {
   try {
     const r = await fetch(fbUrl(`/vitaflow_cache/colecoes/${colecao}.json`));
     const d = await r.json();
-    return d?.dados || '';
-  } catch { return ''; }
+    return d || null;
+  } catch { return null; }
+}
+// v90: coleção parada há mais de 7 dias NÃO entra (a "outros" estava parada desde 21/08/2026: produto e preço velhos).
+async function buscarCache(colecao) {
+  const d = await buscarCacheObj(colecao);
+  if (!d || !d.dados) return '';
+  const quando = ciDataMs(d.atualizado_em);
+  if (quando && Date.now() - quando > CI_VALIDADE_MS) { console.log('[CACHE] colecao parada ha mais de 7 dias — ignorada:', colecao); return ''; }
+  return d.dados;
 }
 async function buscarTodosCache() {
   const cols = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','outros','10-mais-vendidos'];
@@ -4482,6 +4958,7 @@ exports.handler = async (event) => {
     const sid = rawId.replace(/\D/g,'').replace(/^0+/,'').replace(/^55(\d{10,11})$/,'55$1') || rawId;
     const n = norm(mensagem);
     let num = parseInt(n);
+    if (/^\d+\s*-\s*[a-z]{2,}|^\d+\s+amino/.test(n)) num = NaN;   // v90: "5-Amino-1MQ" é nome de produto, não a opção 5 do menu
     const ehMidia = ['image','video','document','audio','sticker'].includes(body.type);
 
     console.log('MSG:', mensagem, '| SID:', sid, '| TYPE:', body.type, '| BODY_KEYS:', Object.keys(body).join(','));
@@ -4994,7 +5471,8 @@ exports.handler = async (event) => {
     // ── Grupo VIP (WhatsApp/Telegram) ── reconhece pergunta sobre grupo/comunidade ──
     const ehGrupo = (n.includes('grupo') || n.includes('comunidade') || n.includes('vip') || n.includes('telegram') ||
       (n.includes('whats') && (n.includes('grupo') || n.includes('vip') || n.includes('comunidade'))))
-      && !emCheckout;
+      && !emCheckout
+      && !/\bvip\s*\d|\d\s*mg\b|peptide/.test(n);   // v90: "VIP 10mg - Health Peptides" é produto, não o grupo
     if (ehGrupo) {
       return respond(msgGrupoVip());
     }
@@ -5431,7 +5909,7 @@ exports.handler = async (event) => {
     }
 
     if (state === 'CONFIRMAR_PRODUTO') {
-      if (num === 1) { const e = session.pendenteRec || {}; return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond, e.marca || ''); }
+      if (num === 1) { const e = session.pendenteRec || {}; return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond, e.marca || '', e.q || ''); }
       if (num === 2) { await saveSession(sid, { ...session, state:'MENU', pendenteRec:null, errosSeguidos:0 }); return respond('Sem problema! 😊 Me diz o que você procura ou escolha uma opção:\n\n' + buildMenuPrincipal()); }
       return respond('Digite *1* para Sim ou *2* para Não:');
     }
@@ -5441,7 +5919,7 @@ exports.handler = async (event) => {
       if (num === 1) {
         const e = session.pendenteRec || {};
         if (e.tipo === 'categoria') return await abrirCategoria({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e.cat, respond);   // v86
-        return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond, e.marca || '');
+        return await resolverReconhecido({ ...session, pendenteRec:null, errosSeguidos:0 }, sid, e, respond, e.marca || '', e.q || '');
       }
       if (num === 2) {
         const carrinho = session.carrinho || [];
@@ -5525,12 +6003,12 @@ exports.handler = async (event) => {
         1:  { termos:['enantato testosterona'], excluir:BASES_NAO_TESTO, label:'ENANTATO DE TESTOSTERONA' },
         // Durateston e Sustanon NÃO têm a palavra "testosterona" no nome — por isso nunca apareciam.
         2:  { termos:['testosterona','durateston','sustanon'], excluir:BASES_NAO_TESTO, label:'TESTOSTERONA / DURATESTON' },
-        3:  { termos:['npp','fenilpropionato'],    label:'NPP' },
+        3:  { termos:['npp','fenilpropionato'], excluir:['testosterona'], label:'NPP' },
         4:  { termos:['trembolona'],               label:'TREMBOLONA' },
         5:  { termos:['boldenona'],                label:'BOLDENONA' },
         6:  { termos:['stanozolol'],               label:'STANOZOLOL' },
         7:  { termos:['oxandrolona'],              label:'OXANDROLONA' },
-        8:  { termos:['nandrolona','durabolin','deca-durabolin','nandrolona decanoato'], excluir:['fenilpropionato','npp'], label:'NANDROLONA (DECA)' },
+        8:  { termos:['nandrolona','deca','durabolin'], excluir:['fenilpropionato','npp'], label:'NANDROLONA (DECA)' },
         9:  { termos:['masteron','drostanolona'],  label:'MASTERON' },
         10: { termos:['primobolan','metenolona'],  label:'PRIMOBOLAN' },
         11: { termos:['dianabol','metandienona'],  label:'DIANABOL' },
@@ -5539,19 +6017,25 @@ exports.handler = async (event) => {
         14: { termos:['anastrozol','proviron'],    label:'ANASTROZOL / PROVIRON' },
         15: { termos:['cutstack'],                 label:'CUTSTACK' },
       };
+      // v90: os produtos de cada opção saem do CATÁLOGO INTELIGENTE (sinônimos: Deca = nandrolona, Cipionato/Durateston = testosterona).
+      // Antes a opção 8 (Nandrolona/Deca) vinha VAZIA e Cipionato e Deca caíam em "Outros hormônios" — os nomes do catálogo mudaram.
+      const _prH = await ciCatalogo();
+      const _opcaoH = (k) => {
+        const m = mapa[k]; if (!m) return [];
+        let ps = ciPorTermos(_prH, m.termos, m.excluir || []);
+        if (k === 2) ps = ps.filter(p => !p.set['enantato']);
+        return ps;
+      };
       if (mapa[num]) {
-        const { termos, label } = mapa[num];
-        let linhas = await buscarFiltradoGlobal('hormonios', termos);
-        if (num === 2) linhas = linhas.filter(l => !norm(l).includes('enantato'));
-        if (mapa[num].excluir) linhas = aplicarExclusao(linhas, mapa[num].excluir);
+        const { label } = mapa[num];
+        let linhas = ciLinhas(_opcaoH(num));
         if (!linhas.length) return respond(`Produto não disponível no momento.\n\n${MENU_HORMONIOS}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*${label}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
       }
       if (num === 16) {
-        const dados = await buscarCache('hormonios');
-        const todosTermos = Object.values(mapa).flatMap(m => m.termos);
-        const linhas = dados.split('\n').filter(Boolean).filter(l => { const nProd = norm(l.split('|')[0]); return !todosTermos.some(t => nProd.includes(norm(t))); });
+        const _jaTem = {}; Object.keys(mapa).forEach(k => { _opcaoH(Number(k)).forEach(p => { _jaTem[p.linha] = 1; }); });
+        const linhas = ciLinhas(_prH.filter(p => p.fonte === 'hormonios' && !_jaTem[p.linha]));
         if (!linhas.length) return respond(`Nenhum outro hormônio encontrado.\n\n${MENU_HORMONIOS}`);
         await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
         return respond(`*OUTROS HORMÔNIOS*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
