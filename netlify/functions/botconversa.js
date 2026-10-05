@@ -2449,10 +2449,10 @@ function aplicarExclusao(linhas, excluir){
 //      1 letra errada em palavra longa);
 //   3) nada disponível com aquelas palavras → pergunta à LOJA (busca pública do site) se o produto
 //      existe e está ESGOTADO — a Athena passa a dizer "está esgotado no momento" em vez de "não consta";
-//   4) coleção do cache parada há mais de 7 dias é ignorada (a "outros" estava parada desde 21/08 e
-//      trazia produto e preço antigos).
+//   4) coleção do cache parada há mais de 7 dias é ignorada (proteção contra nome e preço antigos).
+//      A antiga coleção de "sobras" foi EXTINTA (Thiago, 05/10: todo produto tem coleção própria) e saiu daqui de vez.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','outros','10-mais-vendidos'];
+const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos'];
 const CI_VALIDADE_MS = 7 * 24 * 3600 * 1000;
 const CI_LOJA_SUGGEST = 'https://vitaflowoficial.com/search/suggest.json';
 const CI_LOJA_TIMEOUT_MS = 2500;
@@ -3218,7 +3218,7 @@ async function resolverReconhecido(session, sid, e, respond, marca, q) {
     const _termos = termosCategoria(e);
     linhas = filtrarCache(dados, _termos);
     // FALLBACK GLOBAL: não achou na coleção esperada? Procura em TODAS antes de dizer que
-    // não tem (produto pode estar catalogado noutra coleção — ex.: Clembuterol/T3 em "outros").
+    // não tem (produto pode estar catalogado noutra coleção — ex.: Clembuterol/T3 em "farmacia").
     if (!linhas.length) {
       const tudo = await buscarTodosCache();
       linhas = filtrarCache(tudo, _termos);
@@ -4450,14 +4450,14 @@ async function buscarCache(colecao) {
   return d.dados;
 }
 async function buscarTodosCache() {
-  const cols = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','outros','10-mais-vendidos'];
+  const cols = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos'];
   const resultados = await Promise.all(cols.map(c => buscarCache(c)));
   return resultados.join('\n');
 }
 
 // BUSCA COM FALLBACK GLOBAL: procura os termos na coleção indicada; se não achar NADA
 // (produto catalogado em outra coleção — comum entre os ~800 itens: ex. Clembuterol/T3 ficam
-// em "outros", não em "hormonios"), procura em TODAS as coleções antes de considerar
+// em "farmacia", não em "hormonios"), procura em TODAS as coleções antes de considerar
 // "indisponível". Evita que um produto "suma" só por estar numa coleção diferente da esperada.
 async function buscarFiltradoGlobal(colecao, termos) {
   const dados = await buscarCache(colecao);

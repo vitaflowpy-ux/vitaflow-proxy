@@ -51,7 +51,7 @@ const HIST_MAX_MSGS = 16;
 const HIST_TTL_MS   = 6 * 60 * 60 * 1000; // 6 horas
 
 // Coleções válidas do catálogo (mesmas que o botconversa.js usa).
-const COLECOES = ['emagrecedores','peptideos','hormonios','gh','estetica','farmacia','sarms','outros','10-mais-vendidos'];
+const COLECOES = ['emagrecedores','peptideos','hormonios','gh','estetica','farmacia','sarms','10-mais-vendidos'];
 
 // Fallbacks caso o /v1/models não retorne nada. A env ATHENA_MODEL, se existir, entra na frente.
 const MODELOS_FALLBACK = [
@@ -185,10 +185,10 @@ async function salvarHistorico(phone, msgs){
 //      1 letra errada em palavra longa);
 //   3) nada disponível com aquelas palavras → pergunta à LOJA (busca pública do site) se o produto
 //      existe e está ESGOTADO — a Athena passa a dizer "está esgotado no momento" em vez de "não consta";
-//   4) coleção do cache parada há mais de 7 dias é ignorada (a "outros" estava parada desde 21/08 e
-//      trazia produto e preço antigos).
+//   4) coleção do cache parada há mais de 7 dias é ignorada (proteção contra nome e preço antigos).
+//      A antiga coleção de "sobras" foi EXTINTA (Thiago, 05/10: todo produto tem coleção própria) e saiu daqui de vez.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','outros','10-mais-vendidos'];
+const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos'];
 const CI_VALIDADE_MS = 7 * 24 * 3600 * 1000;
 const CI_LOJA_SUGGEST = 'https://vitaflowoficial.com/search/suggest.json';
 const CI_LOJA_TIMEOUT_MS = 2500;
@@ -699,7 +699,7 @@ PROGRAMA DE REVENDEDORES (é DIFERENTE de atacado — NUNCA confunda os dois):
 COMO LEVAR O CLIENTE AO PRODUTO (sem pedir pra ele digitar o nome):
 - Quando o cliente demonstrar intenção de VER ou COMPRAR ("quero ver", "qual o preço", "quanto custa", "quero comprar", "vou querer a tirzepatida"), ou depois que VOCÊ recomendou e ele topou, NÃO peça pra ele digitar o nome. Em vez disso, TERMINE sua mensagem com um marcador que o sistema usa pra abrir a lista real (com preços e botão de compra):
     [[LISTA:colecao:termo]]
-  - colecao (obrigatório), uma destas: emagrecedores, peptideos, hormonios, gh, estetica, farmacia, sarms, outros, 10-mais-vendidos
+  - colecao (obrigatório), uma destas: emagrecedores, peptideos, hormonios, gh, estetica, farmacia, sarms, 10-mais-vendidos
   - termo é o nome/família do produto (ex.: retatrutida, tirzepatida, bpc, stanozolol). Deixe VAZIO pra mostrar a categoria inteira.
   - Exemplos:
     "Perfeito! Já te mostro as opções de tirzepatida 👇 [[LISTA:emagrecedores:tirzepatida]]"
@@ -884,7 +884,7 @@ HORMÔNIOS (substância única, exceto Durateston/CutStack acima):
 - Testosterona (Enantato/Cipionato/Propionato/Undecanoato/Suspensão): o éster muda a meia-vida.
 - Nandrolona (Deca), NPP (nandrolona de éster curto), Trembolona (Acetato/Enantato/Hexa), Boldenona (Equipoise), Stanozolol (Winstrol), Oxandrolona (Anavar), Masteron (Drostanolona), Primobolan (Metenolona), Dianabol (Metandienona), Hemogenin (Oximetolona/Anadrol), HCG, Anastrozol (inibidor de aromatase), Proviron (Mesterolona).
 
-OUTROS: Clembuterol (beta-2 agonista, termogênico — NÃO é hormônio), T3 (Liotironina — tireoidiano), Botox (toxina botulínica), Água Bacteriostática (diluente pra reconstituir peptídeos).`;
+FARMÁCIA E ESTÉTICA: Clembuterol (beta-2 agonista, termogênico — NÃO é hormônio), T3 (Liotironina — tireoidiano), Botox (toxina botulínica), Água Bacteriostática (diluente pra reconstituir peptídeos).`;
 
 // ── BASE DO GERADOR DE PROTOCOLOS (23/09/2026) ──────────────────────────────────
 // O protocolo pós-venda passa a usar a MESMA base do Gerador de Protocolos do site

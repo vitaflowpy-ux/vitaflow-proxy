@@ -33,7 +33,7 @@ const SHOP_GRAPHQL     = 'https://vitaflowoficial.com/api/2023-10/graphql.json';
 const HIST_MAX_MSGS = 16;
 const HIST_TTL_MS   = 6 * 60 * 60 * 1000; // 6 horas
 
-const COLECOES = ['emagrecedores','peptideos','hormonios','gh','estetica','farmacia','sarms','outros','10-mais-vendidos'];
+const COLECOES = ['emagrecedores','peptideos','hormonios','gh','estetica','farmacia','sarms','10-mais-vendidos'];
 
 const MODELOS_FALLBACK = [
   'claude-3-5-sonnet-20241022',
@@ -159,10 +159,10 @@ async function salvarHistorico(phone, msgs){
 //      1 letra errada em palavra longa);
 //   3) nada disponível com aquelas palavras → pergunta à LOJA (busca pública do site) se o produto
 //      existe e está ESGOTADO — a Athena passa a dizer "está esgotado no momento" em vez de "não consta";
-//   4) coleção do cache parada há mais de 7 dias é ignorada (a "outros" estava parada desde 21/08 e
-//      trazia produto e preço antigos).
+//   4) coleção do cache parada há mais de 7 dias é ignorada (proteção contra nome e preço antigos).
+//      A antiga coleção de "sobras" foi EXTINTA (Thiago, 05/10: todo produto tem coleção própria) e saiu daqui de vez.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','outros','10-mais-vendidos'];
+const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos'];
 const CI_VALIDADE_MS = 7 * 24 * 3600 * 1000;
 const CI_LOJA_SUGGEST = 'https://vitaflowoficial.com/search/suggest.json';
 const CI_LOJA_TIMEOUT_MS = 2500;
@@ -610,7 +610,7 @@ PROGRAMA DE REVENDEDORES (é DIFERENTE de atacado — NUNCA confunda os dois):
 COMO LEVAR O CLIENTE AO PRODUTO (sem pedir pra ele digitar o nome):
 - Quando o cliente demonstrar intenção de VER ou COMPRAR ("quero ver", "qual o preço", "quanto custa", "quero comprar", "vou querer a tirzepatida"), ou depois que VOCÊ recomendou e ele topou, NÃO peça pra ele digitar o nome. Em vez disso, TERMINE sua mensagem com um marcador que o sistema usa pra abrir a lista real (com preços e botão de compra):
     [[LISTA:colecao:termo]]
-  - colecao (obrigatório), uma destas: emagrecedores, peptideos, hormonios, gh, estetica, farmacia, sarms, outros, 10-mais-vendidos
+  - colecao (obrigatório), uma destas: emagrecedores, peptideos, hormonios, gh, estetica, farmacia, sarms, 10-mais-vendidos
   - termo é o nome/família do produto (ex.: retatrutida, tirzepatida, bpc, stanozolol). Deixe VAZIO pra mostrar a categoria inteira.
   - Exemplos:
     "Perfeito! Já te mostro as opções de tirzepatida 👇 [[LISTA:emagrecedores:tirzepatida]]"
@@ -693,24 +693,67 @@ HORMÔNIOS (substância única, exceto Durateston/CutStack acima):
 - Testosterona (Enantato/Cipionato/Propionato/Undecanoato/Suspensão): o éster muda a meia-vida.
 - Nandrolona (Deca), NPP (nandrolona de éster curto), Trembolona (Acetato/Enantato/Hexa), Boldenona (Equipoise), Stanozolol (Winstrol), Oxandrolona (Anavar), Masteron (Drostanolona), Primobolan (Metenolona), Dianabol (Metandienona), Hemogenin (Oximetolona/Anadrol), HCG, Anastrozol (inibidor de aromatase), Proviron (Mesterolona).
 
-OUTROS: Clembuterol (beta-2 agonista, termogênico — NÃO é hormônio), T3 (Liotironina — tireoidiano), Botox (toxina botulínica), Água Bacteriostática (diluente pra reconstituir peptídeos).`;
+FARMÁCIA E ESTÉTICA: Clembuterol (beta-2 agonista, termogênico — NÃO é hormônio), T3 (Liotironina — tireoidiano), Botox (toxina botulínica), Água Bacteriostática (diluente pra reconstituir peptídeos).`;
 
 // ── Chamada ao modelo ─────────────────────────────────────────────────────────
 // Diferença pra versão assíncrona: aqui NÃO dá pra varrer modelo por modelo (não há
 // tempo). Vai no modelo forçado pela env e, se falhar, tenta os fallbacks — com timeout
 // curto, porque quem está esperando é o webhook do BotConversa.
+// v90: resposta em FLUXO. Antes, se o modelo não terminasse de escrever dentro do prazo, a resposta inteira era jogada fora
+// e o lead recebia "preciso de um minutinho" + menu (dúvida longa ficava SEM resposta). Agora o texto vai sendo recebido aos
+// poucos: se o prazo acabar, devolve o que já foi escrito, cortado no fim da última frase completa.
+function cortarNoFimDaFrase(txt){
+  let t = String(txt || '').replace(/\[\[[^\]]*$/, '');   // marcador pela metade nunca vai para o cliente
+  let fim = -1;
+  ['. ', '! ', '? ', '.\n', '!\n', '?\n', '\n'].forEach(function(p){ const i = t.lastIndexOf(p); if (i > fim) fim = i; });
+  if (fim < 100) return '';   // nem uma frase inteira de bom tamanho: melhor não mandar pedaço
+  t = t.slice(0, fim + 1);
+  t = t.trim();
+  const ult = t.split('\n').pop();
+  if (((ult.match(/\*/g) || []).length % 2) === 1) t = t.slice(0, t.lastIndexOf('*')).trim();   // negrito aberto no fim
+  return t;
+}
 async function chamarModelo(modelo, sys, mensagens, maxTokens, timeoutMs){
+  let texto = '', completo = false, status = 0;
+  const ctrl = new AbortController();
+  const timer = setTimeout(function(){ try { ctrl.abort(); } catch (e) {} }, timeoutMs || 7000);
   try {
-    const r = await fetchT('https://api.anthropic.com/v1/messages', {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: modelo, max_tokens: maxTokens || 500, system: sysComCache(sys), messages: mensagens })
-    }, timeoutMs || 7000);
-    const d = await r.json();
-    if (r.status === 200 && d && d.content && d.content[0] && d.content[0].text) return d.content[0].text.trim();
-    console.log('[IA-SYNC] modelo', modelo, '-> status', r.status, '| erro:', d && d.error ? JSON.stringify(d.error).slice(0,160) : 'nenhum');
+      body: JSON.stringify({ model: modelo, max_tokens: maxTokens || 500, system: sysComCache(sys), messages: mensagens, stream: true }),
+      signal: ctrl.signal
+    });
+    status = r.status;
+    if (r.status !== 200) {
+      let d = null; try { d = await r.json(); } catch (e) {}
+      console.log('[IA-SYNC] modelo', modelo, '-> status', r.status, '| erro:', d && d.error ? JSON.stringify(d.error).slice(0,160) : 'nenhum');
+      return null;
+    }
+    const leitor = r.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const parte = await leitor.read();
+      if (parte.done) break;
+      buf += dec.decode(parte.value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const linha = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        if (linha.indexOf('data:') !== 0) continue;
+        try {
+          const ev = JSON.parse(linha.slice(5));
+          if (ev.type === 'content_block_delta' && ev.delta && typeof ev.delta.text === 'string') texto += ev.delta.text;
+          else if (ev.type === 'message_stop') completo = true;
+        } catch (e) {}
+      }
+    }
   } catch (e) {
-    console.log('[IA-SYNC] EXCECAO modelo', modelo, ':', e.message);
+    console.log('[IA-SYNC] modelo', modelo, 'interrompido:', e.message, '| ja escrito:', texto.length, 'caracteres');
+  } finally { clearTimeout(timer); }
+  if (completo) return texto.trim() || null;
+  if (status === 200 && texto.length >= 150) {   // o prazo acabou no meio: devolve o que já veio
+    const cortado = cortarNoFimDaFrase(texto);
+    if (cortado.length >= 120) { console.log('[IA-SYNC] prazo acabou — devolvendo resposta PARCIAL:', cortado.length, 'de', texto.length); return cortado; }
   }
   return null;
 }
@@ -1135,7 +1178,7 @@ exports.handler = async (event) => {
     }
 
     const restante = PRAZO_MS - (Date.now() - t0);
-    const pensado = await pensarComClaude(sys, mensagem, historico, restante);
+    const pensado = await pensarComClaude(sys, mensagem, historico, restante - 450);   // v90: folga para gravar o histórico e devolver
     const reply = travarFreteInventado(pensado.texto);   // v78: nunca frete inventado nem checkout simulado
     if (!reply) { console.log('[IA-SYNC] sem resposta do modelo dentro do prazo.'); return vazio; }
 
