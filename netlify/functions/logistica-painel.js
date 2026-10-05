@@ -1,6 +1,15 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v14  ·  04/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v15  ·  05/10/2026
+   v15 (pedido do Thiago, 05/10: "ao criar um pedido duplicado o sistema avise isso no painel da logística com os dados, pois eles
+       precisam ter esse controle também, mesmo que os e-mails já tenham sido disparados para os clientes" · "é quando eu compro
+       produtos de fornecedores diferentes, então o pedido se divide em outros com o prefixo D, geram outros códigos de rastreio"
+       · "não quero aviso no WhatsApp da logística, apenas no painel"):
+       PEDIDOS DUPLICADOS — toda linha D (pacote do pedido: coluna PEDIDO_ORIGINAL preenchida, ou número VF-DDMM-D…) aparece no
+       painel com os dados dela e dos outros pacotes do mesmo pedido. acao 'duplicados' (lista) e 'duplicados_visto' (✔ Visto por
+       linha D — vitaflow_sync/logistica/duplicados_vistos/<pedido D> = { ts, uid }). O placar devolve `duplicados.total` (os não
+       vistos). Entregue, cancelado e não pago não contam; janela de 60 dias pela data do pedido. Só LÊ a planilha (espelho) e o
+       registro do e-mail dos pacotes. NENHUM WhatsApp, nenhum e-mail novo.
    v14 (ordem do Thiago, 04/10: "coloca um limite de leituras, depois de travar ela espera alguns minutos e recomeça de onde
        parou, e assim vai até terminar toda a rodada"): SÓ o coletor da Onlog muda — coletorOnlog(ticket, opts).
        O Cloudflare da Onlog troca para "Confirme que é humano" depois de ~8 consultas na mesma página (medido em 04/10).
@@ -1126,6 +1135,47 @@ function ocorrenciasLista(peds, vistos, agora) {
       dias: p.tConf ? R.duEntre(p.tConf, agora) : 0, visto: visto, visto_em: (visto && v.ts) ? R.ddmm(v.ts) : '' };
   }).sort(function (a, b) { return (a.visto ? 1 : 0) - (b.visto ? 1 : 0) || b.dias - a.dias || (a.pedido < b.pedido ? -1 : 1); });
 }
+/* v15: PEDIDOS DUPLICADOS (linhas D) — o pedido foi dividido em mais de um pacote (fornecedores diferentes) */
+var DUP_VISTOS = RAIZ + '/duplicados_vistos';   /* <pedido D> = { ts, uid } */
+var DUP_JANELA_DIAS = 60;
+function ehLinhaD(p) { return !!(p && (p.pai || /^VF-\d{4}-D/i.test(String(p.pedido || '').trim()))); }
+function dupDataMs(data) { var m = String(data || '').match(/^(\d{2})\/(\d{2})\/(\d{4})/); return m ? new Date(m[3] + '-' + m[2] + '-' + m[1] + 'T12:00:00-03:00').getTime() : 0; }
+function duplicadosLista(peds, vistos, emails, agora) {
+  var V = (vistos && typeof vistos === 'object') ? vistos : {}, E = (emails && typeof emails === 'object') ? emails : {};
+  var porPed = {}, filhosDe = {};
+  (peds || []).forEach(function (p) { porPed[String(p.pedido || '').trim().toUpperCase()] = p; });
+  /* o pedido de origem: a coluna PEDIDO_ORIGINAL; linha D feita à mão (sem a coluna) → o pedido do mesmo dia e mesmo número com outra letra */
+  function origemDe(p) {
+    if (p.pai) return String(p.pai).trim().toUpperCase();
+    var m = String(p.pedido || '').trim().toUpperCase().match(/^(VF-\d{4}-)D(\d+)$/);
+    if (!m) return '';
+    var achou = ''; ['S', 'A', 'W', 'V', 'M', 'O'].forEach(function (L) { if (!achou && porPed[m[1] + L + m[2]]) achou = m[1] + L + m[2]; });
+    if (achou) return achou;
+    Object.keys(porPed).forEach(function (k) { if (!achou && k.indexOf(m[1]) === 0 && k !== m[1] + 'D' + m[2] && k.slice(m[1].length + 1) === m[2] && !ehLinhaD(porPed[k])) achou = k; });
+    return achou;
+  }
+  var linhasD = (peds || []).filter(function (p) { return ehLinhaD(p) && !p.final && !p.naoPagou; });
+  linhasD.forEach(function (p) { p._orig = origemDe(p); if (p._orig) (filhosDe[p._orig] = filhosDe[p._orig] || []).push(p); });
+  function resumo(x) { return { pedido: x.pedido, status: x.status || '', codigo: x.cod || '', transportadora: x.transp || '', fornecedor: x.forn || '', origem: ORIGEM_NOME[String(x.origCol || '').toUpperCase()] || '' }; }
+  var lim = agora - DUP_JANELA_DIAS * 86400000;
+  return linhasD.filter(function (p) { var t = dupDataMs(p.data) || p.tConf || 0; return !t || t >= lim; }).map(function (p) {
+    var o = p._orig ? porPed[p._orig] : null, v = V[p.k], visto = !!(v && v.ts), entregue = p.st === 'ENTREGUE';
+    var outros = []; if (o) outros.push(resumo(o));
+    (filhosDe[p._orig] || []).forEach(function (f) { if (f !== p) outros.push(resumo(f)); });
+    var reg = p._orig ? E[R.histKey(p._orig)] : null, mail = '';
+    if (ehRevendedor(p._orig || p.pedido)) mail = 'revendedor — não recebe e-mail';
+    else if (reg && reg.estado === 'enviado') mail = 'e-mail dos pacotes enviado' + (reg.ts ? ' em ' + R.ddmm(reg.ts) : '');
+    else if (reg && reg.estado === 'aguardando_origem') mail = 'e-mail dos pacotes esperando a origem do envio';
+    else if (reg && reg.estado === 'teste') mail = 'e-mail dos pacotes em modo teste (não foi para o cliente)';
+    else mail = 'e-mail dos pacotes ainda não enviado';
+    return { k: p.k, pedido: p.pedido, original: p._orig || '', feito: p.pai ? 'sistema' : 'mao', nome: p.nome || (o && o.nome) || '',
+      data: String(p.data || '').slice(0, 10), t: dupDataMs(p.data) || p.tConf || 0, produtos: txt(p.produtos, 400), fornecedor: p.forn || '',
+      origem: ORIGEM_NOME[String(p.origCol || '').toUpperCase()] || '', status: p.status || '', codigo: p.cod || '', transportadora: p.transp || '',
+      pacotes: outros.length + 1, outros: outros.slice(0, 8), email: mail, revendedor: ehRevendedor(p._orig || p.pedido),
+      entregue: entregue, visto: visto, visto_em: (visto && v.ts) ? R.ddmm(v.ts) : '' };
+  }).sort(function (a, b) { return ((a.visto || a.entregue) ? 1 : 0) - ((b.visto || b.entregue) ? 1 : 0) || b.t - a.t || (a.pedido < b.pedido ? -1 : 1); });
+}
+function duplicadosAbertos(lista) { return (lista || []).filter(function (x) { return !x.visto && !x.entregue; }); }
 /* v13: RESUMO DAS PASSADAS no WhatsApp da logística (rotina das 10h, seg a sex) */
 var PASS_RESUMO = RAIZ + '/passadas_resumo';   /* { ts } do último resumo enviado */
 function quandoBR(ms) { return new Date(Number(ms)).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às'); }
@@ -2205,6 +2255,20 @@ async function acaoAdminV4(acao, d, uid, agora) {
     await fbReq('PUT', AM_VISTOS + '/' + kO, { am: pO.am.slice(0, 80), ts: agora, uid: uid });
     return resp({ ok: true, k: kO, visto: true });
   }
+  if (acao === 'duplicados') {   /* v15: linhas D — o pedido foi dividido em mais de um pacote */
+    var bD = await lerBase(false), lD = await Promise.all([fbLerOu(DUP_VISTOS), fbLerOu(RAIZ + '/email_pacotes')]);
+    return resp({ ok: true, gerado_ts: agora, janela_dias: DUP_JANELA_DIAS, duplicados: duplicadosLista(montarPedidos(bD), lD[0], lD[1], agora) });
+  }
+  if (acao === 'duplicados_visto') {   /* v15: ✔ Visto numa linha D — só tira do aviso; não muda nada no pedido */
+    var kD = String(d.k || '');
+    if (!/^[A-Za-z0-9_-]{3,40}$/.test(kD)) return resp({ ok: false, erro: 'pedido inválido' }, 400);
+    _cache.placar = null;
+    if (d.desfazer === true) { await fbReq('DELETE', DUP_VISTOS + '/' + kD); return resp({ ok: true, k: kD, visto: false }); }
+    var pD = montarPedidos(await lerBase(false)).filter(function (p) { return p.k === kD; })[0];
+    if (!pD || !ehLinhaD(pD)) return resp({ ok: false, erro: 'esse pedido não é (mais) um pacote D' });
+    await fbReq('PUT', DUP_VISTOS + '/' + kD, { ts: agora, uid: uid });
+    return resp({ ok: true, k: kD, visto: true });
+  }
   if (acao === 'passadas_resumo') {   /* v13: ver o texto ou mandar agora o resumo das passadas */
     return resp(await avisoPassadas({ agora: agora, simular: d.enviar !== true, forcar: d.enviar === true }));
   }
@@ -2216,7 +2280,8 @@ async function acaoAdminV4(acao, d, uid, agora) {
     var vL = { ok: true, gerado_ts: agora,
       envio: { total: atr.length, varejo: atr.filter(function (a) { return !a.atacado; }).length, atacado: atr.filter(function (a) { return a.atacado; }).length, maior: atr.length ? atr[0].dias : 0 },
       parados: { total: par.length, maior: par.length ? par[0].dias : 0 }, vistos: { envio: atrT.length - atr.length, parados: parT.length - par.length },
-      ocorrencias: { total: ocorrenciasLista(pL, await fbLerOu(AM_VISTOS), agora).filter(function (o) { return !o.visto; }).length } };   /* v13 */
+      ocorrencias: { total: ocorrenciasLista(pL, await fbLerOu(AM_VISTOS), agora).filter(function (o) { return !o.visto; }).length },   /* v13 */
+      duplicados: { total: duplicadosAbertos(duplicadosLista(pL, await fbLerOu(DUP_VISTOS), null, agora)).length } };   /* v15 */
     _cache.placar = { t: agora, v: vL };
     return resp(vL);
   }
@@ -2271,7 +2336,7 @@ exports.handler = async function (event) {
       var rV3 = await acaoAdminV3(acao, d, uid, agora);
       if (rV3) return rV3;
     }
-    if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'cupons_enviar' || acao === 'cupons_excluir' || acao === 'placar' || acao === 'ocorrencias' || acao === 'ocorrencias_visto' || acao === 'passadas_resumo') {   /* v4 · v5 · v8 */
+    if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'cupons_enviar' || acao === 'cupons_excluir' || acao === 'placar' || acao === 'ocorrencias' || acao === 'ocorrencias_visto' || acao === 'duplicados' || acao === 'duplicados_visto' || acao === 'passadas_resumo') {   /* v4 · v5 · v8 */
       var rV4 = await acaoAdminV4(acao, d, uid, agora);
       if (rV4) return rV4;
     }
@@ -2338,7 +2403,7 @@ exports.handler = async function (event) {
 };
 
 /* usado pela logistica-atrasos.js (agendada) e pelos testes */
-exports.lib = { ocorrenciasLista: ocorrenciasLista, acaoManualInfo: acaoManualInfo, avisoPassadas: avisoPassadas, textoPassadas: textoPassadas, passadasLista: passadasLista, semConsultaLista: semConsultaLista, textoSemConsulta: textoSemConsulta, avisoSemConsulta: avisoSemConsulta, lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros: calcularNumeros, calcularAtrasos: calcularAtrasos,
+exports.lib = { duplicadosLista: duplicadosLista, duplicadosAbertos: duplicadosAbertos, ehLinhaD: ehLinhaD, ocorrenciasLista: ocorrenciasLista, acaoManualInfo: acaoManualInfo, avisoPassadas: avisoPassadas, textoPassadas: textoPassadas, passadasLista: passadasLista, semConsultaLista: semConsultaLista, textoSemConsulta: textoSemConsulta, avisoSemConsulta: avisoSemConsulta, lerBase: lerBase, montarPedidos: montarPedidos, calcularNumeros: calcularNumeros, calcularAtrasos: calcularAtrasos,
   decidirEnvio: decidirEnvio, ehRevendedor: ehRevendedor, montarEmail: montarEmail, enviarBrevo: enviarBrevo, htmlEmail: htmlEmail, conferirAdmin: conferirAdmin,
   EMAIL_PADRAO: EMAIL_PADRAO, EMAIL_CFG_PADRAO: EMAIL_CFG_PADRAO, transpNome: transpNome, fornNome: fornNome, RAIZ: RAIZ,
   /* v3 */
