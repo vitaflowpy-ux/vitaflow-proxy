@@ -1,6 +1,16 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v9  ·  02/10/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v11  ·  05/10/2026
+   v11 (ordem do Thiago, 05/10: "quero que resolva e que fique simples pois não está funcionando" — a logística mandava #bot
+       para TIRAR o bot da conversa e ele continuava respondendo, porque #bot fazia o contrário): os comandos pelo celular da
+       logística ficam assim:
+         #bot     = o bot SAI da conversa (igual a responder à mão: calado pelas horas da config, protocolo "em atendimento");
+         #voltar  = o bot VOLTA na hora (o que o #bot fazia até a v10).
+       Responder à mão continua calando o bot sozinho. O botão "Devolver ao bot" do painel não muda.
+       ORDEM DAS MENSAGENS: quando a logística manda várias no mesmo minuto, a Z-API pode entregar fora de ordem. Agora vale o
+       horário DA MENSAGEM (`momment`): um #voltar mais antigo que a última mensagem à mão é ignorado, e uma mensagem à mão
+       mais antiga que o último #voltar não cala o bot de novo.
+   v10 (ordem do Thiago, 03/10): EXCEÇÕES — número da aba 🚫 Exceções do painel não tem bot nenhum.
    v9 (ordem do Thiago, 02/10: "pode retirar o modo teste do bot, deixe apenas ligado ou desligado"): o bot só tem dois
        modos — 'ligado' (atende todo mundo) e 'desligado' (não responde ninguém). Saíram o modo 'teste' e a lista de números
        de teste. Config antiga com modo 'teste' (ou qualquer valor estranho) vale como DESLIGADO — nunca liga sozinho.
@@ -61,7 +71,7 @@
      o bot fica calado naquela conversa por 6 h (config). O protocolo aberto passa a "em atendimento".
    - MODO (v9): 'ligado' atende todo mundo; 'desligado' não responde ninguém. (O modo teste saiu na v9.)
    - EXCEÇÕES (v10, ordem do Thiago, 03/10/2026): número cadastrado na aba 🚫 Exceções do painel NÃO tem bot nenhum —
-     sem menu, sem protocolo, sem aviso, sem silêncio, sem #bot. A logística recebe e conversa à mão. O bot lê SÓ a
+     sem menu, sem protocolo, sem aviso, sem silêncio, sem #bot nem #voltar. A logística recebe e conversa à mão. O bot lê SÓ a
      chave daquele número (nunca o nó inteiro). Se a leitura falhar, segue como número comum.
    - Textos e config no Firebase (vitaflow_sync/logistica/textos e /config), editáveis no painel da
      logística. Os padrões abaixo só valem enquanto o nó não existir. GET ?defaults=1 devolve os padrões.
@@ -86,7 +96,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v10';
+var VERSAO = 'v11';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -1389,20 +1399,28 @@ async function coletarAvaria(ctx) {
 }
 
 /* ------------------------------------------------------------------ mensagem que o celular da logística MANDOU (fromMe) */
-/* v7: "#bot" (com ou sem espaço, maiúscula ou minúscula) e mais nada na mensagem */
+/* v11: "#bot" = o bot SAI · "#voltar" = o bot VOLTA (com ou sem espaço, maiúscula ou minúscula, e mais nada na mensagem) */
 function ehComandoBot(t) { return /^#\s*bot[\s.!]*$/i.test(String(t || '').trim()); }
+function ehComandoVoltar(t) { return /^#\s*voltar[\s.!]*$/i.test(String(t || '').trim()); }
 async function tratarFromMe(body, cfg, k, phone) {
   if (chaveNumero(phone) === chaveNumero(cfg.ana_whatsapp)) return 'fromMe para a Ana — ignorado';
   if (body.fromApi === true) return 'fromMe do bot (fromApi)';
   var conv = await fbGet(RAIZ + '/conversas/' + k) || {};
   var texto = (body.text && body.text.message) ? String(body.text.message) : '';
-  /* v7: "#bot" mandado pelo celular da logística = devolver a conversa ao bot AGORA */
-  if (ehComandoBot(texto)) {
-    await fbPatch(RAIZ + '/conversas/' + k, { silencio_ate: 0, silencio_desde: 0, bot_volta_ts: Date.now(), telefone: phone });
+  /* v11: horário DA MENSAGEM (a Z-API manda em `momment`); sem ele, o de agora */
+  var mom = Number(body.momment) || Date.now();
+  if (mom < 1e12) mom = mom * 1000;   /* se vier em segundos */
+  var cmdSair = ehComandoBot(texto);
+  /* v11: "#voltar" mandado pelo celular da logística = devolver a conversa ao bot AGORA */
+  if (ehComandoVoltar(texto)) {
+    if (conv.humano_ts && mom < conv.humano_ts) return '#voltar mais antigo que a ultima mensagem a mao — ignorado';
+    await fbPatch(RAIZ + '/conversas/' + k, { silencio_ate: 0, silencio_desde: 0, bot_volta_ts: mom, telefone: phone });
     try { await fbDelete(RAIZ + '/silencio/' + k); } catch (eD) { /* a lista do painel é só um espelho */ }
-    return 'bot reativado (#bot)';
+    return 'bot reativado (#voltar)';
   }
-  if (texto) {
+  /* mensagem à mão que chegou atrasada (é anterior ao último #voltar): não cala o bot de novo */
+  if (conv.bot_volta_ts && mom < conv.bot_volta_ts) return 'mensagem anterior ao #voltar — ignorada';
+  if (texto && !cmdSair) {
     var h = impressao(texto), agora = Date.now();
     var lista = conv.bot_txt || [];
     for (var i = 0; i < lista.length; i++) if (lista[i].h === h && agora - (lista[i].t || 0) < 10 * MIN) return 'fromMe do bot';
@@ -1410,8 +1428,8 @@ async function tratarFromMe(body, cfg, k, phone) {
   /* foi gente respondendo pelo celular da logística → silêncio */
   var agora2 = Date.now(), horas = Number(cfg.silencio_horas) || 6;
   var desde = (conv.silencio_ate && conv.silencio_ate > agora2 && conv.silencio_desde) ? conv.silencio_desde : agora2;
-  await fbPatch(RAIZ + '/conversas/' + k, { silencio_ate: agora2 + horas * HORA, silencio_desde: desde, humano_ts: agora2, telefone: phone });
-  /* v7: espelho pro painel listar as conversas com o bot calado (apagado no #bot e no botão "Devolver ao bot") */
+  await fbPatch(RAIZ + '/conversas/' + k, { silencio_ate: agora2 + horas * HORA, silencio_desde: desde, humano_ts: Math.max(mom, Number(conv.humano_ts) || 0), telefone: phone });
+  /* v7: espelho pro painel listar as conversas com o bot calado (apagado no #voltar e no botão "Devolver ao bot") */
   try {
     await fbPut(RAIZ + '/silencio/' + k, { ate: agora2 + horas * HORA, desde: desde, telefone: phone,
       nome: String(conv.nome_whatsapp || body.chatName || '').slice(0, 80),
@@ -1425,7 +1443,7 @@ async function tratarFromMe(body, cfg, k, phone) {
       await fbPut(RAIZ + '/protocolos/' + conv.protocolo + '/historico/' + agora2, { acao: 'respondido pelo WhatsApp', por: 'whatsapp' });
     }
   }
-  return 'silencio ' + horas + 'h';
+  return 'silencio ' + horas + 'h' + (cmdSair ? ' (#bot)' : '');
 }
 
 /* ------------------------------------------------------------------ aviso da abertura (cron-job.org a cada 15 min) */
