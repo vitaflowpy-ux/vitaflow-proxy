@@ -1167,6 +1167,7 @@ function duplicadosLista(peds, vistos, emails, agora) {
     else if (reg && reg.estado === 'enviado') mail = 'e-mail dos pacotes enviado' + (reg.ts ? ' em ' + R.ddmm(reg.ts) : '');
     else if (reg && reg.estado === 'aguardando_origem') mail = 'e-mail dos pacotes esperando a origem do envio';
     else if (reg && reg.estado === 'teste') mail = 'e-mail dos pacotes em modo teste (não foi para o cliente)';
+    else if (!p.pai) mail = 'criado à mão — sem e-mail automático dos pacotes';
     else mail = 'e-mail dos pacotes ainda não enviado';
     return { k: p.k, pedido: p.pedido, original: p._orig || '', feito: p.pai ? 'sistema' : 'mao', nome: p.nome || (o && o.nome) || '',
       data: String(p.data || '').slice(0, 10), t: dupDataMs(p.data) || p.tConf || 0, produtos: txt(p.produtos, 400), fornecedor: p.forn || '',
