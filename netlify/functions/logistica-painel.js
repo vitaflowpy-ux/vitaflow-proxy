@@ -1,6 +1,17 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v13  ·  04/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v14  ·  04/10/2026
+   v14 (ordem do Thiago, 04/10: "coloca um limite de leituras, depois de travar ela espera alguns minutos e recomeça de onde
+       parou, e assim vai até terminar toda a rodada"): SÓ o coletor da Onlog muda — coletorOnlog(ticket, opts).
+       O Cloudflare da Onlog troca para "Confirme que é humano" depois de ~8 consultas na mesma página (medido em 04/10).
+       opts (tudo opcional; sem opts o coletor faz exatamente o que fazia na v13):
+         · max    = limite de consultas NESTA página; ao chegar nele o coletor termina com estado 'pausa' (não é erro);
+         · cpfDe  = por qual CPF da fila começar (retoma de onde parou);
+         · pular  = códigos de objeto que já foram consultados nesta rodada (não repete);
+         · fase   = 'cpf' (só os códigos novos) | 'status' (só a situação) | vazio (as duas);
+         · lote   = objetos por consulta na leitura da situação (padrão 20; a Onlog aceitou 60 no teste de 04/10).
+       Novos em window._vfOnlog: consultas, cpf_prox, st_tentados (códigos consultados nesta página), st_resta.
+       Quem orquestra as páginas (abrir de novo depois de uma pausa) é a extensão "Rodada de códigos" v1.2. Ninguém clica no Cloudflare.
    v13 (OK do Thiago, 04/10: "ok, pode fazer tudo" às 3 sugestões):
        (1) OCORRÊNCIAS — o que o Rastreamento sinaliza na coluna ACAO_MANUAL (ausente, endereço incorreto, fiscalização, extravio,
            devolvido, objeto cancelado/devolvido na Onlog, +25 dias) passa a aparecer no painel da logística: acao 'ocorrencias'
@@ -1549,10 +1560,16 @@ function coletorDaniel(ticket) {
     return { ok: !!pj.ok, pedidos: os.length, com_codigo: itens.filter(function (x) { return x.c1; }).length, recebidos: pj.recebidos || 0, erro: pj.erro || '' };
   })();
 }
-function coletorOnlog(ticket) {
+function coletorOnlog(ticket, opts) {
   var FN = 'https://vitaflow-proxy.netlify.app/.netlify/functions/logistica-painel';
+  /* v14: limite de consultas por página + retomada (ver o cabeçalho). Sem opts = comportamento da v13. */
+  opts = opts || {};
+  var MAX = Number(opts.max) > 0 ? Number(opts.max) : 1e9, LOTE = Math.min(60, Math.max(5, Number(opts.lote) || 20));
+  var CPF_DE = Math.max(0, Number(opts.cpfDe) || 0), FASE = opts.fase === 'cpf' || opts.fase === 'status' ? opts.fase : '', PULAR = {};
+  (Array.isArray(opts.pular) ? opts.pular : []).forEach(function (c) { PULAR[String(c)] = 1; });
   var S = window._vfOnlog = { estado: 'iniciando', total: 0, feitos: 0, com_objeto: 0, objetos: 0, erros: 0, msg: '',
-    /* v9: leitura da situação dos objetos */ fase: 'cpf', st_total: 0, st_feitos: 0, st_lidos: 0, st_detalhes: 0, st_erros: 0, st_resultado: null };
+    /* v9: leitura da situação dos objetos */ fase: 'cpf', st_total: 0, st_feitos: 0, st_lidos: 0, st_detalhes: 0, st_erros: 0, st_resultado: null,
+    /* v14 */ consultas: 0, cpf_prox: CPF_DE, st_tentados: [], st_resta: 0 };
   /* A aba da Onlog costuma ficar em 2º plano: lá o Chrome segura o setTimeout da página (até 1 por minuto). O relógio de um
      Worker não é segurado. Sem Worker (bloqueado), cai no setTimeout normal. */
   var relogio = null, esperas = {}, nEsp = 0;
@@ -1635,6 +1652,7 @@ function coletorOnlog(ticket) {
     var fmt = cpf.slice(0, 3) + '.' + cpf.slice(3, 6) + '.' + cpf.slice(6, 9) + '-' + cpf.slice(9);
     window.jQuery(campo).val(fmt).trigger('input').trigger('change');
     var env0 = enviadas, ter0 = terminadas;
+    S.consultas++;
     btn.click();
     var semToken = false;
     /* terminou = a chamada desta consulta voltou (ou, se a página não usar o jQuery pra isso, o Cloudflare renovou a senha) */
@@ -1684,6 +1702,7 @@ function coletorOnlog(ticket) {
     div.innerHTML = '';
     window.jQuery(campo).val(codigos.join(',')).trigger('input').trigger('change');
     var env0 = enviadas, ter0 = terminadas;
+    S.consultas++;
     btn.click();
     var semToken = false;
     var voltou = await ate(function () {
@@ -1718,11 +1737,12 @@ function coletorOnlog(ticket) {
   }
   /* alvos: [{c: código a consultar (AA ou o da transportadora), s: último status conhecido, m: 1 = abrir o detalhe}] */
   async function varrerStatus(alvos) {
-    S.fase = 'status'; S.st_total = alvos.length;
-    var conhecido = {}, saida = [], primeiro = true, detalhes = 0, t0 = Date.now(), parou = false, ultimaResp = null;
+    S.fase = 'status'; S.st_total = alvos.length; S.st_resta = alvos.length;
+    var conhecido = {}, saida = [], primeiro = true, detalhes = 0, t0 = Date.now(), parou = false, pausou = false, ultimaResp = null;
     alvos.forEach(function (a) { conhecido[a.c] = a; });
-    for (var i = 0; i < alvos.length; i += 20) {
-      var lote = alvos.slice(i, i + 20), res;
+    for (var i = 0; i < alvos.length; i += LOTE) {
+      if (S.consultas >= MAX) { pausou = true; break; }   /* v14: limite de consultas desta página */
+      var lote = alvos.slice(i, i + LOTE), res;
       try { res = await consultarObjetos(lote.map(function (a) { return a.c; })); } catch (e) { res = { erro: String(e && e.message || e).slice(0, 60) }; }
       if (res.parar) { parou = true; S.msg = 'O Cloudflare da Onlog pediu confirmação durante a leitura da situação: clique no quadradinho na página e peça a rodada de novo.'; break; }
       if (res.erro) { S.st_erros++; await espera(3500); continue; }
@@ -1744,13 +1764,16 @@ function coletorOnlog(ticket) {
       await fecharModal();
       /* consultado pelo AA e não veio na resposta = a Onlog não tem esse objeto */
       lote.forEach(function (a) { if (/^AA\d{10}$/.test(a.c) && !achados[a.c] && !(res.unico && res.unico.aa === a.c)) saida.push({ c: a.c, n: 1 }); });
-      S.st_feitos = Math.min(alvos.length, i + 20);
+      S.st_feitos = Math.min(alvos.length, i + LOTE); S.st_resta = alvos.length - S.st_feitos;
+      lote.forEach(function (a) { S.st_tentados.push(a.c); });   /* v14: estes já foram consultados nesta rodada */
       if (saida.length >= 40) { ultimaResp = await mandarStatus(saida, !primeiro, false); primeiro = false; saida = []; }
       await espera(3500);   /* sem pressa, como na consulta por CPF */
     }
-    ultimaResp = await mandarStatus(saida, !primeiro, true);   /* fim: a função processa o que chegou (mesmo se parou no meio) */
-    S.st_resultado = (ultimaResp && ultimaResp.processado) || ultimaResp || null;
-    return !parou;
+    if (saida.length || !primeiro || (!parou && !pausou)) {   /* v14: página que não leu nada não manda leitura vazia */
+      ultimaResp = await mandarStatus(saida, !primeiro, true);   /* fim: a função processa o que chegou (mesmo se parou no meio) */
+      S.st_resultado = (ultimaResp && ultimaResp.processado) || ultimaResp || null;
+    }
+    return parou ? 'parado' : (pausou ? 'pausa' : 'ok');
   }
   async function mandar(itens, acumular) {
     var r = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ acao: 'codigos_entrada', ticket: ticket, fonte: 'onlog', itens: itens, acumular: acumular }) });
@@ -1761,23 +1784,28 @@ function coletorOnlog(ticket) {
       var rf = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ acao: 'codigos_fila', ticket: ticket }) });
       var fila = await rf.json();
       if (!fila || !fila.ok) { S.estado = 'erro'; S.msg = (fila && fila.erro) || 'fila'; return; }
-      var cpfs = fila.cpfs || [], lote = [], primeiro = true, objetosSt = fila.objetos || [];
-      S.total = cpfs.length; S.st_total = objetosSt.length; S.estado = 'rodando';
-      if (!cpfs.length) await mandar([], false);
-      for (var i = 0; i < cpfs.length; i++) {
+      var cpfs = fila.cpfs || [], lote = [], primeiro = CPF_DE === 0, pausa = false;
+      var objetosSt = (fila.objetos || []).filter(function (a) { return !PULAR[a.c]; });
+      S.total = cpfs.length; S.feitos = Math.min(CPF_DE, cpfs.length); S.st_total = objetosSt.length; S.st_resta = objetosSt.length; S.estado = 'rodando';
+      if (FASE !== 'status' && !cpfs.length && primeiro) await mandar([], false);
+      for (var i = CPF_DE; FASE !== 'status' && i < cpfs.length; i++) {
+        if (S.consultas >= MAX) { pausa = true; break; }   /* v14: limite de consultas desta página */
         var res;
         try { res = await consultar(cpfs[i].cpf, cpfs[i].desde); } catch (e) { res = { erro: String(e && e.message || e).slice(0, 60) }; }
         if (res.parar) { S.estado = 'parado'; S.msg = 'O Cloudflare da Onlog pediu confirmação: clique no quadradinho na página e peça a rodada de novo.'; break; }
         if (res.erro) { S.erros++; lote.push({ cpf: cpfs[i].cpf, erro: res.erro }); }
         else { lote.push({ cpf: cpfs[i].cpf, objetos: res.objetos }); if (res.objetos.length) { S.com_objeto++; S.objetos += res.objetos.length; } }
-        S.feitos = i + 1;
+        S.feitos = i + 1; S.cpf_prox = i + 1;
         if (lote.length >= 5 || i === cpfs.length - 1) { await mandar(lote, !primeiro); primeiro = false; lote = []; }
         await espera(3500);   /* sem pressa: uma consulta de cada vez, como uma pessoa faria */
       }
       if (lote.length) await mandar(lote, !primeiro);
       /* v9: depois dos CPFs, a SITUAÇÃO dos objetos em aberto (só se o Cloudflare não parou a 1ª parte) */
-      if (S.estado === 'rodando' && objetosSt.length) { var okSt = await varrerStatus(objetosSt); if (!okSt) S.estado = 'parado'; }
-      if (S.estado === 'rodando') S.estado = 'fim';
+      if (S.estado === 'rodando' && !pausa && FASE !== 'cpf' && objetosSt.length) {
+        var rSt = await varrerStatus(objetosSt);
+        if (rSt === 'parado') S.estado = 'parado'; else if (rSt === 'pausa') pausa = true;
+      }
+      if (S.estado === 'rodando') S.estado = pausa ? 'pausa' : 'fim';
     } catch (e) { S.estado = 'erro'; S.msg = String(e && e.message || e).slice(0, 120); }
   })();
   return { ok: true, iniciado: true };
