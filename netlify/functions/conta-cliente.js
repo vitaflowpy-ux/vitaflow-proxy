@@ -1,6 +1,24 @@
 'use strict';
 /* =============================================================================
-   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v5  ·  02/10/2026
+   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v10  ·  05/10/2026
+   v10 (ordem do Thiago, 05/10: "os clientes sejam obrigados a se cadastrar ao realizarem a compra… deixe apenas um botão para o
+       caso de alguém não querer"; respostas: senha no carrinho mesmo · e-mail que já tem conta pede a senha, com a saída de
+       comprar sem entrar · quem não se cadastra não perde nada; esboço v1 aprovado: "ok, ficou bom. pode publicar"):
+       · acao 'conta_existe' {email} → { existe } — o carrinho usa para mostrar "Este e-mail já tem conta" (só conta CONFIRMADA).
+       · acao 'criar_no_carrinho' {email, senha, nome, cpf, telefone, endereco} → cria a conta NA HORA DA COMPRA, com `pendente: true`
+         (e-mail ainda não confirmado), guarda o que o cliente digitou (telefone e endereço no cadastro; CPF) e devolve a sessão.
+         Manda o e-mail "Confirme seu e-mail". Conta confirmada com o mesmo e-mail → erro 'ja_existe'. Conta pendente → é refeita.
+       · CONTA PENDENTE NÃO LÊ A PLANILHA: 'minha_conta' devolve a conta vazia com `pendente: true`; 'dados_compra' devolve só o que a
+         própria pessoa digitou. Motivo: a conta mostra os pedidos pelo CPF/e-mail — sem confirmar o e-mail, bastaria digitar o
+         e-mail de outra pessoa e inventar uma senha para ver os pedidos dela.
+       · acao 'confirmar_email' {link, sessao} → confirma com UM clique só quando o navegador que abriu o link tem a sessão criada na
+         compra. Sem essa sessão devolve 'precisa_senha' e a página pede uma senha nova ('criar_senha', que já confirma): assim uma
+         conta criada por terceiros com o e-mail de alguém nunca é confirmada com a senha de quem a criou; e o que o terceiro
+         digitou (telefone, endereço, CPF) é descartado.
+       · acao 'reenviar_confirmacao' {sessao} → manda o link de novo (mesmos limites do 'pedir_link').
+       · 'validar_link' e 'entrar' devolvem `pendente`.
+       · CORREÇÃO: 'criar_senha' (esqueci a senha) regravava o usuário SEM o cadastro — o telefone e os endereços salvos em
+         "Meus dados" eram apagados a cada troca de senha. Agora o cadastro é mantido.
    v5 (pedido do Thiago, 02/10: "os dados do cliente servem para comprar no site sem digitar tudo de novo"): acao 'dados_compra'
        (precisa da sessão do cliente logado) devolve os dados do ÚLTIMO pedido dele prontos para o formulário do carrinho: nome,
        e-mail, telefone, CPF completo e o endereço separado em CEP, rua, número, complemento, bairro, cidade e UF. O endereço só
@@ -88,7 +106,7 @@
 var crypto = require('crypto');
 var R = require('./rastreio-consulta.js').lib;
 
-var VERSAO = 'v9';
+var VERSAO = 'v10';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_contas';
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
@@ -96,6 +114,7 @@ var PAGINA = 'https://vitaflowoficial.com/pages/minha-conta';
 var LOGO = 'https://cdn.shopify.com/s/files/1/0777/9762/1945/files/vitaflow_no_bg_pro.png?v=1775266917';
 var DIA = 86400000;
 var LINK_VALIDADE = 30 * 60000;
+var LINK_CONFIRMAR_VALIDADE = 24 * 3600000;   /* v10: o link de confirmar a conta criada na compra vale 24 h (o cliente está pagando e só vê o e-mail depois) */
 var SESSAO_MANTER = 90 * DIA, SESSAO_CURTA = DIA;
 var MAX_PEDIDOS = 150;
 /* v3: cupom de atraso (gravado pela logistica-painel v4) */
@@ -528,7 +547,23 @@ function casarD(dLinha, I, cands, conta) {
   return melhor;
 }
 
+/* v10: conta criada no carrinho e ainda não confirmada — só devolve o que a própria pessoa digitou (nada da planilha) */
+function contaPendente(u, soCompra) {
+  var cad = cadastroSalvo(u), c = cpf11(u.cpf || '');
+  var ends = cad ? cad.enderecos.map(function (e) { return Object.assign({}, e, { completo: true }); }) : [];
+  if (soCompra) {
+    return { ok: true, pendente: true, dados: { nome: nomeBonito(u.nome || ''), email: normEmail(u.email), telefone: cad ? cad.telefone : '',
+      cpf: c.length === 11 ? c.slice(0, 3) + '.' + c.slice(3, 6) + '.' + c.slice(6, 9) + '-' + c.slice(9) : '',
+      endereco: ends[cad ? cad.principal : 0] || enderecoPartes(''), enderecos: ends, principal: cad ? cad.principal : 0 } };
+  }
+  return { ok: true, versao: VERSAO, pendente: true, para: mascararEmail(normEmail(u.email)),
+    conta: { nome: nomeBonito(u.nome || ''), primeiro_nome: primeiroNome(u.nome || ''), email: normEmail(u.email), desde: '', como_respondido: !!(u.como && u.como.opcao) },
+    kpis: { pedidos: 0, total: 0, numeros: 0 }, grupos: [], produtos: [], sorteio: null, cupons: [],
+    dados: { nome: nomeBonito(u.nome || ''), email: normEmail(u.email), cpf: mascararCpf(c), telefone: cad ? cad.telefone : '', enderecos: [],
+      cadastro: cad ? { salvo: true, telefone: cad.telefone, enderecos: cad.enderecos, principal: cad.principal } : { salvo: false, telefone: '', enderecos: [], principal: 0 } } };
+}
 async function montarConta(u, agora, soCompra) {
+  if (u && u.pendente) return contaPendente(u, soCompra);
   var conta = { email: normEmail(u.email), cpfs: [] };
   var porEmail = await linhasDoIndice('vitaflow_idx_email', emailKey(u.email));
   var hdr = await lerHdr();
@@ -901,9 +936,18 @@ async function nomeDoEmail(email) {
 async function mandarLink(email, agora, quem) {
   var u = await fbGetOu(RAIZ + '/usuarios/' + emailKey(email));
   var tok = tokenNovo();
-  await fbPut(RAIZ + '/links/' + sha(tok), { email: email, criado: agora, exp: agora + LINK_VALIDADE, usado: 0, por: quem || 'cliente' });
+  await fbPut(RAIZ + '/links/' + sha(tok), { email: email, criado: agora, exp: agora + (quem === 'confirmar' ? LINK_CONFIRMAR_VALIDADE : LINK_VALIDADE), usado: 0, por: quem || 'cliente' });
   var nome = primeiroNome((u && u.nome) || await nomeDoEmail(email));
   var url = PAGINA + '?link=' + encodeURIComponent(tok);
+  if (quem === 'confirmar') {   /* v10: conta criada na compra */
+    var parsC = [
+      'Olá' + (nome ? ', ' + nome : '') + '!',
+      'Sua conta VitaFlow foi criada na hora da compra. Toque no botão abaixo para confirmar que este e-mail é seu e liberar na conta os seus pedidos, rastreios e números da sorte.',
+      'O link vale por 24 horas e só pode ser usado uma vez. Se não foi você, ignore este e-mail.',
+      'Equipe VitaFlow'
+    ];
+    return await enviarBrevo(email, nome, 'Confirme seu e-mail da conta VitaFlow', htmlEmailLink(parsC, 'Confirmar meu e-mail', url), parsC.join('\n\n') + '\n\n' + url);
+  }
   var existe = !!(u && u.hash);
   var assunto = existe ? 'Crie uma nova senha da sua conta VitaFlow' : 'Crie sua senha da Minha Conta VitaFlow';
   var pars = existe ? [
@@ -1078,9 +1122,9 @@ exports.handler = async function (event) {
       var camL = RAIZ + '/links/' + sha(tok), lk = await fbGetOu(camL);
       if (!lk || !lk.email) return erro('link_invalido', 'Este link não é válido. Peça um novo.');
       if (lk.usado) return erro('link_usado', 'Este link já foi usado. Se precisar, peça um novo.');
-      if (!(lk.exp > agora)) return erro('link_vencido', 'Este link venceu (vale 30 minutos). Peça um novo.');
+      if (!(lk.exp > agora)) return erro('link_vencido', 'Este link venceu. Peça um novo.');
       var camU = RAIZ + '/usuarios/' + emailKey(lk.email), uL = await fbGetOu(camU);
-      if (acao === 'validar_link') return resp({ ok: true, email: mascararEmail(lk.email), conta_existe: !!(uL && uL.hash), pergunta_como: !(uL && uL.como && uL.como.opcao) });
+      if (acao === 'validar_link') return resp({ ok: true, email: mascararEmail(lk.email), conta_existe: !!(uL && uL.hash), pendente: !!(uL && uL.hash && uL.pendente), pergunta_como: !(uL && uL.como && uL.como.opcao) });
       if (!senhaBoa(d.senha)) return erro('senha_fraca', 'A senha precisa ter pelo menos 8 caracteres.');
       await fbPatch(camL, { usado: agora });
       var salt = crypto.randomBytes(16).toString('hex'), hash = await scrypt(d.senha, salt);
@@ -1088,6 +1132,14 @@ exports.handler = async function (event) {
       var novoU = { email: lk.email, nome: nomeU || '', hash: hash, salt: salt, versao: ((uL && uL.versao) || 0) + 1,
         criado: (uL && uL.criado) || agora, atualizado: agora, ultimo_acesso: agora };
       if (uL && uL.como) novoU.como = uL.como;
+      /* v10: conta confirmada mantém o cadastro salvo em "Meus dados" (antes a troca de senha apagava). Conta PENDENTE confirmada por
+         senha nova: o que foi digitado na criação pode ser de outra pessoa → só é mantido se este navegador tem a sessão da criação. */
+      if (uL && uL.cadastro) {
+        var mantem = !uL.pendente;
+        if (uL.pendente) { var scL = await lerSessao(d.sessao, agora); mantem = !!(scL && normEmail(scL.u.email) === normEmail(lk.email)); }
+        if (mantem) { novoU.cadastro = uL.cadastro; if (uL.cpf) novoU.cpf = uL.cpf; }
+      }
+      if (uL && uL.pendente) novoU.confirmado = agora;
       var opc = String(d.como || '');
       if (!novoU.como && COMO_OPCOES.indexOf(opc) >= 0) {
         novoU.como = { opcao: opc, outro: opc === 'Outro' ? limpaTexto(d.outro, 60) : '', em: agora };
@@ -1114,7 +1166,65 @@ exports.handler = async function (event) {
       await zerarLimite('login_' + emailKey(emE));
       await fbPatch(camE, { ultimo_acesso: agora });
       var sE = await criarSessao(uE, !!d.manter, agora);
-      return resp({ ok: true, sessao: sE.sessao, exp: sE.exp, nome: sE.nome, manter: sE.manter });
+      return resp({ ok: true, sessao: sE.sessao, exp: sE.exp, nome: sE.nome, manter: sE.manter, pendente: !!uE.pendente });
+    }
+
+    /* ---------- v10: conta criada no carrinho ---------- */
+    if (acao === 'conta_existe') {
+      var emX = normEmail(d.email);
+      if (!emailValido(emX)) return resp({ ok: true, existe: false });
+      if (await estourou('ip_existe_' + ip, 60, 3600000, agora)) return resp({ ok: true, existe: false, limite: true });
+      var uX = await fbGetOu(RAIZ + '/usuarios/' + emailKey(emX));
+      return resp({ ok: true, existe: !!(uX && uX.hash && !uX.pendente) });
+    }
+    if (acao === 'criar_no_carrinho') {
+      var emC = normEmail(d.email);
+      if (!emailValido(emC)) return erro('email_invalido', 'Confira o e-mail digitado.');
+      if (!senhaBoa(d.senha)) return erro('senha_fraca', 'A senha precisa ter pelo menos 8 caracteres.');
+      var nomeNovo = limpaTexto(d.nome, 80);
+      if (nomeNovo.length < 3) return erro('nome', 'Digite o seu nome completo.');
+      if (await estourou('ip_criar_' + ip, 10, 3600000, agora)) return erro('limite', 'Muitas contas criadas em seguida. Tente de novo daqui a uma hora.');
+      var camC = RAIZ + '/usuarios/' + emailKey(emC), uC = await fbGetOu(camC);
+      if (uC && uC.hash && !uC.pendente) return erro('ja_existe', 'Este e-mail já tem conta na VitaFlow. Digite a senha para entrar.');
+      var saltC = crypto.randomBytes(16).toString('hex'), hashC = await scrypt(d.senha, saltC);
+      var novoC = { email: emC, nome: nomeNovo, hash: hashC, salt: saltC, versao: ((uC && uC.versao) || 0) + 1, criado: agora, atualizado: agora,
+        ultimo_acesso: agora, pendente: true, origem: 'carrinho' };
+      var cpfN = cpf11(d.cpf); if (cpfN.length === 11) novoC.cpf = cpfN;
+      var telN = telDigitos(d.telefone), endN = normEndereco(d.endereco);
+      if ((telN.length === 10 || telN.length === 11) || endN) novoC.cadastro = { telefone: (telN.length === 10 || telN.length === 11) ? telN : '', enderecos: endN ? [endN] : [], principal: 0, em: agora };
+      await fbPut(camC, novoC);   /* conta pendente anterior (se havia) é refeita: senha, dados e sessões antigas deixam de valer */
+      await zerarLimite('login_' + emailKey(emC));
+      var enviou = false;
+      if (!(await estourou('email_link_' + emailKey(emC), 3, 30 * 60000, agora))) {
+        try { var envC = await mandarLink(emC, agora, 'confirmar'); enviou = !!(envC && envC.ok); if (!enviou) console.error('[conta] brevo (confirmar): ' + (envC && envC.erro)); }
+        catch (eC) { console.error('[conta] confirmar: ' + (eC && eC.message || eC)); }
+      }
+      var sesC = await criarSessao(novoC, true, agora);
+      return resp({ ok: true, sessao: sesC.sessao, exp: sesC.exp, nome: sesC.nome, manter: true, pendente: true, para: mascararEmail(emC), email_enviado: enviou });
+    }
+    if (acao === 'confirmar_email') {
+      var tokF = String(d.link || '');
+      if (tokF.length < 30 || tokF.length > 80) return erro('link_invalido', 'Este link não é válido. Peça um novo.');
+      var camLF = RAIZ + '/links/' + sha(tokF), lkF = await fbGetOu(camLF);
+      if (!lkF || !lkF.email) return erro('link_invalido', 'Este link não é válido. Peça um novo.');
+      if (lkF.usado) return erro('link_usado', 'Este link já foi usado. Se precisar, peça um novo.');
+      if (!(lkF.exp > agora)) return erro('link_vencido', 'Este link venceu. Peça um novo.');
+      var camUF = RAIZ + '/usuarios/' + emailKey(lkF.email), uF = await fbGetOu(camUF);
+      if (!uF || !uF.hash || !uF.pendente) return erro('precisa_senha', 'Crie a sua senha para continuar.');
+      var scF = await lerSessao(d.sessao, agora);
+      if (!scF || normEmail(scF.u.email) !== normEmail(lkF.email)) return erro('precisa_senha', 'Para a sua segurança, crie uma senha para confirmar a conta.');
+      await fbPatch(camLF, { usado: agora });
+      await fbPatch(camUF, { pendente: null, confirmado: agora, atualizado: agora, ultimo_acesso: agora });
+      return resp({ ok: true, confirmado: true, nome: primeiroNome(uF.nome) });
+    }
+    if (acao === 'reenviar_confirmacao') {
+      var scR = await lerSessao(d.sessao, agora);
+      if (!scR) return erro('sessao', 'Sua sessão terminou. Entre de novo.');
+      if (!scR.u.pendente) return resp({ ok: true, confirmado: true });
+      if (await estourou('email_link_' + emailKey(scR.u.email), 3, 30 * 60000, agora)) return erro('limite', 'Já mandamos alguns links para este e-mail. Confira a caixa de entrada e o spam, ou tente de novo em 30 minutos.');
+      var envR = await mandarLink(normEmail(scR.u.email), agora, 'confirmar');
+      if (!envR.ok) { console.error('[conta] brevo: ' + envR.erro); return erro('envio', 'Não conseguimos enviar o e-mail agora. Tente de novo em alguns minutos.'); }
+      return resp({ ok: true, para: mascararEmail(normEmail(scR.u.email)) });
     }
 
     if (acao === 'sair') {
