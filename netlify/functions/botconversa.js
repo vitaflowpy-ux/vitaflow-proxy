@@ -1,5 +1,16 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v91 (07/10/2026 — Thiago, depois de três conversas reais: "ela precisa reconhecer melhor todos os dados e parar de ficar pedindo
+//   várias vezes a mesma coisa" · "tô deixando de vender pq ela não reconhece o principal").
+//   1) DADOS DE ENVIO (COLETA_DADOS): lê em qualquer formato (coletaLer). Telefone sozinho não vira mais CPF; resposta solta
+//      é encaixada no dado que falta; telefone = o do WhatsApp se o cliente não informar; estado = o do frete; pede SÓ o que
+//      falta; 2 respostas seguidas sem dado novo → atendente (antes 3 tentativas no total). A IA só é chamada se faltar dado,
+//      as gravações do fim rodam em paralelo e os pedidos de dado saem pelo canal direto (o BotConversa reenviava o
+//      "Quase lá" antigo quando a chamada final demorava — VF-0710-W002, 14,5 s).
+//   2) FRETE/ESTADO: "quero adicionar mais produtos" / nome de produto não ficam mais presos no "Digite 1, 2 ou 3"
+//      (checkoutDesvio); frete aceito pelo nome ("sedex"); estado aceito por extenso ("São Paulo", "sou do Paraná").
+//   3) NOME COM 2 LETRAS ERRADAS ("monjauro"): reconhecerAproximado, só quando dicionário e catálogo não acham nada.
+//   4) Resposta direta da IA (Athena) sai pelo canal direto: chega mesmo se o BotConversa parar de esperar.
 // v90 (05/10/2026 — ordem do Thiago depois de duas conversas reais: "ela não reconhece nada… não reconheceu a linha diamond da
 //   Landerlan nem o produto DHB… tem que reprogramá-la para ficar inteligente… veja o que ela tem que melhorar e resolva
 //   definitivamente"). Resto = v89.
@@ -304,7 +315,14 @@ async function responderComIA(sid, mensagem, contexto, respond){
   // v90: a Athena também tenta a resposta direta (1 mensagem, sem "👀"). Não deu tempo → segue o caminho de sempre.
   if (IA_SYNC_ATIVA && IA_SYNC_ATHENA) {
     const textoA = await iaSincrona(sid, mensagem, contexto);
-    if (textoA && textoA.trim()) return respond(textoA);
+    // v91: entrega pelo canal DIRETO (mesmo do recibo). Se a resposta ficar pronta depois que o BotConversa parou de
+    // esperar, ela chega do mesmo jeito (06/10: "Monjauro" ficou sem resposta nenhuma). Envio direto falhou → resposta normal.
+    if (textoA && textoA.trim()) {
+      let _partesA = textoA.length > 3800 ? partirMensagem(textoA, 3800).slice(0, 3) : [textoA];
+      _partesA = _partesA.map(function (x) { return normalizarMarkdownWhats(x); }).filter(Boolean);
+      const _okA = await enviarWhatsAppDireto(sid, _partesA);
+      return _okA ? respond('') : respond(textoA);
+    }
     console.log('[IA-SYNC] Athena: sem resposta completa a tempo — segue pelo 👀 (IA assíncrona).');
   }
   await dispararIA(sid, mensagem, contexto);   // AGUARDA o disparo sair (Background Function responde 202 na hora); sem o await o Lambda congela no return e o POST nunca chega
@@ -3337,7 +3355,8 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // v90 — CATÁLOGO INTELIGENTE: o que o catálogo do dia tem para esta mensagem (ver o bloco "ci").
   const _ciProds = await ciCatalogo();
   const _ci = ciProcurar(nMsg, _ciProds);
-  const rec = reconhecerProduto(nMsg);
+  // v91: nada no dicionário nem no catálogo → tenta o nome longo com 2 letras erradas ("monjauro" → mounjaro)
+  const rec = reconhecerProduto(nMsg) || ((!_ci.exatos.length && !_ci.proximos.length) ? reconhecerAproximado(nMsg) : null);
   const _temCarrinho = (session.carrinho || []).length > 0;
   // Dúvida/pergunta (protocolo, como usar, dose, "?"...) → a IA RESPONDE, mesmo que cite um
   // produto. Só abre a lista quando é intenção de ver/comprar, não quando é pergunta.
@@ -4729,8 +4748,10 @@ const _UF_NOME = {
   'rio de janeiro':'RJ', 'rio grande do norte':'RN', 'rio grande do sul':'RS', rondonia:'RO',
   roraima:'RR', 'santa catarina':'SC', 'sao paulo':'SP', sergipe:'SE', tocantins:'TO'
 };
-function extrairDadosRegex(texto) {
+function extrairDadosRegex(texto, meta) {
   const out = {};
+  // v91: `meta` (opcional) diz DE ONDE veio cada dado: meta.rotulo[campo] = linha com rótulo; meta.tipo[campo] = reconhecido pelo formato.
+  if (meta) { meta.rotulo = meta.rotulo || {}; meta.tipo = meta.tipo || {}; }
   if (!texto) return out;
   const original = String(texto);
 
@@ -4760,7 +4781,7 @@ function extrairDadosRegex(texto) {
         if (valor && valor.replace(/[\s:.-]/g,'').length >= 1 && !out[r.campo]) {
           if (r.campo === 'cpf')        out.cpf = valor.replace(/\D/g,'') || valor.trim();
           else if (r.campo === 'cep')   out.cep = valor.replace(/\D/g,'') || valor.trim();
-          else if (r.campo === 'telefone') out.telefone = valor.replace(/\D/g,'') || valor.trim();
+          else if (r.campo === 'telefone') out.telefone = _telLimpo(valor) || valor.replace(/\D/g,'') || valor.trim();
           else if (r.campo === 'email') out.email = valor.toLowerCase();
           else if (r.campo === 'estado') {
             const nn = norm(valor).replace(/[^a-z ]/g,'').trim();
@@ -4768,6 +4789,7 @@ function extrairDadosRegex(texto) {
             else { const up = valor.toUpperCase().replace(/[^A-Z]/g,'').slice(0,2); if (up.length===2 && _UFS.includes(up)) out.estado = up; else out.estado = valor.trim(); }
           }
           else out[r.campo] = valor;
+          if (meta && out[r.campo]) meta.rotulo[r.campo] = true;
         }
         casou = true;
         break;
@@ -4784,31 +4806,41 @@ function extrairDadosRegex(texto) {
   let resto = linhasSemRotulo.join('\n');
 
   // email
-  if (!out.email) { const mEmail = resto.match(/[\w.+-]+@[\w-]+\.[\w.-]+/); if (mEmail) { out.email = mEmail[0].toLowerCase(); resto = resto.replace(mEmail[0], ' '); } }
+  if (!out.email) { const mEmail = resto.match(/[\w.+-]+@[\w-]+\.[\w.-]+/); if (mEmail) { out.email = mEmail[0].toLowerCase(); resto = resto.replace(mEmail[0], ' '); if (meta) meta.tipo.email = true; } }
 
   // CEP (00000-000 ou 8 dígitos)
-  if (!out.cep) { const mCep = resto.match(/\b\d{5}-?\d{3}\b/); if (mCep) { out.cep = mCep[0].replace(/\D/g,''); resto = resto.replace(mCep[0], ' '); } }
+  if (!out.cep) { const mCep = resto.match(/\b\d{5}-?\d{3}\b/); if (mCep) { out.cep = mCep[0].replace(/\D/g,''); resto = resto.replace(mCep[0], ' '); if (meta) meta.tipo.cep = true; } }
 
-  // CPF (11 dígitos, com ou sem máscara)
-  if (!out.cpf) {
-    const soDigitos = resto.replace(/[^\d]/g, ' ');
-    const mCpf = (resto.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/) || []);
-    if (mCpf[0]) { out.cpf = mCpf[0].replace(/\D/g,''); resto = resto.replace(mCpf[0], ' '); }
-    else {
-      const blocos = soDigitos.split(/\s+/).filter(Boolean);
-      const cpfCand = blocos.find(b => b.length === 11);
-      if (cpfCand) { out.cpf = cpfCand; resto = resto.replace(cpfCand, ' '); }
+  // v91 — CPF e TELEFONE sem rótulo, decididos pelo FORMATO e pelos dígitos verificadores do CPF.
+  // (Antes, QUALQUER número de 11 dígitos virava CPF: o celular mandado sozinho era lido como CPF e descartado.)
+  if (!out.cpf || !out.telefone) {
+    const cCpf = [], cTel = [];
+    // CPF com máscara: 000.000.000-00, 000 000 000 00, 000000000-00
+    resto = resto.replace(/\b\d{3}[.\s]?\d{3}[.\s]?\d{3}\s?[-–.\s]\s?\d{2}\b/g, function (m) {
+      const d = m.replace(/\D/g, ''); if (d.length !== 11) return m;
+      cCpf.push({ d: d, forte: true }); return ' ';
+    });
+    // telefone com máscara, parênteses ou +55: (13) 98210-6625, +55 13 98210 6625, 13 98210-6625, 13 3821-0662
+    resto = resto.replace(/(?:\+\s?55[\s.\-]*)?\(\s?0?\d{2}\s?\)[\s.\-]*9?[\s.\-]?\d{4}[\s.\-]?\d{4}\b|\+\s?55[\s.\-]*\d{2}[\s.\-]*9?[\s.\-]?\d{4}[\s.\-]?\d{4}\b|\b0?\d{2}[\s.\-]+9[\s.\-]?\d{4}[\s.\-]?\d{4}\b|\b0?\d{2}[\s.\-]*9?\d{4}[\s.\-]\d{4}\b/g, function (m) {
+      const tl = _telLimpo(m); if (!tl) return m;
+      cTel.push({ d: tl, forte: true }); return ' ';
+    });
+    // número solto de 10 a 13 dígitos: CPF se os dígitos verificadores fecham; senão telefone se tem DDD válido
+    resto = resto.replace(/\b\d{10,13}\b/g, function (m) {
+      const tl = _telLimpo(m);
+      if (m.length === 11 && _cpfValido(m)) { cCpf.push({ d: m, tel: tl }); return ' '; }
+      if (tl) { cTel.push({ d: tl }); return ' '; }
+      if (m.length === 11) { cCpf.push({ d: m, fraco: true }); return ' '; }
+      return m;
+    });
+    if (!out.cpf) {
+      const c = cCpf.find(function (x) { return x.forte; }) || cCpf.find(function (x) { return !x.fraco; }) || cCpf.find(function (x) { return x.fraco; });
+      if (c) { out.cpf = c.d; c.usado = true; if (meta && !c.fraco) meta.tipo.cpf = true; }
     }
-  }
-
-  // telefone (10 ou 11 dígitos) — depois do CPF pra não confundir
-  if (!out.telefone) {
-    const blocos2 = resto.replace(/[^\d]/g,' ').split(/\s+/).filter(Boolean);
-    const telCand = blocos2.find(b => b.length === 10 || b.length === 11);
-    if (telCand) { out.telefone = telCand; resto = resto.replace(telCand, ' '); }
-    else {
-      const mTel = resto.match(/\(?\d{2}\)?\s*9?\s*\d{4}[-\s]?\d{4}/);
-      if (mTel) { out.telefone = mTel[0].replace(/\D/g,''); resto = resto.replace(mTel[0], ' '); }
+    if (!out.telefone) {
+      const tf = cTel.find(function (x) { return x.forte; }) || cTel[0] || null;
+      if (tf) { out.telefone = tf.d; if (meta) meta.tipo.telefone = true; }
+      else { const s2 = cCpf.find(function (x) { return !x.usado && x.tel; }); if (s2) { out.telefone = s2.tel; if (meta) meta.tipo.telefone = true; } }
     }
   }
 
@@ -4866,9 +4898,373 @@ function extrairDadosRegex(texto) {
   return out;
 }
 
-async function extrairDadosIA(texto) {
+// ═══ v91 (07/10/2026) — DADOS DE ENVIO: ler em QUALQUER formato e parar de repetir pergunta ═══════════════
+// Pedido do Thiago depois do VF-0710-W002: o cliente mandou o telefone sozinho ("13982106625") e a Athena pediu de
+// novo; só passou quando ele digitou no "formato certo". "A maioria dos clientes não consegue."
+// Ordem de confiança na leitura: 1) linha com rótulo ("Bairro: Centro") · 2) resposta ENCAIXADA no que ainda falta
+// ("Guarujá" quando só falta a cidade) · 3) número reconhecido pelo formato (CPF pelos dígitos verificadores,
+// telefone pelo DDD, CEP, e-mail) · 4) IA, SÓ se ainda faltar algo · 5) palpite pela ordem.
+// Telefone: se o cliente não informar, vale o número do WhatsApp em que ele está falando (decisão do Thiago).
+// Estado: se não informar, vale o que ele já disse no cálculo do frete.
+const COLETA_OBRIG = ['nome','cpf','telefone','endereco','bairro','cidade','estado','cep'];
+const COLETA_NOMES = { nome:'Nome completo', cpf:'CPF', telefone:'Telefone', email:'E-mail', endereco:'Rua e número', bairro:'Bairro', cidade:'Cidade', estado:'Estado', cep:'CEP' };
+// pergunta de UM dado só: "Só falta <o seu CEP>. Pode mandar só <ele>, ex.: <01310-100>"
+const COLETA_UM = {
+  nome:     ['o seu *nome completo*',   'ele',  'Maria da Silva'],
+  cpf:      ['o seu *CPF*',             'ele',  '000.000.000-00'],
+  telefone: ['o seu *telefone com DDD*','ele',  '(11) 99999-9999'],
+  endereco: ['a sua *rua e número*',    'isso', 'Rua das Flores, 123'],
+  bairro:   ['o seu *bairro*',          'ele',  'Centro'],
+  cidade:   ['a sua *cidade*',          'ela',  'Campinas'],
+  estado:   ['o seu *estado*',          'ele',  'SP'],
+  cep:      ['o seu *CEP*',             'ele',  '01310-100']
+};
+function coletaFalta(c) { return COLETA_OBRIG.filter(function (k) { return !c[k] || String(c[k]).length < 2; }); }
+function coletaPergunta(faltam, nadaAinda) {
+  if (nadaAinda) {
+    return 'Pra eu enviar seu pedido, me manda:\n' + faltam.map(function (f) { return '• ' + COLETA_NOMES[f]; }).join('\n') +
+      '\n\nPode mandar do seu jeito, um em cada linha.';
+  }
+  if (faltam.length === 1 && COLETA_UM[faltam[0]]) {
+    const u = COLETA_UM[faltam[0]];
+    return 'Quase lá! 😊 Só falta ' + u[0] + '.\nPode mandar só ' + u[1] + ', ex.: ' + u[2];
+  }
+  return 'Quase lá! 😊 Só falta:\n' + faltam.map(function (f) { return '• ' + COLETA_NOMES[f]; }).join('\n') +
+    '\n\nPode mandar do seu jeito, um em cada linha.';
+}
+// CPF de verdade (dígitos verificadores). Serve pra separar CPF de celular: os dois têm 11 dígitos.
+function _cpfValido(v) {
+  const d = String(v == null ? '' : v).replace(/\D/g, '');
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  let s = 0, i, r;
+  for (i = 0; i < 9; i++) s += Number(d[i]) * (10 - i);
+  r = (s * 10) % 11; if (r === 10) r = 0;
+  if (r !== Number(d[9])) return false;
+  s = 0;
+  for (i = 0; i < 10; i++) s += Number(d[i]) * (11 - i);
+  r = (s * 10) % 11; if (r === 10) r = 0;
+  return r === Number(d[10]);
+}
+// Telefone com DDD em 10 ou 11 dígitos (tira +55 e o 0 da operadora). Não parece telefone → ''.
+function _telLimpo(v) {
+  let d = String(v == null ? '' : v).replace(/\D/g, '');
+  if (d.length >= 12 && d.indexOf('55') === 0) d = d.slice(2);
+  if ((d.length === 11 || d.length === 12) && d[0] === '0') d = d.slice(1);
+  if (d.length !== 10 && d.length !== 11) return '';
+  const ddd = Number(d.slice(0, 2));
+  if (!(ddd >= 11 && ddd <= 99)) return '';
+  if (d.length === 11 && d[2] !== '9') return '';
+  return d;
+}
+// Siglas que podem aparecer SOLTAS no meio de uma frase sem virar outra palavra do português
+// ("se", "to", "pa", "am", "ma", "es", "al", "ap", "pe", "ro", "ac" ficam de fora: só valem sozinhas).
+const _UF_NA_FRASE = { SP:1, RJ:1, MG:1, RS:1, SC:1, PR:1, DF:1, BA:1, MT:1, MS:1, RN:1, PB:1, RR:1, GO:1, CE:1, PI:1 };
+// UF a partir do que o cliente escreveu: "SP", "s.p.", "São Paulo", "sou do rio de janeiro", "moro em sp".
+// (Antes: as 2 primeiras letras da mensagem — "São Paulo" virava "SO", "Paraná" virava PA, "Mato Grosso" virava MA.)
+function ufDoTexto(texto) {
+  const bruto = String(texto == null ? '' : texto).trim();
+  if (!bruto) return '';
+  const nn = norm(bruto).replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (nn && _UF_NOME[nn]) return _UF_NOME[nn];
+  const up = bruto.toUpperCase().replace(/[^A-Z]/g, '');
+  if (up.length === 2 && _UFS.includes(up)) return up;
+  if (!nn) return '';
+  const alvo = ' ' + nn + ' ';
+  const nomes = Object.keys(_UF_NOME).sort(function (a, b) { return b.length - a.length; });
+  for (let i = 0; i < nomes.length; i++) {
+    if (nomes[i].length >= 5 && alvo.indexOf(' ' + nomes[i] + ' ') >= 0) return _UF_NOME[nomes[i]];
+  }
+  const ws = nn.split(' ');
+  for (let j = 0; j < ws.length; j++) {
+    const u = ws[j].toUpperCase();
+    if (u.length === 2 && _UF_NA_FRASE[u]) return u;
+  }
+  return '';
+}
+// linha que já vem com rótulo ("Bairro: Centro") — quem lê é a etapa de rótulos do extrairDadosRegex
+const _COLETA_ROT = /^\s*(nome(\s+completo)?|cpf|documento|doc|telefone|tel|celular|cel|whats|whatsapp|fone|email|e-mail|e mail|rua e numero|rua e número|endereco|endereço|rua|logradouro|av|avenida|complemento|compl|obs|observacao|observação|referencia|referência|bairro|cidade|municipio|município|estado|uf|cep)\s*[:\-]\s*\S/i;
+// rótulo sem dois-pontos e começo de frase
+const _COLETA_ROT_SOLTO = /^\s*(nome completo|nome|cpf|cep|bairro|cidade|municipio|município|estado|uf|telefone|tel|celular|cel|whatsapp|whats|zap|fone|e-?mail|complemento|compl|endere[cç]o|logradouro)\s+(?![:\-])(\S.*)$/i;
+const _COLETA_ROT_CAMPO = { nomecompleto:'nome', nome:'nome', cpf:'cpf', cep:'cep', bairro:'bairro', cidade:'cidade', municipio:'cidade', estado:'estado', uf:'estado', telefone:'telefone', tel:'telefone', celular:'telefone', cel:'telefone', whatsapp:'telefone', whats:'telefone', zap:'telefone', fone:'telefone', email:'email', complemento:'complemento', compl:'complemento', endereco:'endereco', logradouro:'endereco' };
+const _COLETA_INTRO = /^\s*(meu nome( completo)?( é| e)?|me chamo|eu sou( o| a)?|sou( o| a)?|eu moro (em|na|no)|moro (em|na|no)|minha cidade( é| e)?|meu bairro( é| e)?|meu estado( é| e)?|meu cep( é| e)?|meu cpf( é| e)?|fica (em|na|no)|aqui (é|e)|é em|é no|é na|é|e|em|no|na)\s+/i;
+// texto que é conversa, não dado ("ok", "já mandei", "qual cep?") — não pode ser gravado como bairro/cidade
+function _coletaEhConversa(t) {
+  const s = norm(t).replace(/[^a-z0-9? ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s) return true;
+  if (s.indexOf('?') >= 0) return true;
+  if (s.split(' ').length > 8) return true;
+  if (/^(oi|oie|ola|opa|ok|okay|sim|nao|s|n|blz|beleza|certo|isso|pronto|feito|obrigado|obrigada|valeu|vlw|show|perfeito|combinado|menu|voltar|bom dia|boa tarde|boa noite|kk+|rs+)$/.test(s)) return true;
+  if (/^(ja |vou |vo |nao sei|nao tenho|nao lembro|qual |quais |como |quando |onde |por que|porque |pq |pode |posso |quero |queria |preciso |tem |to |ta |estou |esta |eu |me |um momento|um minuto|so um|pera|perai|espera|aguarda|calma|obrigad|segue|ai esta|ta ai|mandei|enviei)/.test(s)) return true;
+  return false;
+}
+// só agradecimento/aviso ("ok", "já mando") — não conta como tentativa
+function _coletaEhSoAviso(n) {
+  const s = String(n || '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s || s.split(' ').length > 6) return false;
+  return /^(ok|okay|blz|beleza|certo|ta|ta bom|ta certo|sim|claro|obrigado|obrigada|valeu|vlw|show|perfeito|combinado|pode deixar|vou mandar|ja mando|ja envio|ja te mando|vou enviar|um momento|um minuto|so um minuto|so um momento|pera|perai|espera|aguarda|calma)( |$)/.test(s);
+}
+// ENCAIXA a resposta nos dados que AINDA FALTAM. `certos` = sem dúvida (tipo do dado, ou 1 texto pra 1 campo);
+// `palpites` = vários textos pra vários campos, pela ordem em que a Athena pede (a IA tem prioridade sobre eles).
+function coletaEncaixar(mensagem, coleta, faltam) {
+  const certos = {}, palpites = {};
+  const falta = function (k) { return faltam.indexOf(k) >= 0 && !certos[k]; };
+  let partes = String(mensagem == null ? '' : mensagem).split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+  if (partes.length === 1 && partes[0].indexOf('http') < 0 && partes[0].split('/').length >= 3) {
+    partes = partes[0].split('/').map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+  partes = partes.filter(function (p) { return !_COLETA_ROT.test(p); });
+  const textos = [], comNum = [];
+  const ehSiglaUf = function (p) { const up = p.toUpperCase().replace(/[^A-Z]/g, ''); return up.length === 2 && _UFS.includes(up) && p.replace(/[^A-Za-zÀ-ÿ]/g, '').length === 2 && !/\d/.test(p); };
+  const temSigla = partes.some(ehSiglaUf);
+  const faltavaCidade = faltam.indexOf('cidade') >= 0;
+  const okNome0 = function (t) { return t.trim().split(/\s+/).filter(Boolean).length >= 2 && !/\d/.test(t); };
+  const semRotulo = [];
+  partes.forEach(function (p) {
+    // "bairro centro", "cep 11000-000", "cidade santos": rótulo sem dois-pontos — só vale pro dado que ainda falta
+    const mr = p.match(_COLETA_ROT_SOLTO);
+    if (mr) {
+      const campo = _COLETA_ROT_CAMPO[norm(mr[1]).replace(/[^a-z]/g, '')];
+      const v = String(mr[2] || '').trim();
+      if (campo && v && !coleta[campo] && !certos[campo]) {
+        let val = '';
+        if (campo === 'cpf') { const d = v.replace(/\D/g, ''); if (d.length === 11) val = d; }
+        else if (campo === 'cep') { const d2 = v.replace(/\D/g, ''); if (d2.length === 8) val = d2; }
+        else if (campo === 'telefone') val = _telLimpo(v);
+        else if (campo === 'email') { const me = v.match(/[\w.+-]+@[\w-]+\.[\w.-]+/); if (me) val = me[0].toLowerCase(); }
+        else if (campo === 'estado') val = ufDoTexto(v);
+        else if (campo === 'nome') { if (okNome0(v)) val = v; }
+        else if (v.split(/\s+/).length <= 9) val = v;
+        if (val) { certos[campo] = val; return; }
+      }
+    }
+    semRotulo.push(p);
+  });
+  semRotulo.forEach(function (p0) {
+    // tira o começo de frase: "meu nome é …", "moro em …", "aqui é …"
+    const p = String(p0).replace(_COLETA_INTRO, '').trim() || p0;
+    const mEmail = p.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+    if (mEmail) { if (!coleta.email && !certos.email) certos.email = mEmail[0].toLowerCase(); return; }
+    const dig = p.replace(/\D/g, '');
+    const letras = p.replace(/[^a-zA-ZÀ-ÿ]/g, '');
+    if (!letras.length) {
+      if (!dig.length) return;
+      if (dig.length === 8) { if (falta('cep')) certos.cep = dig; return; }
+      const tel = _telLimpo(dig);
+      const mascCpf = /\d{3}\.\d{3}\.\d{3}|\d-\d{2}\s*$/.test(p) && !/[()+]/.test(p);
+      if (dig.length === 11 && falta('cpf') && (mascCpf || _cpfValido(dig) || !tel)) { certos.cpf = dig; return; }
+      if (tel) { if (!coleta.telefone && !certos.telefone) certos.telefone = tel; return; }
+      if (dig.length === 11 && falta('cpf')) { certos.cpf = dig; return; }
+      return;
+    }
+    if (!dig.length) {
+      const nn = norm(p).replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (ehSiglaUf(p)) { if (falta('estado')) certos.estado = p.toUpperCase().replace(/[^A-Z]/g, ''); return; }   // sigla nunca é bairro/cidade
+      if (_UF_NOME[nn] && falta('estado') && !temSigla) {
+        certos.estado = _UF_NOME[nn];
+        // "São Paulo" / "Rio de Janeiro" também são cidade: se a cidade falta, o mesmo texto serve pros dois
+        if (faltavaCidade && (nn === 'sao paulo' || nn === 'rio de janeiro')) textos.push(p);
+        return;
+      }
+      if (_coletaEhConversa(p)) return;
+      textos.push(p);
+      return;
+    }
+    comNum.push(p);
+  });
+  const ehCompl = function (p) {
+    const s = norm(p);
+    return /^(ap|apto|apt|apartamento|bloco|bl|casa|fundos|loja|sala|andar|cj|conjunto|lote|lt|quadra|qd|torre|edificio|ed)\b/.test(s) && !/\b(rua|avenida|av|travessa|alameda|rodovia|estrada|praca)\b/.test(s);
+  };
+  comNum.forEach(function (p) {
+    if (_coletaEhConversa(p)) return;
+    // frase comprida com vários dados juntos ("moro na rua x 55 bairro y cep …"): quem separa é a IA, não vira "rua" inteira
+    if (p.length > 70 || p.split(/\s+/).length > 10 || /\b(cpf|cep|bairro|cidade|telefone|celular|e-?mail)\b/i.test(p)) return;
+    if (ehCompl(p)) { if (!coleta.complemento && !certos.complemento) certos.complemento = p; return; }
+    if (falta('endereco')) { certos.endereco = p; return; }
+    const sobra = ['bairro','cidade'].filter(falta);
+    if (sobra.length === 1 && !textos.length) { palpites[sobra[0]] = p; return; }
+    if (!coleta.complemento && !certos.complemento) palpites.complemento = p;
+  });
+  const okNome = function (t) { return t.trim().split(/\s+/).filter(Boolean).length >= 2 && !/\d/.test(t); };
+  const camposTxt = ['nome','endereco','bairro','cidade'].filter(falta);
+  // valor "limpo" (poucas palavras, sem muleta de conversa) é certo; frase solta ("em campinas mesmo viu") fica como palpite — a IA lê primeiro
+  const ehSimples = function (t) { const s = ' ' + norm(t).replace(/[^a-z0-9 ]/g, ' ') + ' '; return t.trim().split(/\s+/).length <= 6 && !/ (mesmo|viu|aqui|tambem|acho|tipo|ne|la|ai|ja|so|mas|que|porque|entao|ok|sim|nao|ta|to) /.test(s); };
+  if (textos.length === 1 && camposTxt.length === 1) {
+    if (camposTxt[0] !== 'nome' || okNome(textos[0])) { if (ehSimples(textos[0])) certos[camposTxt[0]] = textos[0]; else palpites[camposTxt[0]] = textos[0]; }
+  } else if (textos.length && camposTxt.length) {
+    const fila = textos.slice();
+    camposTxt.forEach(function (k) {
+      if (!fila.length) return;
+      if (k === 'nome') { const i = fila.findIndex(okNome); if (i >= 0) palpites.nome = fila.splice(i, 1)[0]; return; }
+      palpites[k] = fila.shift();
+    });
+  }
+  return { certos: certos, palpites: palpites };
+}
+// Lê a mensagem e devolve: `coleta` (só o que o cliente informou — é o que fica guardado na sessão),
+// `completa` (com o telefone do WhatsApp e o estado do frete quando ele não informou) e `ganhou` (campos novos).
+async function coletaLer(mensagem, coletaAntes, sid, session) {
+  const coleta = Object.assign({}, coletaAntes || {});
+  const antes = Object.assign({}, coleta);
+  const poe = function (k, v) {
+    if (v == null) return;
+    v = String(v).trim();
+    if (v.length >= 1 && !coleta[k]) coleta[k] = v;
+  };
+  const limpa = function () {
+    if (coleta.nome && (String(coleta.nome).trim().split(/\s+/).filter(Boolean).length < 2 || /\d/.test(coleta.nome))) delete coleta.nome;
+    if (coleta.estado) { const u = ufDoTexto(coleta.estado); if (u) coleta.estado = u; else delete coleta.estado; }
+    // sigla de estado gravada como cidade/bairro (palpite do leitor antigo: "… / São Paulo / SP") não vale
+    ['cidade','bairro'].forEach(function (k) { if (coleta[k] && /^[A-Za-z]{2}$/.test(String(coleta[k]).trim()) && _UFS.includes(String(coleta[k]).trim().toUpperCase())) delete coleta[k]; });
+    if (coleta.cpf) coleta.cpf = formatarCPF(coleta.cpf);
+    if (coleta.telefone) { const t = _telLimpo(coleta.telefone); if (t) coleta.telefone = t; }
+  };
+  const meta = {};
+  const rx = extrairDadosRegex(mensagem, meta) || {};
+  const rot = meta.rotulo || {}, tipo = meta.tipo || {};
+  // 1) linhas com rótulo
+  Object.keys(rx).forEach(function (k) { if (rot[k]) poe(k, rx[k]); });
+  // 2) resposta encaixada no que ainda falta
+  const enc = coletaEncaixar(mensagem, coleta, coletaFalta(coleta));
+  Object.keys(enc.certos).forEach(function (k) { poe(k, enc.certos[k]); });
+  // 3) números reconhecidos pelo formato
+  ['cpf','cep','email','telefone'].forEach(function (k) { if (tipo[k]) poe(k, rx[k]); });
+  // número que o leitor chamou de CPF com o CPF já preenchido (e diferente) → é o telefone
+  if (!coleta.telefone && rx.cpf && antes.cpf && String(rx.cpf).replace(/\D/g, '') !== String(antes.cpf).replace(/\D/g, '')) {
+    const t2 = _telLimpo(rx.cpf); if (t2) coleta.telefone = t2;
+  }
+  limpa();
+  // o que já está garantido sem perguntar: telefone (WhatsApp) e estado (o do frete)
+  const telWhats = _telLimpo(sid);
+  const ufFrete = ufDoTexto((session && session.estadoCliente) || '');
+  const comPadrao = function () {
+    const c = Object.assign({}, coleta);
+    if (!c.telefone && telWhats) c.telefone = telWhats;
+    if (!c.estado && ufFrete) c.estado = ufFrete;
+    return c;
+  };
+  // 4) IA — só quando ainda falta dado e a mensagem tem texto pra ler
+  let usouIA = false;
+  if (coletaFalta(comPadrao()).length > 0 && /[a-zA-ZÀ-ÿ]{2,}/.test(String(mensagem || '')) && !_coletaEhSoAviso(norm(mensagem))) {
+    usouIA = true;
+    let ia = null;
+    try { ia = await extrairDadosIA(mensagem, { tem: Object.keys(coleta).filter(function (k) { return !!coleta[k]; }), faltam: coletaFalta(comPadrao()) }); } catch (e) { ia = null; }
+    ia = ia || {};
+    Object.keys(ia).forEach(function (k) { poe(k, ia[k]); });
+    // 5) palpites, por último
+    Object.keys(enc.palpites).forEach(function (k) { poe(k, enc.palpites[k]); });
+    // palpite do leitor antigo: frase inteira não vale como rua/bairro/cidade/nome
+    Object.keys(rx).forEach(function (k) {
+      if (['endereco','bairro','cidade','nome','complemento'].indexOf(k) >= 0 && (String(rx[k]).length > 60 || String(rx[k]).split(/\s+/).length > 9)) return;
+      poe(k, rx[k]);
+    });
+    limpa();
+  }
+  if (rx.complemento && String(rx.complemento).length <= 60) poe('complemento', rx.complemento);
+  poe('email', rx.email);
+  const ganhou = Object.keys(coleta).filter(function (k) { return coleta[k] && !antes[k]; });
+  return { coleta: coleta, completa: comPadrao(), ganhou: ganhou, usouIA: usouIA };
+}
+
+// ═══ v91 — NO FECHAMENTO (estado/frete): cliente quer voltar e pôr mais produto, ou digita o nome de um produto ═══
+// Caso real (07/10 00:37): "Quero adicionar mais produtos" e "Quero mais enantato" na escolha do frete → a Athena só
+// repetia "Digite 1, 2 ou 3". Agora: nome de produto abre a busca (carrinho salvo) e "adicionar mais" volta ao menu.
+function ehQuerAdicionarMais(n) {
+  const t = ' ' + String(n || '') + ' ';
+  // "mais barato / mais rápido / mais em conta" é pergunta sobre o frete, não pedido de mais produto
+  if (/\bmais\s+(barat|rapid|car[oa]\b|em conta|lent|segur|demorad|cedo|tarde|vantaj|economic)/.test(t)) return false;
+  return /\b(adicionar|adiciona|acrescentar|acrescenta|incluir|inclui|colocar|coloca|botar|bota|pegar|levar|comprar|escolher|ver|quero|queria|faltou|esqueci)\b[^.!?]*\b(mais|outro|outra|outros|outras)\b/.test(t)
+      || /\bmais\s+(um\s+|uma\s+|uns\s+|umas\s+|alguns\s+|algumas\s+|\d+\s+)?(produto|produtos|item|itens|coisa|coisas)\b/.test(t)
+      || /\b(continuar comprando|voltar (pro|para o|ao|pra) (carrinho|menu|inicio)|voltar as compras|esqueci (de )?(um|uma|de|do|da) )/.test(t)
+      || /^\s*(mais|adicionar|adicionar mais|mais produtos?|mais itens?)\s*$/.test(String(n || ''));
+}
+async function checkoutDesvio(session, sid, n, respond) {
+  if (!n || /^\s*\d+\s*$/.test(n)) return null;
+  let rec = null, ci = null;
+  try { rec = reconhecerProduto(n); } catch (e) { rec = null; }
+  if (!rec) { try { ci = ciProcurar(n, await ciCatalogo()); } catch (e) { ci = null; } }
+  const temProduto = !!rec || !!(ci && ci.exatos.length > 0 && ci.exatos.length <= 40 && ci.todasConhecidas && ci.palavras.length > 0);
+  if (temProduto) return await tratarTextoLivre(session, sid, n, '', respond);
+  if (ehQuerAdicionarMais(n)) {
+    if (session.promoGenesis) return await anunciarGenesis(session, sid, respond, true);
+    await saveSession(sid, { ...session, state:'MENU' });
+    return respond('🛒 Seu carrinho está guardado! Escolha mais produtos:\n\n' + buildMenuPrincipal());
+  }
+  return null;
+}
+function freteOpcoesTexto(opts) {
+  return (opts || []).map(function (o, i) { return emojis(i) + ' *' + o.label + '* — R$ ' + o.valor.toFixed(2).replace('.', ','); }).join('\n');
+}
+// qual opção de frete o cliente escolheu: número ("2", "a 2", "opção 3") ou nome ("sedex", "quero transportadora"). -1 = não escolheu.
+function freteEscolhido(n, opts) {
+  const s = String(n || '').trim();
+  if (!s || !opts || !opts.length) return -1;
+  const nums = s.match(/\d+/g) || [];
+  if (nums.length === 1 && s.split(/\s+/).length <= 4 && !ehQuerAdicionarMais(s)) {
+    const k = parseInt(nums[0], 10);
+    if (k >= 1 && k <= opts.length && !/\d\s*(mg|ml|ui|mcg|cx|un|unid|caixa|ampola|frasco|momento|minuto|segundo|duvida|pergunta|coisa)/.test(s)) return k - 1;
+  }
+  if (!nums.length) {
+    const alvo = ' ' + s.replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ') + ' ';
+    const bate = [];
+    opts.forEach(function (o, i) { const l = norm(o.label); if (l && alvo.indexOf(' ' + l + ' ') >= 0) bate.push(i); });
+    if (bate.length === 1) return bate[0];
+  }
+  return -1;
+}
+
+// ═══ v91 — NOME LONGO COM 2 LETRAS ERRADAS/TROCADAS ("monjauro" → mounjaro) ═══
+// Caso real (06/10 17:00): a cliente escreveu "Monjauro" e ficou sem resposta. A tolerância era de 1 letra.
+// Só entra quando o dicionário e o catálogo não acharam NADA; exige a mesma inicial e um único produto possível.
+function _distEd(a, b, max) {
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > max) return max + 1;
+  let ant2 = null, ant = [], i, j;
+  for (j = 0; j <= lb; j++) ant[j] = j;
+  for (i = 1; i <= la; i++) {
+    const cur = [i];
+    let menor = i;
+    for (j = 1; j <= lb; j++) {
+      const custo = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(ant[j] + 1, cur[j - 1] + 1, ant[j - 1] + custo);
+      if (ant2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, ant2[j - 2] + 1);
+      cur[j] = v;
+      if (v < menor) menor = v;
+    }
+    if (menor > max) return max + 1;
+    ant2 = ant; ant = cur;
+  }
+  return ant[lb];
+}
+function reconhecerAproximado(nMsg) {
+  if (!nMsg) return null;
+  const palavras = String(nMsg).split(/[^a-z0-9+]+/).filter(function (p) { return p.length >= 7 && !/\d/.test(p); });
+  if (!palavras.length) return null;
+  let melhor = null, dist = 3, empate = false;
+  for (const e of DICT_PRODUTOS) {
+    const termos = (e.canonico || []).concat(e.apelidos || []);
+    for (const termo of termos) {
+      const t = norm(termo).replace(/[-\s]/g, '');
+      if (t.length < 8 || /\d/.test(t)) continue;
+      for (const p of palavras) {
+        if (p[0] !== t[0]) continue;
+        const d = _distEd(p, t, 2);
+        if (d > 2) continue;
+        if (d < dist) { melhor = e; dist = d; empate = false; }
+        else if (d === dist && melhor && melhor !== e) empate = true;
+      }
+    }
+  }
+  return (melhor && !empate) ? { entry: melhor, modo: 'canonico', aproximado: true } : null;
+}
+
+async function extrairDadosIA(texto, ctx) {
   try {
-    const prompt = `Extraia os dados de cadastro do cliente do texto abaixo e retorne APENAS um objeto JSON válido, sem nenhum texto antes ou depois, sem markdown.
+    // v91: a IA fica sabendo o que JÁ temos e o que FALTA — resposta curta e solta ("Guarujá") vai pro campo certo.
+    const _ctxIA = (ctx && ctx.faltam && ctx.faltam.length)
+      ? `CONTEXTO: já temos ${(ctx.tem && ctx.tem.length) ? ctx.tem.join(', ') : 'nenhum dado'}. AINDA FALTAM: ${ctx.faltam.join(', ')}. Se o texto for uma resposta curta e solta, ela é quase sempre um dos dados que faltam — coloque no campo certo. Não invente dado que não está no texto.\n\n`
+      : '';
+    const prompt = `${_ctxIA}Extraia os dados de cadastro do cliente do texto abaixo e retorne APENAS um objeto JSON válido, sem nenhum texto antes ou depois, sem markdown.
 
 Campos a extrair (use string vazia se não encontrar):
 - nome: nome completo da pessoa
@@ -4889,11 +5285,11 @@ ${texto}
 
 Retorne SOMENTE o JSON no formato:
 {"nome":"","cpf":"","telefone":"","email":"","endereco":"","complemento":"","bairro":"","cidade":"","estado":"","cep":""}`;
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await fetchT('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
       body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:600, messages:[{ role:'user', content: prompt }] })
-    });
+    }, 7000);   // v91: prazo — sem resposta em 7 s, segue com o que o leitor já achou
     const d = await r.json();
     if (d.error || !d.content) return null;
     const raw = d.content[0].text || '';
@@ -6199,10 +6595,16 @@ exports.handler = async (event) => {
         await saveSession(sid, { ...session, state:'REMOVER_ITEM' });
         return respond(msgRemoverItem(session.carrinho));
       }
-      const uf = mensagem.trim().toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
-      const opts = getFreteOpcoes(uf);
-      if (!opts) return respond(`Estado *${uf || mensagem}* não reconhecido.\nDigite a sigla do seu estado (ex: RJ, SP, MG):`);
-      const freteStr = opts.map((o, i) => `${emojis(i)} *${o.label}* — R$ ${o.valor.toFixed(2).replace('.',',')}`).join('\n');
+      // v91: aceita o estado por extenso ("São Paulo", "sou do Paraná", "moro em sp"). Antes valiam as 2 primeiras letras
+      // da mensagem: "São Paulo" virava "SO" e "Paraná"/"Mato Grosso"/"Roraima" caíam no frete de OUTRO estado (PA/MA/RO).
+      const uf = ufDoTexto(mensagem);
+      const opts = uf ? getFreteOpcoes(uf) : null;
+      if (!opts) {
+        const _dv = await checkoutDesvio(session, sid, n, respond);   // quer pôr mais produto / digitou nome de produto
+        if (_dv) return _dv;
+        return respond(`Estado *${String(mensagem || '').trim().slice(0, 40)}* não reconhecido.\nDigite a sigla do seu estado (ex: RJ, SP, MG):`);
+      }
+      const freteStr = freteOpcoesTexto(opts);
       await saveSession(sid, { ...session, state:'FRETE', estadoCliente: uf, freteOpcoes: opts });
       return respond(`*Opções de frete para ${uf}:*\n\n${freteStr}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra apreensão e extravio.\n\n*Digite o número:*`);
     }
@@ -6213,8 +6615,15 @@ exports.handler = async (event) => {
         return respond(msgRemoverItem(session.carrinho));
       }
       const opts = session.freteOpcoes || [];
-      if (!num || num < 1 || num > opts.length) return respond(`Digite 1, 2 ou 3 para escolher o frete:`);
-      const frete = opts[num - 1];
+      // v91: escolhe pelo número OU pelo nome ("sedex"); pedido de mais produto / nome de produto volta pra compra
+      // com o carrinho salvo, em vez de repetir "Digite 1, 2 ou 3" (07/10 00:37 — "Quero adicionar mais produtos").
+      const _iFrete = freteEscolhido(n, opts);
+      if (_iFrete < 0) {
+        const _dv = await checkoutDesvio(session, sid, n, respond);
+        if (_dv) return _dv;
+        return respond(`Não entendi. 😊 Escolha o frete pelo número:\n\n${freteOpcoesTexto(opts)}\n\n_Quer colocar mais produtos antes? Digite *mais*._`);
+      }
+      const frete = opts[_iFrete];
       const carrinho = session.carrinho || [];
       if (!carrinho.length) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Seu carrinho está vazio! 🛒\n\nEscolha um produto primeiro:\n\n' + MENU_PRINCIPAL); }
       const totalProd = totalCarrinho(carrinho);
@@ -6577,44 +6986,39 @@ exports.handler = async (event) => {
     // COLETA DE DADOS
     // ═══════════════════════════════════════════════════════════════════════════
     if (state === 'COLETA_DADOS') {
-      // Combina IA + leitor determinístico (regex). A IA preenche; o regex cobre o que faltar.
-      const dadosIA = await extrairDadosIA(mensagem) || {};
-      const dadosRegex = extrairDadosRegex(mensagem) || {};
-      const dadosNovos = { ...dadosRegex, ...dadosIA }; // IA tem prioridade quando preencheu
-      const coleta = { ...(session.coleta||{}) };
-      Object.keys(dadosNovos).forEach(k => { const v = dadosNovos[k]; if (v && String(v).trim().length >= 1 && !coleta[k]) coleta[k] = v; });
-      // nome só vale se for nome de gente (2+ palavras, sem dígitos) — evita gravar lixo do endereço e força pedir o nome de verdade
-      if (coleta.nome && (String(coleta.nome).trim().split(/\s+/).filter(Boolean).length < 2 || /\d/.test(coleta.nome))) delete coleta.nome;
-      if (coleta.estado) coleta.estado = String(coleta.estado).toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
-      if (coleta.cpf) coleta.cpf = formatarCPF(coleta.cpf); // grava o CPF sempre como 000.000.000-00
-      const obrigatorios = ['nome','cpf','telefone','endereco','bairro','cidade','estado','cep'];
-      const faltam = obrigatorios.filter(c => !coleta[c] || String(coleta[c]).length < 2);
+      // v91 — leitura em qualquer formato (ver coletaLer). `coletaMsg` = só o que o cliente informou (fica na sessão);
+      // `coleta` = com o telefone do WhatsApp e o estado do frete quando ele não informou (é o que vai pro pedido).
+      const _lido = await coletaLer(mensagem, session.coleta || {}, sid, session);
+      const coletaMsg = _lido.coleta;
+      const coleta = _lido.completa;
+      const faltam = coletaFalta(coleta);
 
       if (faltam.length > 0) {
         const tentativas = (session.coletaTentativas || 0) + 1;
-        // TRAVA: pedido já pago nunca volta ao menu. Após 3 tentativas, escala pra humano e mantém o pedido.
-        if (tentativas >= 3) {
-          await enviarTelegram(
-            `⚠️ *COLETA TRAVADA — pedido PAGO* (precisa de atendimento humano)\n` +
-            `📦 ${session.orderNsu || '—'}\n📱 ${sid}\n` +
-            `Faltando: ${faltam.join(', ')}\n` +
-            `Dados captados: ${JSON.stringify(coleta)}\n` +
-            `Última mensagem do cliente: ${mensagem}`
-          );
-          await saveSession(sid, { ...session, coleta, coletaTentativas: tentativas });
-          return respond(
+        const _soAviso = !_lido.ganhou.length && _coletaEhSoAviso(n);          // "ok", "já mando": não conta
+        const semProgresso = _lido.ganhou.length ? 0 : (session.coletaSemProgresso || 0) + (_soAviso ? 0 : 1);
+        // TRAVA: pedido já pago nunca volta ao menu. 2 respostas seguidas sem nenhum dado novo → atendente
+        // (em vez de perguntar a mesma coisa pela 3ª vez). O aviso no Telegram sai uma vez só.
+        if (semProgresso >= 2) {
+          if (!session.coletaEscalada) {
+            await enviarTelegram(
+              `⚠️ *COLETA TRAVADA — pedido PAGO* (precisa de atendimento humano)\n` +
+              `📦 ${session.orderNsu || '—'}\n📱 ${sid}\n` +
+              `Faltando: ${faltam.join(', ')}\n` +
+              `Dados captados: ${JSON.stringify(coleta)}\n` +
+              `Última mensagem do cliente: ${mensagem}`
+            );
+          }
+          await saveSession(sid, { ...session, coleta: coletaMsg, coletaTentativas: tentativas, coletaSemProgresso: semProgresso, coletaEscalada: true });
+          return await responderDireto(sid,
             `Obrigada! 🙏 Já recebi parte dos seus dados. Vou pedir pra um atendente *finalizar seu envio* com você pra não ter erro — seu *pedido está pago e garantido*. 😊\n\n` +
-            `Se quiser, pode reenviar os dados que faltam neste formato que eu também tento de novo:\n` +
-            `Nome: \nCPF: \nTelefone: \nRua e número: \nBairro: \nCidade: \nEstado: \nCEP: `
-          );
+            `Se quiser adiantar, só falta:\n${faltam.map(f => '• ' + COLETA_NOMES[f]).join('\n')}`,
+            respond, nomeAssistente);
         }
-        await saveSession(sid, { ...session, coleta, coletaTentativas: tentativas });
-        const nomesCampos = { nome:'Nome completo', cpf:'CPF', telefone:'Telefone', email:'E-mail', endereco:'Rua e número', bairro:'Bairro', cidade:'Cidade', estado:'Estado', cep:'CEP' };
-        return respond(
-          `Quase lá! 😊 Só preciso confirmar:\n${faltam.map(f => '• '+nomesCampos[f]).join('\n')}\n\n` +
-          `Pode me mandar tudo junto, em linhas separadas (não precisa dos rótulos):\n` +
-          `_Ex.: João da Silva / 000.000.000-00 / (11) 99999-9999 / Rua X 123 / Centro / São Paulo / SP / 00000-000_`
-        );
+        await saveSession(sid, { ...session, coleta: coletaMsg, coletaTentativas: tentativas, coletaSemProgresso: semProgresso });
+        // pelo canal direto: se o BotConversa reentregar a resposta antiga do webhook, ela vem vazia
+        const _nadaAinda = !Object.keys(coletaMsg).some(k => COLETA_OBRIG.indexOf(k) >= 0 && coletaMsg[k]);
+        return await responderDireto(sid, coletaPergunta(faltam, _nadaAinda), respond, nomeAssistente);
       }
 
       const carrinho = session.carrinho || [];
@@ -6695,12 +7099,16 @@ exports.handler = async (event) => {
       //    enviarWhatsAppDireto pula texto vazio sozinho, então msg3 vazia não atrapalha.
       // Na Stella (VitaMK), o envio direto usa a key da Athena e não entrega aqui — força
       // o fallback síncrono (respond) logo abaixo, que responde na conversa certa.
-      const reciboEnviado = (nomeAssistente && nomeAssistente !== 'Athena')
-        ? false
-        : await enviarWhatsAppDireto(sid, [msg1, msg3, msg2]);
+      // v91: o envio do recibo COMEÇA primeiro e o trabalho pesado roda AO MESMO TEMPO (antes era um depois do outro e a
+      // chamada passava de 14 s — o BotConversa desistia de esperar e reenviava a resposta anterior).
+      const _pRecibo = (nomeAssistente && nomeAssistente !== 'Athena')
+        ? Promise.resolve(false)
+        : enviarWhatsAppDireto(sid, [msg1, msg3, msg2]).catch(() => false);
+      const _tarefas = [];
 
-      // 2) TRABALHO PESADO só DEPOIS do recibo já ter saído (tudo best-effort, não trava nada).
+      // 2) TRABALHO PESADO em paralelo com o recibo (tudo best-effort, não trava nada).
       if (num_pedido) {
+        _tarefas.push((async () => {
         try {
           // v77 (29/09/2026): SÓ o nome do produto na descrição. Antes ia "${i.nome} x${i.qtd}" e o GAS ainda
           // acrescenta " x<qtd>" → na planilha ficava "BOTOX Allergan 100UI x2 (R$ … un.) x2" (qtd DUAS vezes).
@@ -6742,19 +7150,25 @@ exports.handler = async (event) => {
             items
           });
         } catch (e) {}
+        })());
+        _tarefas.push((async () => {
         try {
           const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
           await enviarTelegram(
             `🤖 *VENDA ATHENA!*\n\n📦 ${num_pedido}\n👤 ${coleta.nome}\n🪪 ${coleta.cpf}\n📱 ${coleta.telefone}\n📧 ${coleta.email||'—'}\n🏠 ${coleta.endereco}${coleta.complemento?', '+coleta.complemento:''}, ${coleta.bairro}, ${coleta.cidade}-${coleta.estado}, ${coleta.cep}\n${itensTxt}\n🚚 ${frete.label} ${session.estadoCliente}\n💰 R$ ${total.toFixed(2)}${session.obsCliente?`\n📝 Obs: ${session.obsCliente}`:''}\n📱 ${sid}`
           );
         } catch (e) {}
+        })());
       }
 
       // Incrementa uso do cupom SOMENTE agora (pedido confirmado)
-      if (session.cupomDocId) { try { await incrementarUsoCupom(session.cupomDocId); } catch (e) {} }
+      if (session.cupomDocId) _tarefas.push((async () => { try { await incrementarUsoCupom(session.cupomDocId); } catch (e) {} })());
 
       // PROTOCOLO PÓS-VENDA: dispara a IA pra gerar e ENVIAR o protocolo completo (canal próprio).
-      try { const _nomesProto = (carrinho || []).map(function(i){ return i.nome; }); const _tabProto = await montarTabelas(_nomesProto); await dispararIAProtocolo(sid, _nomesProto, _tabProto); } catch (e) {}
+      _tarefas.push((async () => { try { const _nomesProto = (carrinho || []).map(function(i){ return i.nome; }); const _tabProto = await montarTabelas(_nomesProto); await dispararIAProtocolo(sid, _nomesProto, _tabProto); } catch (e) {} })());
+
+      const reciboEnviado = await _pRecibo;
+      await Promise.all(_tarefas);
 
       await deleteAguardandoDados(sid);
       await deleteSession(sid);
