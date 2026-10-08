@@ -1,5 +1,12 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v93 (08/10/2026 — conversa real do Gustavo, 19:40: "vi que tem promoção de primobolan e gostaria de aproveitar o frete grátis
+//   que ganhei do primeiro pedido" → a Athena respondeu "Não tenho Primobolan disponível" e listou 10 Primobolans).
+//   1) Mensagem que CITA a promoção relâmpago ativa ("promo"/"relâmpago"/"oferta" + o produto dela, ou sem outro produto)
+//      → abre a lista da relâmpago (igual à opção 8). Se a frase traz outro assunto junto (pedido anterior, frete...),
+//      quem responde é a IA, que já recebe a relâmpago no contexto (contextoPromo).
+//   2) resolverReconhecido: o aviso "Não tenho X (com Y) disponível" só sai quando TODAS as palavras fortes existem no
+//      catálogo (pedido de marca/dose que não existe junto). Frase solta com o nome do produto abre a lista sem o aviso falso.
 // v92 (08/10/2026 — Thiago: "crie uma promoção relampago para esse produto. Primobolan 100mg - Cooper de 1.499 por 899 somente
 //   hoje até 23h59min ou enquanto durar os estoques"). Religa a PROMO_RELAMPAGO (opção 8 / "promo", menu, saudação, IA) com o
 //   Primobolan 100mg - Cooper Pharma. Campo novo `fim`: a promoção DESLIGA SOZINHA em 08/10 23:59:59 (ninguém precisa mexer).
@@ -3243,7 +3250,7 @@ async function resolverReconhecido(session, sid, e, respond, marca, q) {
       if (_sub.exatos.length && _sub.exatos.length < _daEntrada.length) {
         return await ciAbrirLista(session, sid, ciLinhas(_sub.exatos), ciTitulo(_sub, _sub.exatos), respond);
       }
-      if (!_sub.exatos.length && _sub.palavras.length > 1) {
+      if (!_sub.exatos.length && _sub.palavras.length > 1 && ciProcurar(_pedido, _pr).todasConhecidas) {   // v93: frase solta não vira "não tenho"
         const _loja = await ciLoja(_pedido, _pr);
         if (_loja.disponiveis.length) return await ciAbrirLista(session, sid, _loja.disponiveis, _sub.palavras.join(' ').toUpperCase(), respond);
         // marca/linha pedida que existe em OUTROS produtos: avisa ("de LANDERLAN DIAMOND tenho 5 produtos")
@@ -3377,6 +3384,21 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // v91: nada no dicionário nem no catálogo → tenta o nome longo com 2 letras erradas ("monjauro" → mounjaro)
   const rec = reconhecerProduto(nMsg) || ((!_ci.exatos.length && !_ci.proximos.length) ? reconhecerAproximado(nMsg) : null);
   const _temCarrinho = (session.carrinho || []).length > 0;
+  // v93 — a mensagem CITA a promoção relâmpago ativa → abre a relâmpago (nunca "não tenho"). Frase com outro assunto junto → IA.
+  const _relAt = promoAtiva();
+  if (_relAt && /promo|relampago|oferta/.test(ciNorm(nMsg))) {
+    const _wsMsg = ciPalavrasDoPedido(nMsg);
+    const _citaRel = _relAt.produtos.some(p => { const f = ciPalavrasDoPedido(p.nome)[0]; return !!f && _wsMsg.indexOf(f) >= 0; });
+    if (_citaRel || (!rec && !_ci.exatos.length)) {
+      const _outroAssunto = _ci.fortes.filter(w => _ci.conhecidas.indexOf(w) < 0 && !/promo|relampago|oferta/.test(w));
+      if (_outroAssunto.length >= 3) {
+        await saveSession(sid, { ...session, errosSeguidos: 0 });
+        return await responderComIA(sid, nMsg, contextoLista(session), respond);
+      }
+      const _mRel = await abrirPromo(session, sid);
+      if (_mRel) return respond(_mRel);
+    }
+  }
   // Dúvida/pergunta (protocolo, como usar, dose, "?"...) → a IA RESPONDE, mesmo que cite um
   // produto. Só abre a lista quando é intenção de ver/comprar, não quando é pergunta.
   // v90: pergunta de PREÇO/ESTOQUE com produto ("quanto está o valor da primobolan diamond?", "tem dhb?") NÃO é dúvida — abre a lista.
