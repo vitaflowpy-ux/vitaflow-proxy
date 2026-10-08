@@ -1,5 +1,18 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v95 (08/10/2026 — leitura de 69 conversas reais da Athena, 27/09 a 08/10, pedida pelo Thiago: "vc deveria ler todas as
+//   conversas da athena e otimizá-la").
+//   1) MODO ESQUECIDO: a sessão guardava o último modo para sempre (GDF voltou dias depois ainda "dentro" do atacado; Caio,
+//      depois de perguntar do atacado, teve "Masteron" buscado na tabela de atacado). Agora, 6 h sem falar → os modos de
+//      navegação/consulta voltam ao MENU. Carrinho preservado. Não mexe em pagamento/coleta de dados, no checkout do varejo
+//      nem no atacado com pedido montado.
+//   2) RASTREIO: mostrou o pedido → sai do rastreio (antes "obrigado", "não chegou", "acione a logística" viravam
+//      "Não encontrei nenhum pedido"). Mensagem sem nº de pedido / CPF / e-mail / sequência de números dentro do rastreio
+//      não é consulta: segue o caminho normal (IA, produto, menu).
+//   3) PARCELAMENTO: depois da simulação, "2", "3x", "em 4 vezes"… geram o link (as parcelas são escolhidas no link). Antes,
+//      "2" (= 2x) era "voltar ao menu" e o cliente saía (Thaynan, 08/10, R$ 1.851). A simulação agora diz "*menu* para voltar".
+//   4) ATACADO: frase de 4+ palavras que não achou produto vai para a IA em vez de "Não encontrei *<frase inteira>*".
+//   5) CONSULTA DE FRETE: o estado é lido como no checkout (sigla ou nome por extenso). "Por transportadora" não vira "PO".
 // v94 (08/10/2026 — conversa real "GDF LHP", 20:02, já dentro do atacado: "Tem tabela em atacado" → "Não encontrei *Tem tabela em
 //   atacado* na nossa tabela de atacado"). Dentro do atacado, mensagem que não achou produto e fala de TABELA / LISTA / CATÁLOGO /
 //   PDF (até 16 palavras) recebe o link da tabela em PDF — a mesma resposta de quando o cliente digita "tabela". A busca de produto
@@ -1766,7 +1779,8 @@ async function atkAbrirBusca(session, sid, termo, respond) {
       await saveSession(sid, { ...session, state: 'ATACADO' });
       return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`);
     }
-    if (ehDuvida(norm(termo)) || ehPedidoProtocoloCompleto(norm(termo))) {
+    // v95: frase de 4+ palavras também vai para a IA (nunca "Não encontrei *<frase inteira>*").
+    if (ehDuvida(norm(termo)) || ehPedidoProtocoloCompleto(norm(termo)) || _tTab.split(' ').length >= 4) {
       await saveSession(sid, { ...session, state: 'ATACADO' });
       return await responderComIA(sid, termo, contextoLista(session), respond);
     }
@@ -4505,7 +4519,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     linhaConviteCupom;
   const freteParaSalvar = { ...frete, valor: freteValorFinal, valorCheio: freteCheio };
   await saveSession(sid, {
-    ...session, state:'CONFIRMAR', freteSelecionado: freteParaSalvar, totalProd,
+    ...session, state:'CONFIRMAR', simulouParcela: null, freteSelecionado: freteParaSalvar, totalProd,
     descontoReais, descontoPromo: descPromo, descontoLabel: labelNormais,
     total: totalComDesconto,
     descontoTipo: cupomDocId ? 'cupom' : 'athena', cupomDocId, cupomCodigo,
@@ -4691,7 +4705,7 @@ async function mostrarResumoPedido(session, sid, respond) {
       `🔥 *${session.promoTitulo||'Promoção Relâmpago'}* — preços promocionais já aplicados` +
       (descPct ? `\n🏷️ Desconto extra (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') +
       `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`;
-    await saveSession(sid, { ...session, state:'CONFIRMAR', freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo' });
+    await saveSession(sid, { ...session, state:'CONFIRMAR', simulouParcela: null, freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo' });
     return respond(resumo);
   }
   return await fecharResumoNormal({ ...session, freteSelecionado: frete, totalProd }, sid, null, respond);
@@ -5466,6 +5480,21 @@ exports.handler = async (event) => {
       }
     }
 
+    // ── v95: MODO ESQUECIDO (Athena) — 6 h sem falar, modo de navegação/consulta volta ao MENU (carrinho preservado) ──
+    if (nomeAssistente === 'Athena') {
+      const _paradoA = session._dedupTs ? (Date.now() - session._dedupTs) : 0;
+      const _stA = session.state || '';
+      const _modoNav = ['RASTREAR','ATACADO','ATK_LISTA','ATK_QTD','LISTA_PRODUTOS','QUANTIDADE','PEPTIDEOS','HORMONIOS','FABRICANTES',
+        'SUBMENU_TESTO','ESTER_BASE','DUVIDAS','DUVIDAS_LIVRE','PRAZOS_RASTREIO','PRAZO_TIPO','FRETE_AVULSO','CONFIRMAR_PRODUTO',
+        'CONFIRMAR_VER_PRODUTO','BUSCA_LIVRE','STACK_PROXIMO','SORTEIO','PROMO_OFERECER','POS_TABELA_FRAC','PROTO_CLIENTE',
+        'PROTO_IDENTIFICAR','PROTO_ESCOLHER','PROTO_TIPO','TRIAGEM'].indexOf(_stA) >= 0;
+      const _atkComPedido = (session.carrinhoAtk || []).length > 0 && /^(ATACADO|ATK_)/.test(_stA);
+      if (_paradoA > 6 * 3600000 && _modoNav && !_atkComPedido) {
+        console.log('[MODO-ESQUECIDO] parada ha', Math.round(_paradoA / 60000), 'min — estado antigo:', _stA, '-> MENU (carrinho preservado)');
+        session.state = 'MENU';
+      }
+    }
+
     // ── ESTADO ÓRFÃO DE VERSÃO ANTIGA → VOLTA PRO MENU (17/09/2026) ───────────
     // A sessão fica gravada no Firebase e SOBREVIVE a deploy. Quando uma versão antiga
     // gravou um estado que o código de hoje não grava mais (ex.: 'PROTOCOLO', que mandava
@@ -6194,9 +6223,14 @@ exports.handler = async (event) => {
     }
 
     if (state === 'FRETE_AVULSO') {
-      const uf = mensagem.trim().toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
-      const opts = getFreteOpcoes(uf);
-      if (!opts) return respond(`Estado *${uf || mensagem}* não reconhecido.\nDigite a sigla do seu estado (ex: RJ, SP, MG):`);
+      // v95: mesmo leitor do checkout (ufDoTexto: sigla ou nome por extenso). Antes valiam as 2 primeiras letras:
+      //      "Por transportadora" virava "PO", "Rio de Janeiro" virava "RI" (caso real Bruno).
+      const uf = ufDoTexto(mensagem);
+      const opts = uf ? getFreteOpcoes(uf) : null;
+      if (!opts) {
+        if (reconhecerProduto(n)) { const _sM = { ...session, state: 'MENU' }; await saveSession(sid, _sM); return await tratarTextoLivre(_sM, sid, n, buildMenuPrincipal(), respond); }
+        return respond(`Estado *${String(mensagem || '').trim().slice(0, 40)}* não reconhecido.\nDigite a sigla do seu estado (ex: RJ, SP, MG):`);
+      }
       const freteStr = opts.map((o) => `• *${o.label}* — R$ ${o.valor.toFixed(2).replace('.',',')}`).join('\n');
       await saveSession(sid, { ...session, state:'MENU' });
       return respond(`🚚 *Opções de frete para ${uf}:*\n\n${freteStr}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra apreensão e extravio.\n\nQuer escolher um produto para comprar? É só digitar *menu* e navegar pelas categorias! 😊`);
@@ -6293,8 +6327,15 @@ exports.handler = async (event) => {
       const termo = extrairTermoRastreio(mensagem);         // v81: número/CPF normalizados (o resto vai como veio)
       const alnum = termo.replace(/[^a-zA-Z0-9@]/g, '');
       // v84: frase solta (3+ palavras, sem pedido/CPF/e-mail e sem sequência de 5+ números) não é dado de pedido — não consulta.
-      const _fraseSolta = !idPedido(mensagem) && !idEmail(mensagem) && !idCpf(mensagem).cpf && !/\d{5,}/.test(String(mensagem).replace(/[\s.\-]/g, '')) && String(mensagem).trim().split(/\s+/).length >= 3;
-      if (alnum.length < 2 || _fraseSolta) {
+      // v95: QUALQUER mensagem sem nº de pedido / CPF / e-mail / sequência de 5+ números não é consulta ("obrigado", "não chegou",
+      //      "acione a logística") → sai do rastreio e segue o caminho normal (IA, produto, menu).
+      const _semIdR = !idPedido(mensagem) && !idEmail(mensagem) && !idCpf(mensagem).cpf && !/\d{5,}/.test(String(mensagem).replace(/[\s.\-]/g, ''));
+      if (_semIdR && /[a-z]{2,}/i.test(String(mensagem || ''))) {
+        const _sessM = { ...session, state: 'MENU' };
+        await saveSession(sid, _sessM);
+        return await tratarTextoLivre(_sessM, sid, n, buildTriagem(), respond);
+      }
+      if (alnum.length < 2) {
         return respond(`Hmm, isso não parece um número de pedido, CPF ou e-mail. 🤔\n\nMe manda o *número do pedido*, o *CPF* (11 dígitos) ou o *e-mail* da compra.\n\n_Ou digite *menu* para voltar._`);
       }
       let pedidos = await consultarStatusGAS(termo);
@@ -6305,6 +6346,7 @@ exports.handler = async (event) => {
       if (!pedidos.length) {
         return respond(`🔍 Não encontrei nenhum pedido com *esse dado*.\n\nConfere se digitou certo o *número do pedido*, *CPF* ou *e-mail* da compra e me manda de novo. 😊\n\n📞 Se preferir, fale com a logística: 👉 wa.me/447537155718\n_Ou digite *menu* para voltar._`);
       }
+      await saveSession(sid, { ...session, state: 'MENU' });   // v95: mostrou o pedido → sai do rastreio
       if (pedidos.length === 1) {
         return respond(statusBloco(pedidos[0]) + RASTREIO_RODAPE);
       }
@@ -6863,6 +6905,13 @@ exports.handler = async (event) => {
     }
 
     if (state === 'CONFIRMAR') {
+      // v95: logo depois da simulação, número de parcelas ("2", "3x", "em 4 vezes") = quer pagar parcelado → gera o link
+      // (as parcelas são escolhidas no próprio link). Antes o "2" virava "voltar ao menu" e o cliente saía.
+      if (session.simulouParcela) {
+        const _tp = norm(mensagem || '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+        const _mp = _tp.match(/^(?:em |quero |pode ser |vou de |no )?(\d{1,2}) ?(?:x|vezes|parcelas?)?(?: no cartao| sem juros)?$/);
+        if (_mp && Number(_mp[1]) >= 1 && Number(_mp[1]) <= 12) num = 1;
+      }
       if (num === 2) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊 *Seu carrinho continua guardado* — quando quiser fechar, é só digitar *finalizar*.\n\n' + buildMenuPrincipal()); }
       if (num === 1) {
         const carrinho = session.carrinho || [];
@@ -6887,7 +6936,8 @@ exports.handler = async (event) => {
       }
       // Quer simular PARCELAMENTO na hora de fechar → mostra e mantém o pedido pronto.
       if (ehPedidoParcelamento(mensagem)) {
-        return respond(simularParcelas(session.total || totalCarrinho(session.carrinho || [])) + `\n\nQuando quiser, digite *1* para *confirmar a compra* ou *2* para voltar ao menu.`);
+        await saveSession(sid, { ...session, simulouParcela: true });   // v95: o próximo "2"/"3x" é parcela, não "voltar"
+        return respond(simularParcelas(session.total || totalCarrinho(session.carrinho || [])) + `\n\nQuando quiser, digite *1* para *confirmar a compra* (no link você escolhe em quantas vezes) ou *menu* para voltar.`);
       }
       // Opção B: cliente pode digitar um código de cupom aqui (não em promoção/negociação)
       // Só tenta como CUPOM se PARECER um código (uma palavra curta alfanumérica) — assim
