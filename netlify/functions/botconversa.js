@@ -1,5 +1,10 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v96 (08/10/2026 — VIGIA, pedido do Thiago: "agora eu vou ter que ficar tomando conta de todas as conversas da athena?").
+//   Toda resposta passa por vigiaAthena(): se a Athena/Stella respondeu algo suspeito ("Não encontrei *…*", "Não tenho *…*",
+//   "não reconhecido", "isso não parece", "Opção inválida"), se o cliente repetiu a mesma mensagem, pediu atendente/pessoa ou
+//   reclamou, vai um alerta no Telegram (mesmo chat dos outros avisos) com a mensagem do cliente e a resposta. No máximo
+//   1 alerta por cliente a cada 20 min. Não muda nenhuma resposta ao cliente; se o Telegram falhar, nada acontece.
 // v95 (08/10/2026 — leitura de 69 conversas reais da Athena, 27/09 a 08/10, pedida pelo Thiago: "vc deveria ler todas as
 //   conversas da athena e otimizá-la").
 //   1) MODO ESQUECIDO: a sessão guardava o último modo para sempre (GDF voltou dias depois ainda "dentro" do atacado; Caio,
@@ -7307,3 +7312,45 @@ exports.handler = async (event) => {
     return respond('Desculpe o delay! 😊 Digite *menu* para começar.');
   }
 };
+
+// ── v96: VIGIA DAS CONVERSAS ─────────────────────────────────────────────────
+// Não mexe na resposta: só olha o que entrou e o que saiu e avisa no Telegram quando parece que a conversa travou.
+const VIGIA = { ativo: true, intervaloMs: 20 * 60 * 1000 };
+const _vigiaUltAlerta = {};   // fone -> ts do último alerta (memória do container)
+const _vigiaUltMsg = {};      // fone -> { m, ts } última mensagem do cliente
+function vigiaMotivo(msgCli, resp) {
+  const m = String(msgCli || ''), r = String(resp || '');
+  const nm = m.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/N[ãa]o encontrei \*|N[ãa]o tenho \*|n[ãa]o reconhecid|isso n[ãa]o parece|Op[çc][ãa]o inv[áa]lida|N[ãa]o entendi/i.test(r)) return 'resposta de "não achei / não entendi"';
+  if (/\b(atendente|humano|falar com (alguem|uma pessoa|pessoa)|pessoa real)\b/.test(nm)) return 'cliente pediu atendente';
+  if (/\b(porra|caralho|merda|lixo|absurdo|palhacada|ridiculo|golpe|nao responde|ninguem responde|nao chegou|reclamacao|veio errado)\b/.test(nm)) return 'cliente reclamando';
+  return '';
+}
+async function vigiaAthena(event, res) {
+  if (!VIGIA.ativo || !res || res.statusCode !== 200) return;
+  let b = {}, out = {};
+  try { b = JSON.parse(event.body || '{}'); } catch (e) { return; }
+  try { out = JSON.parse(res.body || '{}'); } catch (e) { return; }
+  const fone = String(b.phone || b.subscriber_id || '').replace(/\D/g, '');
+  const msg = String(b.mensagem || b.message || b.texto || '').trim();
+  const resp = [out.resposta, out.resposta2, out.resposta3].filter(Boolean).join('\n');
+  if (!fone || !msg || !resp) return;
+  const agora = Date.now();
+  let motivo = vigiaMotivo(msg, resp);
+  const ant = _vigiaUltMsg[fone];
+  if (!motivo && ant && ant.m === msg.toLowerCase() && (agora - ant.ts) < 30 * 60 * 1000 && !/^\d{1,2}$/.test(msg)) motivo = 'cliente repetiu a mesma mensagem';
+  _vigiaUltMsg[fone] = { m: msg.toLowerCase(), ts: agora };
+  if (!motivo) return;
+  if (_vigiaUltAlerta[fone] && (agora - _vigiaUltAlerta[fone]) < VIGIA.intervaloMs) return;
+  _vigiaUltAlerta[fone] = agora;
+  const quem = String(b.assistente || b.nome_assistente || 'Athena');
+  await enviarTelegram('👁️ VIGIA ' + quem.toUpperCase() + ' — ' + motivo + '\n📱 ' + fone + '\n💬 Cliente: ' + msg.slice(0, 200) + '\n🤖 Resposta: ' + resp.replace(/\s+/g, ' ').slice(0, 250));
+}
+const _handlerSemVigia = exports.handler;
+exports.handler = async (event) => {
+  const res = await _handlerSemVigia(event);
+  try { await vigiaAthena(event, res); } catch (e) {}
+  return res;
+};
+exports._vigia = { vigiaMotivo };
+
