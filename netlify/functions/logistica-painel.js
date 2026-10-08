@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v17  ·  08/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v18  ·  08/10/2026
+   v18 (08/10): pedido E (etiqueta avulsa criada no Frete VitaFlow do Painel de Dados) tratado como o reenvio R em ehReenvio
+       → fora do "fora do prazo" (não ganha cupom/e-mail de atraso).
    v17 (08/10, Thiago: "quero que reenvio tambem envie email para cliente"): desfeitas as 2 travas da v16 — reenvio (R) dividido
        recebe o e-mail "seu pedido vai em N pacotes" igual a pedido normal, e a aba Duplicados mostra o estado real do e-mail.
    v16 (08/10, pedido do Thiago: o reenvio VF-0710-R002 não foi dividido — GAS v62 passa a criar linha D também para reenvio R):
@@ -1946,7 +1948,8 @@ function cfgCupom(cfgBase) {
     prefixo: pref, janela: Math.max(7, Number(c.cupom_atraso_janela_dias) || 60), desde: Number(c.cupom_atraso_desde) || 0,
     max: Math.min(40, Math.max(1, Number(c.cupom_atraso_max_rodada) || 12)) };
 }
-function ehReenvio(pedido) { return /^VF-\d{4}-R/i.test(String(pedido || '').trim()); }
+/* v18: + E (etiqueta avulsa do Frete VitaFlow, Painel de Dados) — envio sem venda: fora do "fora do prazo" (sem cupom de atraso), igual ao reenvio */
+function ehReenvio(pedido) { return /^VF-\d{4}-[RE]/i.test(String(pedido || '').trim()); }
 
 /* a MESMA conta da página de rastreio (rastreio-consulta → prazo): a previsão máxima é
    pago + postagem + o maior prazo do estado; depois de postado, 1ª leitura + o maior prazo do estado. */
