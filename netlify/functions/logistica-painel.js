@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v16  ·  08/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v17  ·  08/10/2026
+   v17 (08/10, Thiago: "quero que reenvio tambem envie email para cliente"): desfeitas as 2 travas da v16 — reenvio (R) dividido
+       recebe o e-mail "seu pedido vai em N pacotes" igual a pedido normal, e a aba Duplicados mostra o estado real do e-mail.
    v16 (08/10, pedido do Thiago: o reenvio VF-0710-R002 não foi dividido — GAS v62 passa a criar linha D também para reenvio R):
        · aba Duplicados: linha D de um reenvio mostra "reenvio — sem e-mail dos pacotes" (antes ficaria "ainda não enviado" para sempre);
        · emailPacotes recusa pedido de reenvio (R) — o cliente do reenvio não recebe o e-mail "seu pedido vai em N pacotes".
@@ -1170,7 +1172,6 @@ function duplicadosLista(peds, vistos, emails, agora) {
     else if (reg && reg.estado === 'enviado') mail = 'e-mail dos pacotes enviado' + (reg.ts ? ' em ' + R.ddmm(reg.ts) : '');
     else if (reg && reg.estado === 'aguardando_origem') mail = 'e-mail dos pacotes esperando a origem do envio';
     else if (reg && reg.estado === 'teste') mail = 'e-mail dos pacotes em modo teste (não foi para o cliente)';
-    else if (ehReenvio(p._orig)) mail = 'reenvio — sem e-mail dos pacotes';   /* v16 */
     else if (!p.pai) mail = 'criado à mão — sem e-mail automático dos pacotes';
     else mail = 'e-mail dos pacotes ainda não enviado';
     return { k: p.k, pedido: p.pedido, original: p._orig || '', feito: p.pai ? 'sistema' : 'mao', nome: p.nome || (o && o.nome) || '',
@@ -1436,7 +1437,6 @@ async function emailPacotes(pedido, op) {
   pedido = String(pedido || '').trim().toUpperCase();
   if (!/^VF-\d{4}-[A-Z][A-Z0-9]*$/.test(pedido)) return { ok: false, erro: 'pedido inválido' };
   if (ehRevendedor(pedido)) return { ok: true, enviado: false, motivo: 'revendedor não recebe e-mail' };
-  if (ehReenvio(pedido)) return { ok: true, enviado: false, motivo: 'reenvio não recebe e-mail de pacotes' };   /* v16 */
   var k = R.histKey(pedido);
   var pre = await Promise.all([fbLerOu(RAIZ + '/config'), fbLerOu(RAIZ + '/textos'), fbLerOu(RAIZ + '/email_pacotes/' + k)]);
   var cfg = Object.assign({}, EMAIL_CFG_PADRAO, pre[0] || {}), reg = pre[2] || {};
