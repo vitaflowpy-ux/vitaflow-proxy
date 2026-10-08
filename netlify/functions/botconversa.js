@@ -1,5 +1,9 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v94 (08/10/2026 — conversa real "GDF LHP", 20:02, já dentro do atacado: "Tem tabela em atacado" → "Não encontrei *Tem tabela em
+//   atacado* na nossa tabela de atacado"). Dentro do atacado, mensagem que não achou produto e fala de TABELA / LISTA / CATÁLOGO /
+//   PDF (até 16 palavras) recebe o link da tabela em PDF — a mesma resposta de quando o cliente digita "tabela". A busca de produto
+//   continua vindo primeiro.
 // v93 (08/10/2026 — conversa real do Gustavo, 19:40: "vi que tem promoção de primobolan e gostaria de aproveitar o frete grátis
 //   que ganhei do primeiro pedido" → a Athena respondeu "Não tenho Primobolan disponível" e listou 10 Primobolans).
 //   1) Mensagem que CITA a promoção relâmpago ativa ("promo"/"relâmpago"/"oferta" + o produto dela, ou sem outro produto)
@@ -1756,6 +1760,12 @@ async function atkAbrirBusca(session, sid, termo, respond) {
     // Não é nome de produto, é PERGUNTA ("Protocolo", "como uso isso?"). Antes o cliente
     // levava "Não encontrei Protocolo na tabela de atacado" e sumia (caso real, 08/09).
     // A busca continua tendo prioridade — só cai aqui quando ela não achou nada.
+    // v94: pediu a TABELA com outras palavras ("tem tabela em atacado", "manda a tabela de preços", "tem catálogo?") → manda o PDF.
+    const _tTab = norm(termo || '').replace(/[!?.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (/\b(tabela|tabelas|catalogo|lista de precos?|pdf)\b/.test(_tTab) && _tTab.split(' ').length <= 16) {
+      await saveSession(sid, { ...session, state: 'ATACADO' });
+      return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`);
+    }
     if (ehDuvida(norm(termo)) || ehPedidoProtocoloCompleto(norm(termo))) {
       await saveSession(sid, { ...session, state: 'ATACADO' });
       return await responderComIA(sid, termo, contextoLista(session), respond);
