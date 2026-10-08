@@ -1,5 +1,11 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v92 (08/10/2026 — Thiago: "crie uma promoção relampago para esse produto. Primobolan 100mg - Cooper de 1.499 por 899 somente
+//   hoje até 23h59min ou enquanto durar os estoques"). Religa a PROMO_RELAMPAGO (opção 8 / "promo", menu, saudação, IA) com o
+//   Primobolan 100mg - Cooper Pharma. Campo novo `fim`: a promoção DESLIGA SOZINHA em 08/10 23:59:59 (ninguém precisa mexer).
+//   Campo novo `validade`: com ele, a lista diz "só hoje até 23h59 ou enquanto durarem os estoques" em vez de
+//   "exclusiva comigo (Athena)" (esta promoção também está no site). Cupom continua podendo somar (decisão do Thiago).
+
 // v91 (07/10/2026 — Thiago, depois de três conversas reais: "ela precisa reconhecer melhor todos os dados e parar de ficar pedindo
 //   várias vezes a mesma coisa" · "tô deixando de vender pq ela não reconhece o principal").
 //   1) DADOS DE ENVIO (COLETA_DADOS): lê em qualquer formato (coletaLer). Telefone sozinho não vira mais CPF; resposta solta
@@ -764,15 +770,21 @@ function ehProdutoPromo(item){
 const FIRESTORE_PROJECT = 'pricehub-f0236';
 const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
 
+// v92: Primobolan 100mg - Cooper Pharma, de R$ 1.499 por R$ 899, só 08/10 até 23h59 (ou enquanto durar o estoque).
+// `fim`: depois dessa hora a promoção some sozinha de todos os lugares. Pra desligar antes: ativa:false.
+// (A anterior era a do MyoMax Inibition™, de R$ 1.598 por R$ 999 — já encerrada.)
 const PROMO_RELAMPAGO = {
-  ativa: false,
-  titulo: 'PROMOÇÃO RELÂMPAGO — MyoMax Inibition™',
-  link: 'https://vitaflowoficial.com/products/%F0%9F%94%A5-promocao-2duas-canetas-myomax-inibition-cjc-1295-hgh-frag-folistatin-%F0%9F%94%A5?_pos=2&_psq=Myomax&_ss=e&_v=1.0',
+  ativa: true,
+  fim: '2026-10-08T23:59:59-03:00',
+  validade: 'só hoje até 23h59 ou enquanto durarem os estoques',
+  titulo: 'PROMOÇÃO RELÂMPAGO — Primobolan 100mg Cooper Pharma',
+  link: 'https://vitaflowoficial.com/products/1772046866667-s8ppx',
   produtos: [
-    { nome: 'MyoMax Inibition™ — 2 Canetas 200 IU / 3 mL (Alluvi Healthcare)', de: 1598, por: 999 },
+    { nome: 'Primobolan 100mg - Cooper Pharma', de: 1499, por: 899 },
   ],
 };
 function promoAtiva() {
+  if (PROMO_RELAMPAGO.fim && Date.now() > new Date(PROMO_RELAMPAGO.fim).getTime()) return null;
   return (PROMO_RELAMPAGO.ativa && PROMO_RELAMPAGO.produtos && PROMO_RELAMPAGO.produtos.length) ? PROMO_RELAMPAGO : null;
 }
 function reais(n) { return Number(n || 0).toLocaleString('pt-BR'); }
@@ -1152,7 +1164,7 @@ async function contextoPromo(){
   const rel = promoAtiva();
   if (rel && rel.produtos && rel.produtos.length) {
     const its = rel.produtos.map(p => `${p.nome}: de R$ ${reais(p.de)} por R$ ${reais(p.por)}`).join('; ');
-    linhas.push(`PROMOÇÃO RELÂMPAGO ATIVA AGORA: ${rel.titulo} — ${its}. Link: ${rel.link}`);
+    linhas.push(`PROMOÇÃO RELÂMPAGO ATIVA AGORA: ${rel.titulo} — ${its}${rel.validade ? ' — ' + rel.validade : ''}. Link: ${rel.link}. SEMPRE que o cliente perguntar de promoção/desconto ou demonstrar interesse nesse produto, DIVULGUE esta promoção.`);
   }
   if (PROMO_PRODUTO.ativa && (PROMO_PRODUTO.produtos || []).length) {
     linhas.push(`PROMOÇÃO DO MOMENTO ATIVA AGORA: ${PROMO_PRODUTO.titulo} — ${PROMO_PRODUTO.pct}% OFF em ${(PROMO_PRODUTO.produtos || []).join(', ')}${PROMO_PRODUTO.validade ? ' até ' + PROMO_PRODUTO.validade : ''}.`);
@@ -1251,6 +1263,13 @@ _Desconto nos produtos (varejo), aplicado sozinho no fechamento. Não acumula co
 // Mensagem da "promoção do momento" (opção 8 / "promoção").
 // Prioridade: Semana do Cliente (13-20/09) > Independência > Gênesis > Frete (27-30/09) > sorteio > padrão 3%.
 function msgPromoAtual(){
+  // v92: promoção relâmpago (com hora de fim) — normalmente a opção 8 já abre a lista dela (abrirPromo); aqui é a reserva.
+  const _rel = promoAtiva();
+  if (_rel) {
+    return `⚡ *${_rel.titulo}*${_rel.validade ? ' — ' + _rel.validade : ''}! 🔥\n\n` +
+      _rel.produtos.map(p => `• *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`).join('\n') +
+      `\n\n👉 ${_rel.link}`;
+  }
   if (semanaClienteAtiva()) {
     return MSG_PROMO_SEMANA;
   }
@@ -3826,7 +3845,8 @@ function listaPromoMsg(promo) {
   const linhas = promo.produtos.map((p,i) =>
     `${emojis(i)} *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`
   ).join('\n');
-  return `⚡ *${promo.titulo}* — exclusiva comigo (Athena) e enquanto durarem os estoques! 🔥\n\n` +
+  const _cab = promo.validade ? `⚡ *${promo.titulo}* — ${promo.validade}! 🔥` : `⚡ *${promo.titulo}* — exclusiva comigo (Athena) e enquanto durarem os estoques! 🔥`;
+  return `${_cab}\n\n` +
     `${linhas}\n\n👉 Detalhes: ${promo.link}\n\n*Digite o número do produto para comprar*, ou *menu* para voltar ao início.`;
 }
 async function abrirPromo(session, sid) {
