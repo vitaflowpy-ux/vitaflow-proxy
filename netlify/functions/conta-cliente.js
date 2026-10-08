@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v10  ·  05/10/2026
+   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v11  ·  08/10/2026
+   v11 (08/10 — o reenvio VF-0710-R002 não foi dividido; GAS v62 passa a criar linha D também para reenvio R): o cartão do REENVIO
+       mostra as linhas D dele como pacotes 2, 3… (código de rastreio de cada um), e cada item no pacote certo. Antes: só a linha R.
    v10 (ordem do Thiago, 05/10: "os clientes sejam obrigados a se cadastrar ao realizarem a compra… deixe apenas um botão para o
        caso de alguém não querer"; respostas: senha no carrinho mesmo · e-mail que já tem conta pede a senha, com a saída de
        comprar sem entrar · quem não se cadastra não perde nada; esboço v1 aprovado: "ok, ficou bom. pode publicar"):
@@ -810,8 +812,15 @@ async function montarConta(u, agora, soCompra) {
   /* reenvios (R): cartão próprio, sem valor */
   var saidaReenvios = await Promise.all(reenvios.map(async function (x) {
     var rr = await rastrearLinha(x.linha, I, null);
+    /* v11: reenvio dividido em pacotes (GAS v62 cria linha D com PEDIDO_ORIGINAL = número R) → as linhas D viram os pacotes 2, 3…
+       (mesma ordem do número, igual aos pedidos normais). Item que está no PRODUTOS de uma linha D vai no pacote dela; o resto no 1. */
+    var dsR = (dsDe[x.k] || []).slice().sort(function (a, b) { var pa = cel(a, I.ped), pb = cel(b, I.ped); return pa < pb ? -1 : (pa > pb ? 1 : 0); });
+    var rrD = await Promise.all(dsR.map(function (dl) { return rastrearLinha(dl, I, { estado: rr.estado, cidade: rr.cidade }); }));
+    var pacDe = {};
+    dsR.forEach(function (dl, j) { parseProdutos(cel(dl, I.prod)).forEach(function (it) { pacDe[up(it.nome)] = j + 2; }); });
     return { chave: x.k, principal: x.pedido, reenvio: true, data: x.data.slice(0, 10), data_num: dataNum(x.data),
-      envios: [envioPublico(rr, 1)], itens: parseProdutos(cel(x.linha, I.prod)).map(function (it) { return { qtd: it.qtd, nome: it.nome, de: x.pedido, pacotes: [1] }; }),
+      envios: [rr].concat(rrD).map(function (r, j) { return envioPublico(r, j + 1); }),
+      itens: parseProdutos(cel(x.linha, I.prod)).map(function (it) { return { qtd: it.qtd, nome: it.nome, de: x.pedido, pacotes: [pacDe[up(it.nome)] || 1] }; }),
       itens_em_pacotes: true, avaliacao: { feita: false, pode: false } };
   }));
 
