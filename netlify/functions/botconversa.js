@@ -1,5 +1,9 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v100 (09/10/2026 — DEZ10 "ÚLTIMO DIA", pedido do Thiago: escassez para não deixarem tudo para a última hora).
+//   PROMO_DEZ10.ult = 12/10 00h. A partir daí, todo lugar que dizia "termina em X" passa a dizer "ÚLTIMO DIA — termina hoje
+//   às 23h59 (faltam X)" (dez10Termina()): opção 8/"promo", menu, saudação, dica do cupom de boas-vindas e contexto da IA.
+
 // v99 (09/10/2026 — PROMOÇÃO DEZ10, pedido do Thiago: 15% em todo o site com o cupom DEZ10, de 10/10 00h a 12/10 23h59,
 //   exceto atacado; "não acumulo promoções, então o frete grátis será pausado durante o período"; relógio "termina em").
 //   1) PROMO_DEZ10 (ini/fim): liga e desliga sozinha pela data. Opção 8 / "promo" (msgPromoDez10, com "termina em X"),
@@ -1188,7 +1192,7 @@ async function contextoPromo(){
     linhas.push('FRETE GRÁTIS AUTOMÁTICO (varejo, sem data de fim): em pedidos A PARTIR DE R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' em produtos, o FRETE é GRÁTIS pra todo o Brasil, em qualquer opção de envio (PAC, SEDEX ou Transportadora). É AUTOMÁTICO no fechamento (aqui na Athena e no site) — o cliente NÃO precisa digitar cupom nenhum; NÃO peça nem mencione o cupom FRETEZERO. NÃO ACUMULA com cupom, promoção nem com o benefício de ' + DESCONTO_ATHENA_PCT + '% da Athena: quando o pedido tem outro benefício, o resumo do pedido mostra as DUAS opções (frete grátis OU o desconto) com o valor de cada uma e o CLIENTE escolhe a que preferir. NUNCA diga que o cliente ganha o frete grátis E o desconto juntos. Única exceção: VALE-COMPRAS (é como dinheiro) funciona junto com o frete grátis. Abaixo de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' o frete é cobrado normalmente. No ATACADO a regra é outra (lá o frete já é grátis). REVENDEDORES: o benefício NÃO é concedido a revendedores, que já têm desconto nos produtos (compram pelo portal de revendedores). SEMPRE que o cliente perguntar de frete grátis, promoção ou desconto, explique isso; se o pedido estiver perto de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ', avise quanto falta pro frete sair de graça. SEGURO: o seguro grátis contra apreensão e extravio CONTINUA VALENDO com o frete grátis, desde que o envio seja por TRANSPORTADORA; PAC e SEDEX (Correios) NÃO têm seguro, com ou sem frete grátis — o frete grátis não muda nada nisso. Como a Transportadora também sai grátis nesses pedidos, recomende a Transportadora.');
   }
   if (promoDez10Ativa()) {
-    linhas.push('PROMOÇÃO ATUAL — DEZ10 (10.10 + feriadão, sáb 10/10 00h até seg 12/10 23h59): 15% OFF em TODO o site (VAREJO) com o cupom DEZ10, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo, qualquer quantidade. Termina em ' + tempoRestanteTxt(PROMO_DEZ10.fim) + ' — SEMPRE diga quanto tempo falta quando falar dela. Os produtos do ATACADO NÃO participam (no atacado o benefício continua sendo o frete grátis). NÃO acumula com outros cupons nem promoções (nem com os 3%: vale o maior). Durante a DEZ10 o FRETE GRÁTIS AUTOMÁTICO (pedidos a partir de R$ 1.000) está PAUSADO e volta na terça 13/10 — não ofereça frete grátis no varejo até lá. Produtos com preço especial já têm o desconto no preço (o cupom não pega neles). Não vale para revendedores.');
+    linhas.push('PROMOÇÃO ATUAL — DEZ10 (10.10 + feriadão, sáb 10/10 00h até seg 12/10 23h59): 15% OFF em TODO o site (VAREJO) com o cupom DEZ10, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo, qualquer quantidade. Termina em ' + tempoRestanteTxt(PROMO_DEZ10.fim) + ' — SEMPRE diga quanto tempo falta quando falar dela. Os produtos do ATACADO NÃO participam (no atacado o benefício continua sendo o frete grátis). NÃO acumula com outros cupons nem promoções (nem com os 3%: vale o maior). Durante a DEZ10 o FRETE GRÁTIS AUTOMÁTICO (pedidos a partir de R$ 1.000) está PAUSADO e volta na terça 13/10 — não ofereça frete grátis no varejo até lá. Produtos com preço especial já têm o desconto no preço (o cupom não pega neles). Não vale para revendedores.' + (dez10UltimoDia() ? ' HOJE (segunda, 12/10) É O ÚLTIMO DIA DA DEZ10: termina hoje às 23h59 — diga isso com clareza e incentive a fechar agora, sem deixar para a última hora.' : ''));
   } else if (promoIndepAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — INDEPENDÊNCIA 9.9 (07 a 09/09): 15% OFF em TODO o site (varejo) com o cupom INDEPENDENCIA99, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo, qualquer quantidade. NÃO vale no atacado. NÃO acumula com outros cupons ou promoções nem com o benefício de 3% da Athena — vale sempre o MAIOR (os 15% do cupom vencem os 3%). SEMPRE que o cliente perguntar de promoção/desconto, DIVULGUE a Independência 9.9 e diga pra usar o cupom INDEPENDENCIA99 no fechamento. ALGUNS produtos já estão com PREÇO ESPECIAL de 9.9 e por isso NÃO aceitam o cupom (o desconto já está no preço) — se o cliente disser que o cupom não pegou num produto, explique que esse item já está com preço promocional especial. NÃO fale de frete grátis/FRETEZERO nem "Compre 2 Leve 3" (não estão ativos).');
   } else if (promoFreteAtiva()) {
@@ -1293,8 +1297,15 @@ _Alguns produtos já saem com preço especial de 9.9 — nesses, o cupom não é
 // ── v99: DEZ10 — 15% OFF em todo o site (varejo) com o cupom DEZ10, de sáb 10/10 00h a seg 12/10 23h59 ──
 // Liga e desliga sozinha pela data. Atacado NÃO participa. O frete grátis automático fica pausado na mesma janela
 // (FRETE_GRATIS_AUTO.pausas). Cupom validado pelo Firestore (validarCupom) + início em CUPOM_INICIO.
-const PROMO_DEZ10 = { ativa: true, cupom: 'DEZ10', pct: 15, ini: '2026-10-10T00:00:00-03:00', fim: '2026-10-12T23:59:59-03:00' };
+const PROMO_DEZ10 = { ativa: true, cupom: 'DEZ10', pct: 15, ini: '2026-10-10T00:00:00-03:00', ult: '2026-10-12T00:00:00-03:00', fim: '2026-10-12T23:59:59-03:00' };
 function promoDez10Ativa(){ return PROMO_DEZ10.ativa && Date.now() >= new Date(PROMO_DEZ10.ini).getTime() && Date.now() <= new Date(PROMO_DEZ10.fim).getTime(); }
+function dez10UltimoDia(){ return promoDez10Ativa() && Date.now() >= new Date(PROMO_DEZ10.ult).getTime(); }
+// v100: texto do prazo — normal: "termina em *X*"; no último dia: "*ÚLTIMO DIA* — termina *hoje às 23h59* (faltam X)"
+function dez10Termina(){
+  return dez10UltimoDia()
+    ? `*ÚLTIMO DIA* — termina *hoje às 23h59* (faltam ${tempoRestanteTxt(PROMO_DEZ10.fim)})`
+    : `termina em *${tempoRestanteTxt(PROMO_DEZ10.fim)}*`;
+}
 // "2 dias, 5 h e 12 min" / "5 h e 12 min" / "12 min" até o fim (texto para o cliente)
 function tempoRestanteTxt(fimIso){
   let ms = new Date(fimIso).getTime() - Date.now();
@@ -1312,7 +1323,7 @@ function msgPromoDez10(){
 O *10.10* chegou junto com o feriadão — e a VitaFlow te dá *15% de desconto* em qualquer produto do varejo! 💚
 
 🏷️ É só usar o cupom *DEZ10* no fechamento (aqui comigo ou no site).
-⏰ *Termina em ${tempoRestanteTxt(PROMO_DEZ10.fim)}* — vale até *segunda (12/10) às 23h59*.
+${dez10UltimoDia() ? `⏰ *HOJE É O ÚLTIMO DIA!* Termina *hoje às 23h59* — faltam *${tempoRestanteTxt(PROMO_DEZ10.fim)}*.` : `⏰ *Termina em ${tempoRestanteTxt(PROMO_DEZ10.fim)}* — vale até *segunda (12/10) às 23h59*.`}
 
 🏭 *Os produtos do atacado não participam desta promoção.*
 
@@ -1917,7 +1928,7 @@ function buildMenuPrincipal() {
   if (promoDez10Ativa()) {
     menu += `
 
-🔥 *DEZ10 ATIVA! 15% OFF em todo o site* com o cupom *DEZ10* — termina em *${tempoRestanteTxt(PROMO_DEZ10.fim)}*. Não vale no atacado. Digite *promo* ou escolha a *opção 8*.`;
+🔥 *DEZ10 ATIVA! 15% OFF em todo o site* com o cupom *DEZ10* — ${dez10Termina()}. Não vale no atacado. Digite *promo* ou escolha a *opção 8*.`;
   }
   // v89: frete grátis automático (sem data de fim) — aviso fixo no menu enquanto FRETE_GRATIS_AUTO.ativo
   if (freteGratisAutoAtivo() && !promoFreteAtiva()) {
@@ -1963,7 +1974,7 @@ function buildTriagem() {
   const promo = promoAtiva();
   if (promo) m += `\n\n🚨 *${promo.titulo} ATIVA!* (dentro da opção *1* → Promoção do momento) ⚡`;
   // v99: DEZ10 na saudação
-  if (promoDez10Ativa()) m += `\n\n🔥 *DEZ10: 15% OFF em todo o site* com o cupom *DEZ10* — termina em *${tempoRestanteTxt(PROMO_DEZ10.fim)}*! _(não vale no atacado)_`;
+  if (promoDez10Ativa()) m += `\n\n🔥 *DEZ10: 15% OFF em todo o site* com o cupom *DEZ10* — ${dez10Termina()}! _(não vale no atacado)_`;
   // v89: frete grátis automático também na saudação (é a primeira tela que o cliente vê)
   if (freteGratisAutoAtivo()) m += `\n\n🚚 *FRETE GRÁTIS* em pedidos a partir de *R$ ${reais(FRETE_GRATIS_AUTO.min)}* — automático, sem cupom. 🎉`;
   m += `\n\n🎁 *No varejo comigo você tem 3% de desconto — e no atacado o frete é grátis!* 🏭`;
@@ -2248,7 +2259,7 @@ function msgCupomBoasVindas(cupom){
   // A gente avisa e transforma isso em motivo pra uma SEGUNDA compra dentro da validade.
   if (typeof promoDez10Ativa === 'function' && promoDez10Ativa()) {
     linhas.push('');
-    linhas.push(`💡 *Dica:* a *DEZ10* está rolando com *15% OFF* (cupom *DEZ10*, termina em *${tempoRestanteTxt(PROMO_DEZ10.fim)}*) e é melhor que o seu. Aproveita ela agora — e o seu cupom de boas-vindas fica guardado pra uma *segunda compra* dentro da validade. 😉`);
+    linhas.push(`💡 *Dica:* a *DEZ10* está rolando com *15% OFF* (cupom *DEZ10*, ${dez10Termina()}) e é melhor que o seu. Aproveita ela agora — e o seu cupom de boas-vindas fica guardado pra uma *segunda compra* dentro da validade. 😉`);
   } else if (typeof promoIndepAtiva === 'function' && promoIndepAtiva()) {
     linhas.push('');
     linhas.push(`💡 *Dica:* a *Independência 9.9* está rolando com *15% OFF* (cupom *INDEPENDENCIA99*) e é melhor que o seu. Aproveita ela agora — e o seu cupom de boas-vindas fica guardado pra uma *segunda compra* dentro da validade. 😉`);
