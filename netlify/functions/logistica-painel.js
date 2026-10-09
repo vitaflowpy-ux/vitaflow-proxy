@@ -245,6 +245,18 @@ function frasesAviso(t) {
   });
   return frases;
 }
+/* v19 (09/10/2026): e-mail ao cliente sai como documento HTML completo com viewport de celular.
+   Sem o <meta viewport>, o app do Gmail no Android "infla" as letras pequenas (texto gigante, layout espremido). */
+function emailDocMobile(corpo) {
+  return '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<meta name="x-apple-disable-message-reformatting"><meta name="format-detection" content="telephone=no,address=no,email=no,date=no">' +
+    '<title>VitaFlow</title>' +
+    '<style>html,body{margin:0;padding:0;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;text-size-adjust:100%}</style>' +
+    '</head><body style="margin:0;padding:0;background:#eceff3;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;text-size-adjust:100%">' +
+    corpo +
+    '</body></html>';
+}
 function htmlEmail(texto, destaque) {
   var pars = String(texto || '').split(/\n{2,}/).map(function (p) {
     var h = escH(p).replace(/\n/g, '<br>').replace(/vitaflowoficial\.com\/pages\/rastrear-pedido/g,
@@ -265,14 +277,14 @@ function htmlEmail(texto, destaque) {
     }
     return '<p style="margin:0 0 14px;font-size:15px;color:#41506a;line-height:1.65">' + h + '</p>';
   }).join('');
-  return '<div style="background:#eceff3;padding:20px 10px;font-family:Arial,Helvetica,sans-serif">' +
+  return emailDocMobile('<div style="background:#eceff3;padding:20px 10px;font-family:Arial,Helvetica,sans-serif">' +
     '<table role="presentation" align="center" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden">' +
     '<tr><td style="background:#0D1B2E;padding:24px 20px 20px;text-align:center">' +
     '<div style="height:4px;width:52px;margin:0 auto 14px;background:#F5A623;border-radius:2px"></div>' +
     '<img src="' + LOGO + '" alt="VitaFlow" width="170" style="display:inline-block;width:170px;max-width:60%;height:auto;border:0"></td></tr>' +
     '<tr><td style="padding:26px 22px 10px">' + pars + '</td></tr>' +
     '<tr><td style="padding:0 22px 24px"><a href="' + RASTREIO_URL + '" style="display:block;text-align:center;background:#F5A623;color:#0D1B2E;text-decoration:none;font-size:16px;font-weight:800;padding:15px 10px;border-radius:10px">&#128269; Rastrear pedido</a></td></tr>' +
-    '</table></div>';
+    '</table></div>');
 }
 
 /* Brevo (API transacional) — a mesma conta/remetente do Apps Script */
