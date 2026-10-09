@@ -4652,6 +4652,85 @@ async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReai
     return d?.url || null;
   } catch { return null; }
 }
+// ── BRAS PAY (09/10/2026) — PIX NA CONTA NOVA ────────────────────────────────
+// O Pix passou para a Bras Pay; a InfinitePay continua com o cartão e como Pix reserva (o link vai junto).
+// A chave fica no Netlify (env BRASPAY_API_KEY) — nunca no código. O pagamento é confirmado pelo
+// webhook da Bras Pay → função braspay → GAS, no MESMO formato da InfinitePay (order_nsu + capture_method 'pix'),
+// então o GAS manda o cliente para COLETA_DADOS igual sempre fez.
+// Referência = número do pedido. Pix novo do MESMO pedido (o anterior venceu ou o valor mudou) = "<pedido>~<sufixo>".
+const BRASPAY_API = 'https://api.braspay.com.py/api/v1/gateway/cobrancas';
+const BRASPAY_FN  = 'https://vitaflow-proxy.netlify.app/.netlify/functions/braspay';
+const PIX_VALIDADE_ATHENA_SEG = 86400;   // 24 h
+async function gerarPixBraspay(orderNsu, totalReais, novaRef) {
+  const key = process.env.BRASPAY_API_KEY || '';
+  const valor = Math.round((Number(totalReais) || 0) * 100);
+  if (!key || !orderNsu || valor < 100) return null;
+  const base = String(orderNsu).split('~')[0];
+  async function tentar(ref) {
+    const r = await fetchT(BRASPAY_API, {
+      method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + key },
+      body: JSON.stringify({ meioPagamento:'pix', valorCentavos: valor, referenciaExterna: ref, descricao: 'Pedido ' + base, expiraEmSegundos: PIX_VALIDADE_ATHENA_SEG })
+    }, 8000);
+    let d = null; try { d = await r.json(); } catch (e) { d = null; }
+    return { status: r.status, d: d || {} };
+  }
+  try {
+    let ref = novaRef ? base + '~' + Date.now().toString(36) : base;
+    let t = await tentar(ref);
+    if (t.status === 409) { ref = base + '~' + Date.now().toString(36); t = await tentar(ref); }
+    if ((t.status === 200 || t.status === 201) && t.d.brCode) {
+      return { code: String(t.d.brCode), id: t.d.id || '', ref: ref, expiraEm: t.d.expiraEm || '' };
+    }
+    if (t.d && t.d.erro === 'limite_mensal_excedido') {
+      await enviarTelegram(`⚠️ BRAS PAY — limite mensal de Pix atingido. Pedido ${base} foi só com o link da InfinitePay.`);
+    }
+    return null;
+  } catch (e) { return null; }
+}
+// Pix da sessão ainda válido? Se venceu (ou não existe), gera outro do MESMO pedido. Devolve {pix, mudou}.
+async function pixDaSessao(session) {
+  if (!session || !session.orderNsu) return { pix: null, mudou: false };
+  const exp = session.pixExpira ? Date.parse(session.pixExpira) : 0;
+  if (session.pixCode && exp && exp - Date.now() > 10 * 60 * 1000 && session.pixValor === Math.round((session.total || 0) * 100)) {
+    return { pix: { code: session.pixCode, ref: session.pixRef, expiraEm: session.pixExpira }, mudou: false };
+  }
+  const novo = await gerarPixBraspay(session.orderNsu, session.total || 0, !!session.pixRef);
+  return { pix: novo, mudou: !!novo };
+}
+function camposPixSessao(pix, totalReais) {
+  if (!pix) return { pixCode: null, pixRef: null, pixExpira: null, pixValor: null };
+  return { pixCode: pix.code, pixRef: pix.ref, pixExpira: pix.expiraEm || '', pixValor: Math.round((Number(totalReais) || 0) * 100) };
+}
+// Texto do bloco de pagamento. `separado` = o código Pix vai numa mensagem só dele (Athena, envio direto).
+function blocoPagamento(pix, link, separado) {
+  let t = '';
+  if (pix) {
+    t += `⚡ *PIX (copia e cola)* — ${separado ? 'o código vai na *próxima mensagem*' : 'o código está *logo abaixo*'}. ` +
+         `É só copiar e colar no app do seu banco: *Pix → Pix copia e cola*. _(Vale por 24 h.)_\n\n`;
+    if (link) t += `💳 *Prefere cartão em até 12x (ou Pix pela InfinitePay)?*\n${link}\n\n${AVISO_RECEBEDOR}\n\n`;
+  } else if (link) {
+    t += `💳 *Link de pagamento:*\n${link}\n\n${AVISO_RECEBEDOR}\n\n`;
+  }
+  return t;
+}
+// Envia vários textos em mensagens separadas (Athena, canal direto). Stella / falha → junta numa só.
+// Uma mensagem só (sem Pix) → mantém o comportamento de antes: `diretoSeUma` = envio direto (como o link do pedido), senão resposta normal.
+async function responderDiretoMulti(sid, textos, respond, assistente, diretoSeUma) {
+  const lista = (textos || []).filter(Boolean);
+  if (lista.length < 2) return diretoSeUma ? await responderDireto(sid, lista[0] || '', respond, assistente) : respond(lista[0] || '');
+  if (assistente && assistente !== 'Athena') return respond(lista.join('\n\n'));
+  const ok = await enviarWhatsAppDireto(sid, lista);
+  return ok ? respond('') : respond(lista.join('\n\n'));
+}
+// Cliente diz que pagou: pergunta à Bras Pay (a função braspay já confirma no GAS se estiver pago).
+async function pixJaPago(session) {
+  if (!session || !session.pixRef) return false;
+  try {
+    const r = await fetchT(BRASPAY_FN + '?ref=' + encodeURIComponent(session.pixRef), { method:'GET' }, 9000);
+    const d = await r.json();
+    return !!(d && d.ok && d.status === 'pago');
+  } catch (e) { return false; }
+}
 // Número de contingência no MESMO formato do GAS (VF-DDMM-AX<HHmm> / atacado VF-DDMM-WX<HHmm>, fuso de São Paulo).
 // Usado SÓ quando o GAS não responde — assim a InfinitePay NUNCA carimba um UUID no pedido.
 function numeroContingenciaAthena(tipo) {
@@ -4773,7 +4852,11 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
       });
     } catch {}
   }
-  const link = await gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais + descontoPromo);
+  // 09/10/2026: Pix na Bras Pay + link da InfinitePay (cartão / Pix reserva), gerados ao mesmo tempo.
+  const [link, pix] = await Promise.all([
+    gerarLinkInfinitePay(carrinho, frete.valor, orderNsu, descontoReais + descontoPromo),
+    gerarPixBraspay(orderNsu, totalFinal, false)
+  ]);
   try {
     const pKey = `pending_${sid.replace(/[^a-zA-Z0-9]/g,'_')}`;
     await fetch(fbUrl(`/vitaflow_pending_orders/${pKey}.json`), {
@@ -4787,13 +4870,14 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
         descontoReais: descontoReais, descontoPromo: descontoPromo, descontoLabel: session.descontoLabel || '',
         descontoTipo: session.descontoTipo || '', cupomDocId: session.cupomDocId || null,
         cupomCodigo: session.cupomCodigo || null, link: link || '', brinde: session.brinde || null,
+        pix: pix ? pix.code : '', pix_ref: pix ? pix.ref : '',
         observacao: session.obsCliente || '',
         atacado: !!session.atacado   // o GAS usa isso pra escolher o texto do lembrete (3h/20h)
       })
     });
   } catch {}
   const itensTxt = carrinho.map(i => `🛒 ${i.nome} x${i.qtd}`).join('\n');
-  await enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}${session.brinde ? `\n🎁 Brinde (3º grátis): ${session.brinde}` : ''}${session.obsCliente ? `\n📝 Obs: ${session.obsCliente}` : ''}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`);
+  await enviarTelegram(`🟡 *PEDIDO EM ABERTO (Athena)*\n\n📦 ${orderNsu || '—'}\n${itensTxt}${session.brinde ? `\n🎁 Brinde (3º grátis): ${session.brinde}` : ''}${session.obsCliente ? `\n📝 Obs: ${session.obsCliente}` : ''}\n🚚 ${frete.label} — ${uf}\n💰 R$ ${totalFinal.toFixed(2).replace('.',',')}\n📱 ${sid}\n💳 ${pix ? 'Pix Bras Pay + link InfinitePay' : 'Só link InfinitePay (Pix Bras Pay não gerou)'}\n\n⏳ Link gerado. Aguardando pagamento/confirmação do cliente.`);
   try {
     await fetch(GAS_URL, {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -4803,10 +4887,15 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
         valor: totalFinal.toFixed(2).replace('.',','), phone: sid })
     });
   } catch {}
-  await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, link: link || '', cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
-  return await responderDireto(sid, link
-    ? `✅ *Pedido gerado!*${infoDesconto}${session.atacado ? '\n\n' + AVISO_ATACADO_MOMENTO : ''}\n\n💳 *Link de pagamento:*\n${link}\n\n${AVISO_RECEBEDOR}\n\n_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão — é só escolher lá. (Quer ver os valores das parcelas antes? Digite *parcelar*.)_\n\n_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`
-    : `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond, assistente);
+  await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, orderNsu, link: link || '', ...camposPixSessao(pix, totalFinal), cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
+  if (!link && !pix) return await responderDireto(sid, `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond, assistente);
+  const separado = !(assistente && assistente !== 'Athena');
+  const principal =
+    `✅ *Pedido gerado!*${infoDesconto}${session.atacado ? '\n\n' + AVISO_ATACADO_MOMENTO : ''}\n\n` +
+    blocoPagamento(pix, link, separado) +
+    (pix ? '' : `_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão — é só escolher lá. (Quer ver os valores das parcelas antes? Digite *parcelar*.)_\n\n`) +
+    `_Assim que você concluir o pagamento, *eu confirmo automaticamente aqui* — não precisa enviar comprovante nem avisar._ 😊\n\nEm seguida eu já te chamo pra pegar os dados de envio. 🚀`;
+  return await responderDiretoMulti(sid, [principal, pix ? pix.code : ''], respond, assistente, true);
 }
 // Leitor determinístico de reserva — funciona mesmo se a IA falhar.
 // Detecta CPF (11 dígitos), CEP (8 dígitos / 00000-000), telefone (10-11 díg.), email,
@@ -5798,22 +5887,27 @@ exports.handler = async (event) => {
         const totalPend = (typeof pend.total === 'number') ? pend.total : (parseFloat(pend.valor) || 0);
         const estadoPend = pend.estado || pend.estadoCliente || session.estadoCliente || '';
         // link NOVO pro MESMO order_nsu (não duplica pedido; mesmo padrão da negociação)
-        const novoLink = await gerarLinkInfinitePay(carrinho, frete.valor || 0, pend.order_nsu, desc + descPromo);
-        await salvarPendingMerge(pend.pKey, { link: novoLink || pend.link || '' });
+        const [novoLink, novoPix] = await Promise.all([
+          gerarLinkInfinitePay(carrinho, frete.valor || 0, pend.order_nsu, desc + descPromo),
+          gerarPixBraspay(pend.order_nsu, totalPend, true)
+        ]);
+        await salvarPendingMerge(pend.pKey, { link: novoLink || pend.link || '', pix: novoPix ? novoPix.code : '', pix_ref: novoPix ? novoPix.ref : '' });
         await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', carrinho, freteSelecionado: frete,
           estadoCliente: estadoPend, total: totalPend, descontoReais: desc, descontoPromo: descPromo,
           descontoLabel: pend.descontoLabel || '', descontoTipo: pend.descontoTipo || '',
-          orderNsu: pend.order_nsu, link: novoLink || pend.link || '',
+          orderNsu: pend.order_nsu, link: novoLink || pend.link || '', ...camposPixSessao(novoPix, totalPend),
           cupomDocId: pend.cupomDocId || null, cupomCodigo: pend.cupomCodigo || null });
         await enviarTelegram(`🔁 *RECUPERAÇÃO — Quero finalizar*\n📦 ${pend.order_nsu||'—'}\n📱 ${sid}\n💳 Link novo gerado`);
-        return respond(
-          `Que bom que você voltou! 🙌 Já *renovei seu link de pagamento* (o anterior podia ter expirado):\n\n` +
+        return await responderDiretoMulti(sid, [
+          `Que bom que você voltou! 🙌 Já *renovei seu pagamento* (o anterior podia ter expirado):\n\n` +
           `${resumoCarrinho(carrinho)}\n` +
           `🚚 ${frete.label || 'Frete'}${estadoPend ? ' — ' + estadoPend : ''}\n` +
           `💰 *Total: R$ ${totalPend.toFixed(2).replace('.',',')}*\n\n` +
-          (novoLink ? `💳 *Link atualizado:*\n${novoLink}\n\n${AVISO_RECEBEDOR}\n\n` : '') +
-          `_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão. Assim que você pagar, *eu confirmo automaticamente aqui* e já sigo com seu envio._ 🚀`
-        );
+          blocoPagamento(novoPix, novoLink, nomeAssistente === 'Athena') +
+          (novoPix ? '' : `_No link você paga *à vista no Pix (sem juros)* ou *parcela em até 12x* no cartão. `) +
+          (novoPix ? `_Assim que você pagar, *eu confirmo automaticamente aqui* e já sigo com seu envio._ 🚀` : `Assim que você pagar, *eu confirmo automaticamente aqui* e já sigo com seu envio._ 🚀`),
+          novoPix ? novoPix.code : ''
+        ], respond, nomeAssistente);
       }
       // sem pedido salvo (carrinho do site, ou link já limpo): se a sessão ainda tem carrinho, vai pro checkout; senão, menu.
       if (Array.isArray(session.carrinho) && session.carrinho.length) {
@@ -5927,21 +6021,25 @@ exports.handler = async (event) => {
         if (totalProd > 0 && baseNeg > 0) {
           const novoDesc = baseNeg * (NEGOCIACAO_PCT_TOTAL/100); // 5% sobre o subtotal descontável (bloqueados fora)
           const novoTotal = totalProd - novoDesc + (frete.valor||0);
-          const novoLink = await gerarLinkInfinitePay(carrinho, frete.valor, pend.order_nsu, novoDesc);
+          const [novoLink, novoPix] = await Promise.all([
+            gerarLinkInfinitePay(carrinho, frete.valor, pend.order_nsu, novoDesc),
+            gerarPixBraspay(pend.order_nsu, novoTotal, true)
+          ]);
           const lbl = `Desconto especial (-${NEGOCIACAO_PCT_TOTAL}%)`;
-          await salvarPendingMerge(pend.pKey, { negociado:true, descontoReais:novoDesc, descontoLabel:lbl, total:novoTotal, link: novoLink || pend.link || '' });
-          await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', carrinho, freteSelecionado:frete, estadoCliente: pend.estado || session.estadoCliente, total:novoTotal, descontoReais:novoDesc, descontoLabel:lbl, descontoTipo:'athena', orderNsu:pend.order_nsu, link: novoLink || pend.link || '', cupomDocId:null, cupomCodigo:null });
+          await salvarPendingMerge(pend.pKey, { negociado:true, descontoReais:novoDesc, descontoLabel:lbl, total:novoTotal, link: novoLink || pend.link || '', pix: novoPix ? novoPix.code : '', pix_ref: novoPix ? novoPix.ref : '' });
+          await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', carrinho, freteSelecionado:frete, estadoCliente: pend.estado || session.estadoCliente, total:novoTotal, descontoReais:novoDesc, descontoLabel:lbl, descontoTipo:'athena', orderNsu:pend.order_nsu, link: novoLink || pend.link || '', ...camposPixSessao(novoPix, novoTotal), cupomDocId:null, cupomCodigo:null });
           await enviarTelegram(`🤝 *NEGOCIAÇÃO (Athena)*\n📦 ${pend.order_nsu||'—'}\n📱 ${sid}\n💸 Desconto especial ${NEGOCIACAO_PCT_TOTAL}% → R$ ${novoTotal.toFixed(2).replace('.',',')}`);
-          return respond(
+          return await responderDiretoMulti(sid, [
             `Olha, vou fazer uma condição ESPECIAL pra você fechar agora comigo! 🤝\n\n` +
             `Consegui liberar *${NEGOCIACAO_PCT_TOTAL}% de desconto* — o máximo que posso dar — no seu pedido:\n\n` +
             `${resumoCarrinho(carrinho)}\n` +
             `🚚 ${frete.label||'Frete'} — ${pend.estado||''}\n` +
             `🏷️ ${lbl}\n` +
             `💰 *Novo total: R$ ${novoTotal.toFixed(2).replace('.',',')}*\n\n` +
-            (novoLink ? `💳 *Link atualizado com o desconto:*\n${novoLink}\n\n${AVISO_RECEBEDOR}\n\n` : '') +
-            `_Assim que você pagar, *eu confirmo automaticamente aqui* e já sigo com seu envio — não precisa enviar comprovante._ 🚀`
-          );
+            blocoPagamento(novoPix, novoLink, nomeAssistente === 'Athena') +
+            `_Assim que você pagar, *eu confirmo automaticamente aqui* e já sigo com seu envio — não precisa enviar comprovante._ 🚀`,
+            novoPix ? novoPix.code : ''
+          ], respond, nomeAssistente);
         }
       }
       // sem pedido elegível (cupom maior, promoção, ou já negociado) → segue o fluxo normal
@@ -7053,6 +7151,25 @@ exports.handler = async (event) => {
         );
       }
 
+      if (dizQuePagou && session.pixRef && await pixJaPago(session)) {
+        // A Bras Pay diz que está pago: a função braspay já confirmou no GAS — em instantes chega o pedido de dados.
+        await saveSession(sid, { ...session, insistPagou: 0 });
+        return respond(`✅ *Pagamento localizado!* Obrigada! 🧡\n\nEm instantes eu te chamo aqui pra pegar os *dados de envio*. 🚀`);
+      }
+      // Pediu o Pix / o código / a chave → manda o copia e cola de novo (gera outro se venceu)
+      const _pedePix = !dizQuePagou && /\bpix\b|copia e cola|copia-e-cola|copia cola|qr ?code|codigo do pagamento|código do pagamento|chave/.test(n);
+      if (_pedePix && session.orderNsu) {
+        const { pix: _px, mudou: _mud } = await pixDaSessao(session);
+        if (_px) {
+          if (_mud) await saveSession(sid, { ...session, ...camposPixSessao(_px, session.total || 0) });
+          return await responderDiretoMulti(sid, [
+            `⚡ Aqui está o *Pix copia e cola* do seu pedido (R$ ${(session.total || 0).toFixed(2).replace('.',',')}). ` +
+            `${nomeAssistente === 'Athena' ? 'O código vai na *próxima mensagem*' : 'O código está *logo abaixo*'}: é só copiar e colar no app do seu banco (*Pix → Pix copia e cola*).`,
+            _px.code
+          ], respond, nomeAssistente);
+        }
+      }
+
       if (dizQuePagou) {
         const insist = (session.insistPagou || 0) + 1;
         if (insist >= 2) {
@@ -7078,15 +7195,17 @@ exports.handler = async (event) => {
 
       // Mensagem padrão de pedido em aberto (não fala em "digite SIM" — só o pagamento confirma).
       // Reenvia o LINK salvo na sessão, pra "cadê o link?" sempre devolver o link.
-      const _linkPend = session.link ? `💳 *Link de pagamento:*\n${session.link}\n\n${AVISO_RECEBEDOR}\n\n` : '';
-      return respond(
+      const { pix: _pxPend, mudou: _mudPend } = await pixDaSessao(session);
+      if (_mudPend) await saveSession(sid, { ...session, ...camposPixSessao(_pxPend, totalPend) });
+      return await responderDiretoMulti(sid, [
         `⏳ Você tem um pedido em aberto aguardando pagamento:\n\n` +
         `${resumoCarrinho(carrinhoPend)}\n` +
         `💰 *R$ ${totalPend.toFixed(2).replace(".",",")}*\n\n` +
-        _linkPend +
-        `É só concluir o pagamento pelo seu link — assim que cair, *eu confirmo automaticamente aqui* e já pego seus dados de envio. 🚀\n\n` +
-        `Se quiser cancelar e começar do zero, digite *menu*. 😊`
-      );
+        blocoPagamento(_pxPend, session.link || '', nomeAssistente === 'Athena') +
+        `É só concluir o pagamento${_pxPend ? '' : ' pelo seu link'} — assim que cair, *eu confirmo automaticamente aqui* e já pego seus dados de envio. 🚀\n\n` +
+        `Se quiser cancelar e começar do zero, digite *menu*. 😊`,
+        _pxPend ? _pxPend.code : ''
+      ], respond, nomeAssistente);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
