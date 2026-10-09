@@ -4706,7 +4706,7 @@ function blocoPagamento(pix, link, separado) {
   let t = '';
   if (pix) {
     t += `⚡ *PIX (copia e cola)* — ${separado ? 'o código vai na *próxima mensagem*' : 'o código está *logo abaixo*'}. ` +
-         `É só copiar e colar no app do seu banco: *Pix → Pix copia e cola*. _(Vale por 24 h.)_\n\n`;
+         `É só copiar e colar no app do seu banco: *Pix → Pix copia e cola*. No banco, o recebedor aparece como *Bras Serviços* (nossa intermediadora de pagamentos). _(Vale por 24 h.)_\n\n`;
     if (link) t += `💳 *Prefere cartão em até 12x (ou Pix pela InfinitePay)?*\n${link}\n\n${AVISO_RECEBEDOR}\n\n`;
   } else if (link) {
     t += `💳 *Link de pagamento:*\n${link}\n\n${AVISO_RECEBEDOR}\n\n`;
