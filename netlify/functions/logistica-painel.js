@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v18  ·  08/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v19  ·  11/10/2026
+   v19 (11/10, Thiago: "da Geovanna já sabemos a origem, pq está ali então?"): na aba Duplicados, o aviso "e-mail dos pacotes esperando
+       a origem" passa a dizer QUAL pacote está sem origem (ex.: "…esperando a origem do pacote VF-1010-S022 (Daniel)"). Só texto.
    v18 (08/10): pedido E (etiqueta avulsa criada no Frete VitaFlow do Painel de Dados) tratado como o reenvio R em ehReenvio
        → fora do "fora do prazo" (não ganha cupom/e-mail de atraso).
    v17 (08/10, Thiago: "quero que reenvio tambem envie email para cliente"): desfeitas as 2 travas da v16 — reenvio (R) dividido
@@ -1184,7 +1186,16 @@ function duplicadosLista(peds, vistos, emails, agora) {
     var reg = p._orig ? E[R.histKey(p._orig)] : null, mail = '';
     if (ehRevendedor(p._orig || p.pedido)) mail = 'revendedor — não recebe e-mail';
     else if (reg && reg.estado === 'enviado') mail = 'e-mail dos pacotes enviado' + (reg.ts ? ' em ' + R.ddmm(reg.ts) : '');
-    else if (reg && reg.estado === 'aguardando_origem') mail = 'e-mail dos pacotes esperando a origem do envio';
+    else if (reg && reg.estado === 'aguardando_origem') {
+      /* v19 (11/10, Thiago): diz QUAL pacote segura o e-mail — mesma regra do lerPacotes: coluna ORIGEM; vazia → origemEnvio (Daniel = ainda não se sabe) */
+      var semOrig = (o ? [o] : []).concat(filhosDe[p._orig] || []).filter(function (x) {
+        var og = String(x.origCol || '').toUpperCase();
+        if (ORIGEM_NOME[og]) return false;
+        og = R.origemEnvio(p._orig, linhasForn(x.fornTxt)[0] || '');
+        return !ORIGEM_NOME[og];
+      }).map(function (x) { return x.pedido + (x.forn ? ' (' + x.forn + ')' : ''); });
+      mail = semOrig.length ? ('e-mail dos pacotes esperando a origem do pacote ' + semOrig.join(', ')) : 'e-mail dos pacotes esperando a origem do envio';
+    }
     else if (reg && reg.estado === 'teste') mail = 'e-mail dos pacotes em modo teste (não foi para o cliente)';
     else if (!p.pai) mail = 'criado à mão — sem e-mail automático dos pacotes';
     else mail = 'e-mail dos pacotes ainda não enviado';
