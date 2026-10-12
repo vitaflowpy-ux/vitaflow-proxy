@@ -1,5 +1,9 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v102 (12/10/2026): DADOS DE ENVIO SEM MARCAS DO WHATSAPP. Cliente mandou nome/e-mail/rua/bairro/cidade em negrito
+//   (*Fulano*) e a Athena gravou com os asteriscos (VF-1210-A001: e-mail '*x@gmail.com*' invalido -> Brevo nao entregou).
+//   coletaLer agora passa TODO valor por _semMarcasWhats (tira * ~ ` e o _ que envolve o valor inteiro), inclusive o que ja
+//   estava salvo na sessao. Mesma limpeza no GAS v68 (protecao ao gravar a linha).
 // v101 (09/10/2026): tirado o "frete grátis volta na terça (13/10)" dos textos ao cliente e do contexto da IA (pedido do Thiago).
 
 // v100 (09/10/2026 — DEZ10 "ÚLTIMO DIA", pedido do Thiago: escassez para não deixarem tudo para a última hora).
@@ -5339,12 +5343,22 @@ function coletaEncaixar(mensagem, coleta, faltam) {
 }
 // Lê a mensagem e devolve: `coleta` (só o que o cliente informou — é o que fica guardado na sessão),
 // `completa` (com o telefone do WhatsApp e o estado do frete quando ele não informou) e `ganhou` (campos novos).
+// v102: tira a formatacao do WhatsApp de um dado (*negrito*, ~riscado~, `mono`, _italico_ envolvendo o valor inteiro).
+// O _ do meio fica (e-mail pode ter joao_silva@...).
+function _semMarcasWhats(v) {
+  if (v == null) return v;
+  let s = String(v).replace(/[*~`]/g, '');
+  const m = s.match(/^\s*_+([\s\S]*?)_+\s*$/);
+  if (m) s = m[1];
+  return s.replace(/\s{2,}/g, ' ').trim();
+}
 async function coletaLer(mensagem, coletaAntes, sid, session) {
   const coleta = Object.assign({}, coletaAntes || {});
+  Object.keys(coleta).forEach(function (k) { if (typeof coleta[k] === 'string') coleta[k] = _semMarcasWhats(coleta[k]); });   // v102: limpa o que ja estava salvo
   const antes = Object.assign({}, coleta);
   const poe = function (k, v) {
     if (v == null) return;
-    v = String(v).trim();
+    v = _semMarcasWhats(v);   // v102
     if (v.length >= 1 && !coleta[k]) coleta[k] = v;
   };
   const limpa = function () {
