@@ -1,5 +1,14 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// BRAS PAY — Pix da VitaFlow (09/10/2026)
+// BRAS PAY — Pix da VitaFlow (09/10/2026) · v2 (13/10/2026): INTERRUPTOR DO PIX
+// v2: o Thiago troca no Painel de Lucros por onde o Pix do SITE, da ATHENA/STELLA e do PORTAL DO REVENDEDOR
+//   é recebido: 'braspay' (padrão) ou 'infinitepay'. A posição fica no Firebase em vitaflow_sync/pagamento_pix
+//   ({provedor, em, por}). Esta função:
+//     • GET ?modo=1 → {ok, pix:'braspay'|'infinitepay', em} — o carrinho, a Athena e o portal perguntam aqui.
+//     • no modo 'infinitepay' RECUSA criar Pix novo ({ok:false, erro:'pix_na_infinitepay'}), e quem chamou cai
+//       no caminho da InfinitePay que já existia (trava de segurança para página antiga em cache).
+//       EXCEÇÃO: referência do Orçamento (L-…) — lá o Thiago escolhe a chave na mão (pedido dele em 13/10).
+//     • Pix que já foi gerado continua valendo: consulta (GET ?ref=) e webhook não olham o interruptor.
+//     • Leitura do Firebase falhou → 'braspay' (o padrão de hoje).
 // Conta nova para RECEBER PIX. A InfinitePay continua com o cartão e como Pix reserva.
 //
 // O que esta função faz (uma URL só: /.netlify/functions/braspay):
@@ -68,6 +77,18 @@ async function telegram(texto) {
   } catch (e) {}
 }
 
+// ── INTERRUPTOR DO PIX (v2) ──────────────────────────────────────────────────────
+const MODO_PATH = '/vitaflow_sync/pagamento_pix.json';
+async function lerModo() {
+  try {
+    const r = await fetchT(fbUrl(MODO_PATH), { method: 'GET' }, 3000);
+    const d = r.ok ? await r.json() : null;
+    return { pix: (d && d.provedor === 'infinitepay') ? 'infinitepay' : 'braspay', em: (d && d.em) || null };
+  } catch (e) {
+    return { pix: 'braspay', em: null, falhou: true };
+  }
+}
+
 function reais(cent) { return 'R$ ' + (Number(cent || 0) / 100).toFixed(2).replace('.', ','); }
 
 // número do pedido a partir da referência: "VF-0910-S123~kq2" → "VF-0910-S123"
@@ -83,6 +104,11 @@ async function criarCobranca(corpo) {
   const valor = Math.round(Number(corpo.valorCentavos || 0));
   if (!refValida(base) || base.indexOf('~') >= 0) return resposta(400, { ok: false, erro: 'referencia_invalida' });
   if (!(valor >= 100)) return resposta(400, { ok: false, erro: 'valor_invalido' });
+  // v2: interruptor do Pix (o Orçamento, L-…, fica de fora)
+  if (!/^L-/i.test(base)) {
+    const m = await lerModo();
+    if (m.pix === 'infinitepay') return resposta(200, { ok: false, erro: 'pix_na_infinitepay' });
+  }
   let exp = Math.round(Number(corpo.expiraEmSegundos || 1800));
   if (!(exp > 0)) exp = 1800;
 
@@ -256,7 +282,11 @@ exports.handler = async function (event) {
   if (event.httpMethod === 'GET') {
     const q = event.queryStringParameters || {};
     if (q.ref) return await status(String(q.ref));
-    return resposta(200, { ok: true, servico: 'braspay', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET });
+    if (q.modo) {
+      const m = await lerModo();
+      return { statusCode: 200, headers: Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, CORS), body: JSON.stringify({ ok: true, pix: m.pix, em: m.em }) };
+    }
+    return resposta(200, { ok: true, servico: 'braspay', versao: 'v2', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET });
   }
   if (event.httpMethod !== 'POST') return resposta(405, { ok: false, erro: 'metodo' });
 

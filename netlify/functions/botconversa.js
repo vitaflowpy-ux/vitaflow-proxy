@@ -1,5 +1,8 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v103 (13/10/2026): INTERRUPTOR DO PIX (Painel de Lucros). No modo 'infinitepay' a Athena/Stella NÃO gera nem reenvia
+//   Pix da Bras Pay: o bloco de pagamento sai só com o link da InfinitePay (cartão ou Pix), como era antes de 09/10.
+//   pixModo() pergunta à função braspay (?modo=1), guarda 20 s; falhou → 'braspay' (padrão). Pix já pago segue confirmando.
 // v102 (12/10/2026): DADOS DE ENVIO SEM MARCAS DO WHATSAPP. Cliente mandou nome/e-mail/rua/bairro/cidade em negrito
 //   (*Fulano*) e a Athena gravou com os asteriscos (VF-1210-A001: e-mail '*x@gmail.com*' invalido -> Brevo nao entregou).
 //   coletaLer agora passa TODO valor por _semMarcasWhats (tira * ~ ` e o _ que envolve o valor inteiro), inclusive o que ja
@@ -4741,10 +4744,24 @@ async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReai
 const BRASPAY_API = 'https://api.braspay.com.py/api/v1/gateway/cobrancas';
 const BRASPAY_FN  = 'https://vitaflow-proxy.netlify.app/.netlify/functions/braspay';
 const PIX_VALIDADE_ATHENA_SEG = 86400;   // 24 h
+// v103: interruptor do Pix (Painel de Lucros → vitaflow_sync/pagamento_pix, lido pela função braspay). Falhou → 'braspay'.
+let _pixModoCache = { v: null, t: 0 };
+async function pixModo() {
+  if (_pixModoCache.v && Date.now() - _pixModoCache.t < 20000) return _pixModoCache.v;
+  let v = 'braspay';
+  try {
+    const r = await fetchT(BRASPAY_FN + '?modo=1', { method:'GET' }, 3000);
+    const d = await r.json();
+    v = (d && d.ok && d.pix === 'infinitepay') ? 'infinitepay' : 'braspay';
+  } catch (e) { v = 'braspay'; }
+  _pixModoCache = { v: v, t: Date.now() };
+  return v;
+}
 async function gerarPixBraspay(orderNsu, totalReais, novaRef) {
   const key = process.env.BRASPAY_API_KEY || '';
   const valor = Math.round((Number(totalReais) || 0) * 100);
   if (!key || !orderNsu || valor < 100) return null;
+  if (await pixModo() === 'infinitepay') return null;   // v103: Pix pela InfinitePay (só o link)
   const base = String(orderNsu).split('~')[0];
   async function tentar(ref) {
     const r = await fetchT(BRASPAY_API, {
@@ -4770,6 +4787,7 @@ async function gerarPixBraspay(orderNsu, totalReais, novaRef) {
 // Pix da sessão ainda válido? Se venceu (ou não existe), gera outro do MESMO pedido. Devolve {pix, mudou}.
 async function pixDaSessao(session) {
   if (!session || !session.orderNsu) return { pix: null, mudou: false };
+  if (await pixModo() === 'infinitepay') return { pix: null, mudou: false };   // v103: não reenvia o Pix da Bras Pay
   const exp = session.pixExpira ? Date.parse(session.pixExpira) : 0;
   if (session.pixCode && exp && exp - Date.now() > 10 * 60 * 1000 && session.pixValor === Math.round((session.total || 0) * 100)) {
     return { pix: { code: session.pixCode, ref: session.pixRef, expiraEm: session.pixExpira }, mudou: false };
