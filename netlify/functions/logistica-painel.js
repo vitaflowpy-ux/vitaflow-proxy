@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v20  ·  11/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v21  ·  14/10/2026
+   v21 (14/10, Thiago: a Onlog pede a confirmação do Cloudflare quase toda rodada): a fila de CPFs da Onlog cai de 40 para
+       no máximo 15 por rodada (FILA_ONLOG_MAX), e os pedidos dos últimos 10 dias vêm antes dos mais velhos (que raramente
+       ainda ganham código e eram consultados de novo em toda rodada). Geovanna/Respect continuam primeiro. Só a fila muda.
    v20 (11/10, Thiago: "da Geovanna já sabemos a origem, pq está ali então?"): na aba Duplicados, o aviso "e-mail dos pacotes esperando
        a origem" passa a dizer QUAL pacote está sem origem (ex.: "…esperando a origem do pacote VF-1010-S022 (Daniel)"). Só texto.
    v19 (09/10, commit 2632006): e-mails ao cliente (postagem, pacotes, cupom, atraso) como documento HTML completo com viewport (celular).
@@ -700,7 +703,9 @@ function pendentesCodigo(peds, agora, janelaDias) {
     return !p.naoPagou && !p.final && p.st !== 'ENTREGUE' && !p.cod && p.tConf && p.tConf >= ini && String(p.pedido).indexOf(',') < 0;
   });
 }
-/* fila da Onlog: CPFs dos pendentes de Geovanna/Respect (1º) e dos sem fornecedor com 2+ dias úteis (depois) */
+/* fila da Onlog: CPFs dos pendentes de Geovanna/Respect (1º) e dos sem fornecedor com 2+ dias úteis (depois).
+   v21: dentro de cada grupo, os de até FILA_ONLOG_RECENTE_DIAS vêm antes dos mais velhos; no máximo FILA_ONLOG_MAX por rodada. */
+var FILA_ONLOG_MAX = 15, FILA_ONLOG_RECENTE_DIAS = 10;
 function filaOnlog(pend, agora, max) {
   var porCpf = {};
   pend.forEach(function (p) {
@@ -713,8 +718,12 @@ function filaOnlog(pend, agora, max) {
     if (gr) x.gr = true;
   });
   return Object.keys(porCpf).map(function (c) { return porCpf[c]; })
-    .sort(function (a, b) { return (a.gr === b.gr) ? a.desde - b.desde : (a.gr ? -1 : 1); })
-    .slice(0, max || 40)
+    .sort(function (a, b) {
+      if (a.gr !== b.gr) return a.gr ? -1 : 1;
+      var va = (agora - a.desde) > FILA_ONLOG_RECENTE_DIAS * DIA ? 1 : 0, vb = (agora - b.desde) > FILA_ONLOG_RECENTE_DIAS * DIA ? 1 : 0;
+      return va !== vb ? va - vb : a.desde - b.desde;
+    })
+    .slice(0, max || FILA_ONLOG_MAX)
     .map(function (x) { return { cpf: x.cpf, desde: ddmmaa(x.desde) }; });
 }
 
@@ -1516,7 +1525,7 @@ async function acaoComTicket(acao, d, agora) {
   if (acao === 'codigos_fila') {
     var base = await lerBase(false), cfg = Object.assign({}, EMAIL_CFG_PADRAO, base.cfg || {});
     var pedsF = montarPedidos(base), stF = (await fbLerOu(ONLOG_ST)) || {};
-    return resp({ ok: true, cpfs: filaOnlog(pendentesCodigo(pedsF, agora, cfg.codigos_janela_dias), agora, 40),
+    return resp({ ok: true, cpfs: filaOnlog(pendentesCodigo(pedsF, agora, cfg.codigos_janela_dias), agora, FILA_ONLOG_MAX),
       /* v9: os objetos para ler a SITUAÇÃO (c = código a consultar · s = último status conhecido · m = 1: abrir o detalhe) */
       objetos: objetosOnlog(pedsF, agora, stF, cfg.onlog_janela_dias).map(function (a) { return { c: a.c, s: a.s, m: a.m }; }) });
   }
