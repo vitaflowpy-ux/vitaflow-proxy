@@ -1,6 +1,7 @@
 'use strict';
 /* =============================================================================
-   estoque.js — ESTOQUE PRÓPRIO DO PAINEL DE DADOS (VitaFlow)  ·  v2  ·  03/10/2026
+   estoque.js — ESTOQUE PRÓPRIO DO PAINEL DE DADOS (VitaFlow)  ·  v3  ·  15/10/2026
+   v3 (15/10/2026): aceita o login de admin (tokenAdmin) — a chave saiu das páginas. Ver autorizado().
    v2 (03/10/2026, pedido do Thiago): ação 'desfazer' — desfaz a baixa de UM pedido.
    Netlify Function no repo vitaflow-proxy → netlify/functions/estoque.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/estoque
@@ -17,7 +18,7 @@
    <chave> = nome do produto sem acento, minúsculo, com tudo que não é letra/número virando "_"
              (calculada no painel — a mesma conta para o produto da Shopify e para o produto do pedido).
 
-   CHAMADAS (POST, corpo JSON com chave:'<COMPRAS_KEY>' — a mesma dos painéis):
+   CHAMADAS (POST, corpo JSON com tokenAdmin:'<idToken do admin>' — v3; a chave COMPRAS_KEY só para servidor):
      { acao:'ler' }                                   → { success, itens:{chave:{nome,qtd,t}}, baixas:{pedido:t} }
      { acao:'gravar', itens:{chave:{nome,qtd}} }      → grava só os enviados (qtd 0 apaga)  → devolve o 'ler'
      { acao:'baixa', pedidos:[{pedido, itens:[{chave,nome,qtd}]}] }
@@ -45,6 +46,27 @@ var CORS = {
 
 function resp(obj) { return { statusCode: 200, headers: CORS, body: JSON.stringify(obj) }; }
 function erro(msg) { return resp({ success: false, erro: msg }); }
+
+/* v3 (15/10/2026): o painel manda o login de admin (tokenAdmin = idToken do Firebase Auth) em vez da chave.
+   Conferido lendo admins/<uid> com o PRÓPRIO token (o Firebase recusa token falso/vencido) — igual ao conferirAdmin
+   do logistica-painel. A chave (COMPRAS_KEY) continua aceita, só para chamadas de servidor. */
+async function conferirAdmin(token) {
+  token = String(token || '');
+  var partes = token.split('.');
+  if (partes.length !== 3) return null;
+  var uid = '';
+  try { var pl = JSON.parse(Buffer.from(partes[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); uid = pl.user_id || pl.sub || ''; } catch (e) { return null; }
+  if (!uid || !/^[A-Za-z0-9]+$/.test(uid)) return null;
+  try {
+    var r = await fetch(FB_BASE + '/admins/' + uid + '.json?auth=' + encodeURIComponent(token));
+    if (!r.ok) return null;
+    return (await r.json()) === true ? uid : null;
+  } catch (e) { return null; }
+}
+async function autorizado(d) {
+  if (COMPRAS_KEY && String(d.chave || '') === COMPRAS_KEY) return true;
+  return !!(await conferirAdmin(d.tokenAdmin));
+}
 
 async function fb(caminho, metodo, valor) {
   var ctrl = new AbortController();
@@ -76,8 +98,8 @@ exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') return erro('use POST');
   var d = {};
   try { d = JSON.parse(event.body || '{}') || {}; } catch (e) { d = {}; }
-  if (!FB_SECRET || !COMPRAS_KEY) return erro('variavel de ambiente faltando');
-  if (String(d.chave || '') !== COMPRAS_KEY) return erro('nao_autorizado');
+  if (!FB_SECRET) return erro('variavel de ambiente faltando');
+  if (!(await autorizado(d))) return erro('nao_autorizado');
 
   try {
     var acao = String(d.acao || '');

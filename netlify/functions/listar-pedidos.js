@@ -1,6 +1,7 @@
 'use strict';
 /* =============================================================================
-   listar-pedidos.js — PEDIDOS PARA OS PAINÉIS SEM APPS SCRIPT (VitaFlow)  ·  v1  ·  30/09/2026
+   listar-pedidos.js — PEDIDOS PARA OS PAINÉIS SEM APPS SCRIPT (VitaFlow)  ·  v2  ·  15/10/2026
+   v2 (15/10/2026): aceita o login de admin (tokenAdmin) — a chave saiu das páginas. Ver autorizado().
    Netlify Function no repo vitaflow-proxy → netlify/functions/listar-pedidos.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/listar-pedidos
 
@@ -11,7 +12,7 @@
        { success:true, linhas:[[cabeçalho],[linha],...], fonte:'firebase' }
    (mesma ordem das linhas: a mesma que o GAS obtinha do mesmo JSON).
 
-   CHAMADA (mesmo corpo do GAS): POST { action:'listar_pedidos', chave:'<COMPRAS_KEY>' }
+   CHAMADA (mesmo corpo do GAS): POST { action:'listar_pedidos', tokenAdmin:'<idToken do admin>' }  (v2; chave só servidor)
    Sem resposta daqui (espelho vazio, erro, variável não configurada, resposta grande demais):
        { success:false, usar_gas:true, motivo }  → o painel chama o GAS como antes (lá ainda tem a planilha).
 
@@ -34,6 +35,27 @@ var CORS = {
 function resp(obj) { return { statusCode: 200, headers: CORS, body: typeof obj === 'string' ? obj : JSON.stringify(obj) }; }
 function usarGas(motivo) { return resp({ success: false, usar_gas: true, motivo: motivo }); }
 
+/* v2 (15/10/2026): o painel manda o login de admin (tokenAdmin = idToken do Firebase Auth) em vez da chave.
+   Conferido lendo admins/<uid> com o PRÓPRIO token (o Firebase recusa token falso/vencido) — igual ao conferirAdmin
+   do logistica-painel. A chave (COMPRAS_KEY) continua aceita, só para chamadas de servidor. */
+async function conferirAdmin(token) {
+  token = String(token || '');
+  var partes = token.split('.');
+  if (partes.length !== 3) return null;
+  var uid = '';
+  try { var pl = JSON.parse(Buffer.from(partes[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); uid = pl.user_id || pl.sub || ''; } catch (e) { return null; }
+  if (!uid || !/^[A-Za-z0-9]+$/.test(uid)) return null;
+  try {
+    var r = await fetch(FB_BASE + '/admins/' + uid + '.json?auth=' + encodeURIComponent(token));
+    if (!r.ok) return null;
+    return (await r.json()) === true ? uid : null;
+  } catch (e) { return null; }
+}
+async function autorizado(d) {
+  if (COMPRAS_KEY && String(d.chave || '') === COMPRAS_KEY) return true;
+  return !!(await conferirAdmin(d.tokenAdmin));
+}
+
 async function fbGet(caminho) {
   var ctrl = new AbortController();
   var t = setTimeout(function () { ctrl.abort(); }, 9000);
@@ -48,8 +70,8 @@ exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
   var d = {};
   try { d = JSON.parse(event.body || '{}') || {}; } catch (e) { d = {}; }
-  if (!FB_SECRET || !COMPRAS_KEY) return usarGas('variavel de ambiente faltando');
-  if (String(d.chave || '') !== COMPRAS_KEY) return resp({ success: false, erro: 'nao_autorizado' });
+  if (!FB_SECRET) return usarGas('variavel de ambiente faltando');
+  if (!(await autorizado(d))) return resp({ success: false, erro: 'nao_autorizado' });
   try {
     var dados = await Promise.all([fbGet('vitaflow_pedidos_hdr'), fbGet('vitaflow_pedidos')]);
     var hdr = dados[0], mapa = dados[1];
