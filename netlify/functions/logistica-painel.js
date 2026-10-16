@@ -1,6 +1,10 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v21  ·  14/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v22  ·  16/10/2026
+   v22 (16/10, Thiago: "quero saber o motivo de esses email não ter sido enviado"): linha D criada pela PRÓPRIA RODADA (novoD —
+       o pedido já tinha outro código) nunca pedia o e-mail "seu pedido vai em N pacotes" (só o Compras pedia, ao marcar comprado).
+       Agora, no fim da rodada, cada pedido que ganhou linha D passa por emailPacotes (envia, ou entra na fila "esperando a origem").
+       Resposta da rodada ganha emails_pacotes.novos_d. Nada mais muda.
    v21 (14/10, Thiago: a Onlog pede a confirmação do Cloudflare quase toda rodada): a fila de CPFs da Onlog cai de 40 para
        no máximo 15 por rodada (FILA_ONLOG_MAX), e os pedidos dos últimos 10 dias vêm antes dos mais velhos (que raramente
        ainda ganham código e eram consultados de novo em toda rodada). Geovanna/Respect continuam primeiro. Só a fila muda.
@@ -1412,6 +1416,18 @@ async function rodadaCodigos(op) {
   await fbReq('DELETE', COD + '/rodada_atual'); await fbReq('DELETE', COD + '/entrada'); await fbReq('DELETE', COD + '/ticket');
   var mails = null;
   try { mails = await enviarPacotesPendentes(agora); } catch (eM) { mails = { erro: eM.message }; }
+  /* v22: pedido que ganhou linha D nesta rodada (novoD) pede o e-mail dos pacotes (o Compras só pede quando ELE cria a linha D) */
+  var novosD = {};
+  aplicados.forEach(function (x) { if ((x.fez || []).indexOf('linha D') >= 0) { var po = String(x.pedido_pedido || x.pedido || '').toUpperCase().replace(/-D\d+$/, ''); if (po) novosD[po] = 1; } });
+  var ksD = Object.keys(novosD);
+  if (ksD.length) {
+    if (!mails || typeof mails !== 'object') mails = {};
+    mails.novos_d = [];
+    for (var iD = 0; iD < ksD.length; iD++) {
+      try { var rD = await emailPacotes(ksD[iD], { agora: agora }); mails.novos_d.push({ pedido: ksD[iD], enviado: !!rD.enviado, motivo: rD.motivo || rD.erro || (rD.enviado ? 'enviado' : '') }); }
+      catch (eD) { mails.novos_d.push({ pedido: ksD[iD], enviado: false, motivo: eD.message }); }
+    }
+  }
   return { ok: true, resta: 0, fontes: fontes, resumo: resumo, aplicados: aplicados, recusados: recusados, duvidas: plano.duvidas, emails_pacotes: mails };
 }
 
