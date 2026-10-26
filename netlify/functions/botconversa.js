@@ -1,5 +1,10 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v105 (26/10/2026 — pedido do Thiago: ATACADO PAUSADO, aguardando a estabilização do câmbio; a página do site também foi pausada).
+//   ATACADO_PAUSADO = true → toda entrada no atacado ("atacado", menu, prazo de atacado, voltar) mostra MSG_ATACADO_PAUSADO no
+//   lugar da apresentação; quem estava dentro do atacado (ATACADO/ATK_*) volta ao MENU com o mesmo aviso; a IA é avisada no contexto.
+//   Pedido de atacado já em coleta de dados/pagamento NÃO é interrompido. Para voltar: ATACADO_PAUSADO = false. Resto = v104.
+
 // v104 (14/10/2026 — PROMOÇÃO PROF15, pedido do Thiago: Dia do Professor, 15% em todo o site com o cupom PROF15, SÓ em
 //   15/10 (00h a 23h59), exceto atacado; não acumula, então o frete grátis automático fica pausado no dia).
 //   PROMO_PROF15 (ini/fim) liga e desliga sozinha: opção 8/"promo" (msgPromoProf15), menu, saudação, dica do cupom de
@@ -1186,6 +1191,7 @@ function ehIntencaoSorteio(n){
 // A IA só fala de promoção com base no que estiver LIGADO aqui. Nada inventado.
 async function contextoPromo(){
   const linhas = [];
+  if (ATACADO_PAUSADO) linhas.push('ATACADO PAUSADO (desde 26/10/2026): o atacado está TEMPORARIAMENTE PAUSADO — estamos aguardando a estabilização do câmbio para atualizar as tabelas de atacado. NÃO ofereça, NÃO monte e NÃO passe preço de atacado; se perguntarem, diga exatamente isso e ofereça o varejo (digite menu). Não dê previsão de volta.');   // v105
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
   linhas.push(`DEFINIÇÃO — "VAREJO": são os produtos NORMAIS da VitaFlow (os MESMOS que você oferece fora do modo atacado, iguais aos do site vitaflowoficial.com), vendidos em QUALQUER quantidade. Quando o cliente falar "varejo", é disso que ele fala — é o padrão de compra, NÃO é o atacado (que tem mínimo de R$ 3.000 e frete grátis). Os 3% e as promoções valem no varejo.`);
   if (semanaClienteAtiva()) {
@@ -1551,7 +1557,15 @@ Qualquer dúvida sobre a revenda, é só me chamar!
 
 0️⃣ Voltar ao menu`;
 
-const MSG_ATACADO = `*🏭 ATACADO VitaFlow* — pedido mínimo *R$ 3.000* e *FRETE GRÁTIS!* 🚚
+const ATACADO_PAUSADO = true;   // v105 (26/10/2026): atacado pausado — aguardando a estabilização do câmbio
+const MSG_ATACADO_PAUSADO = `*⏸️ Atacado temporariamente pausado*
+
+Estamos aguardando a *estabilização do câmbio* para atualizar as tabelas de atacado.
+
+Em breve voltamos com os preços atualizados. Obrigado pela compreensão! 🙏
+
+_Enquanto isso, posso te ajudar com o *varejo* — digite *menu* para ver nossos produtos._`;
+const MSG_ATACADO_ATIVO = `*🏭 ATACADO VitaFlow* — pedido mínimo *R$ 3.000* e *FRETE GRÁTIS!* 🚚
 
 Aqui é simples: você monta seu pedido do jeito que quiser comigo. 😊
 
@@ -1563,6 +1577,7 @@ Aqui é simples: você monta seu pedido do jeito que quiser comigo. 😊
 👉 Me diga o *nome do produto* que você quer (ex.: retatrutida, testosterona, bpc) que eu te mostro o preço e já vou montando seu pedido de atacado.
 
 _Ou digite *1* pra baixar a *tabela completa* em PDF, ou *2* pra voltar ao menu._`;
+const MSG_ATACADO = ATACADO_PAUSADO ? MSG_ATACADO_PAUSADO : MSG_ATACADO_ATIVO;   // v105
 
 const MSG_ATACADO_CONTATOS = `*🏭 Consultores de Atacado — VitaFlow*
 
@@ -1818,6 +1833,7 @@ function msgCarrinhoAtk(cart) {
 }
 // Entra na modalidade atacado. Se houver carrinho de VAREJO aberto, bloqueia (não mistura).
 async function entrarAtacado(session, sid, respond) {
+  if (ATACADO_PAUSADO) return respond(MSG_ATACADO_PAUSADO);   // v105: atacado pausado (câmbio)
   if ((session.carrinho || []).length) {
     await saveSession(sid, { ...session, state: 'ATK_BLOQUEIO' });
     return respond(`Você já tem *itens no carrinho do varejo*. 🛒\n\nNão dá pra misturar *varejo* e *atacado* no mesmo pedido. O que você prefere?\n\n1️⃣ *Finalizar o varejo* primeiro\n2️⃣ *Esvaziar o varejo* e começar o atacado\n3️⃣ Voltar ao menu`);
@@ -6292,6 +6308,11 @@ exports.handler = async (event) => {
     // (palavra de rastreio explícita, nº VF, CPF ou e-mail) — "meu pedido" solto NÃO conta, porque
     // no atacado "fechar meu pedido" é fechamento. E NUNCA muda o estado: o carrinho de atacado
     // continua exatamente onde estava.
+    // v105 (26/10/2026): atacado PAUSADO — quem estava dentro do atacado volta ao menu com o aviso do câmbio
+    if (ATACADO_PAUSADO && ['ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','ATK_REMOVER','ATK_CONFIRMAR','ATK_BLOQUEIO'].includes(state)) {
+      await saveSession(sid, { ...session, state: 'MENU' });
+      return respond(MSG_ATACADO_PAUSADO);
+    }
     const _ehAtkNavegacao = ['ATACADO','ATK_LISTA','ATK_QTD','ATK_CART'].includes(state);
     if (_ehAtkNavegacao && !ehNumeroSimplesMenu && !_ehMidiaMsg) {
       const _temDadoRastreio = ehNumeroPedido(mensagem) || ehCPFsolto(mensagem) || /[\w.+-]+@[\w-]+\.[\w.-]+/.test(mensagem);
