@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v7  ·  02/10/2026
+   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v8  ·  27/10/2026
+   v8 (27/10, Thiago: atacado PJC com prefixo P): pedido P (VF-DDMM-P001) também é ATACADO → origem PY e prazo de atacado,
+     igual ao W. Mesma regra no GAS. Resto = v7.
    Netlify Function no repo vitaflow-proxy → netlify/functions/rastreio-consulta.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/rastreio-consulta
 
@@ -230,7 +232,7 @@ var _ETAPA_ORDEM = { 'AGUARDANDO PAGAMENTO':0, 'PEDIDO CONFIRMADO':1, 'PAGO':1, 
 /* ---- origem ---- */
 function _origemEnvio(pedido, fornTxt) {
   var ped = String(pedido || '').toUpperCase(), f = _semAcentoUp(fornTxt);
-  if (/VF-\d{4}-W/.test(ped) || f.indexOf('CAMILA') >= 0) return 'PY';
+  if (/VF-\d{4}-[WP]/.test(ped) || f.indexOf('CAMILA') >= 0) return 'PY';
   if (f.indexOf('DANIEL') >= 0) {
     var trechoD = f.split('DANIEL')[1] || '';
     trechoD = trechoD.split(/ \| |\n/)[0];
@@ -345,7 +347,7 @@ async function _rastreioEnriquecer(rr, fornTxt, rastCel, emRota, evo, comp) {
       var gC = await _geoCidade(rr.cidade, rr.estado);
       if (gC) rr.destino = { cidade: rr.cidade, uf: rr.estado, lat: gC.lat, lon: gC.lon };
     }
-    rr.atacado = /VF-\d{4}-W/i.test(String(rr.pedido)) || _semAcentoUp(fornTxt).indexOf('CAMILA') >= 0;
+    rr.atacado = /VF-\d{4}-[WP]/i.test(String(rr.pedido)) || _semAcentoUp(fornTxt).indexOf('CAMILA') >= 0;
     if (rr.atacado) rr.origem = 'PY';
     if (rr._orig === 'MS' || rr._orig === 'SP' || rr._orig === 'RJ' || rr._orig === 'PY' || rr._orig === 'CP') rr.origem = rr._orig;   /* v4: coluna ORIGEM manda (v5: + CP) */
 

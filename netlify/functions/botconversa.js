@@ -1,5 +1,10 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v110 (27/10/2026 — Thiago: pedidos do atacado PJC com prefixo próprio, "o prefixo pode ser o P"): o número digitado pelo
+//   cliente aceita a letra P (VF-DDMM-P001, atacado do estoque Pedro Juan Caballero) — rastreio, sorteio, protocolo. Só o bloco
+//   de identificação (ID_RE_SEM_VF, ID_RE_FINAL, ID_LETRAS, idPrepNum): [SMAVW] → [SMAVWP]. A Athena não vende o atacado PJC,
+//   então não gera número P. Mesmo bloco no bot da logística v12 e na página de rastreio v10. Resto = v109.
+
 // v109 (27/10/2026 — Thiago: "leia todas as conversas do mês de outubro da Athena e identifique falhas e corrija. pode publicar
 //   tudo sem me perguntar"). Leitura das 102 conversas de 01 a 27/10 (inbox 206480). Correções (registro no projeto):
 //   1) RESPOSTA ATRASADA (o BotConversa repetia a mensagem ANTERIOR): a função passava do tempo que o BotConversa espera
@@ -3217,10 +3222,10 @@ function ehPedidoCupomBemVindo(nMsg){
    CPF: com/sem ponto/traço/espaço; 10 dígitos = perdeu o zero da frente (o índice do GAS guarda com 11) */
 var ID_SEP = '[\\s\\-_.\\/]*';
 var ID_RE_VF = new RegExp('V\\s*F' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2})' + ID_SEP + '([A-Z]{1,2})' + ID_SEP + '(\\d{1,4})(?![0-9])');
-var ID_RE_SEM_VF = /(?:^|[^A-Z0-9])(\d{2})[\/\-.]?(\d{2})[\s\-_.\/]*([SMAVW]X?)[\-_.]?(\d{1,4})(?![A-Z0-9])/;
+var ID_RE_SEM_VF = /(?:^|[^A-Z0-9])(\d{2})[\/\-.]?(\d{2})[\s\-_.\/]*([SMAVWP]X?)[\-_.]?(\d{1,4})(?![A-Z0-9])/;
 var ID_RE_SEM_LETRA = new RegExp('V\\s*F' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2,4})(?![0-9])');
-var ID_RE_FINAL = /(?:^|[^A-Z0-9])([SMAVW]X?)[\-_.]?(\d{2,4})(?![A-Z0-9])/;
-var ID_LETRAS = /^[SMAVW]X?$/;
+var ID_RE_FINAL = /(?:^|[^A-Z0-9])([SMAVWP]X?)[\-_.]?(\d{2,4})(?![A-Z0-9])/;
+var ID_LETRAS = /^[SMAVWP]X?$/;
 var ID_MESES = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
 
 function idSoDig(s) { return String(s == null ? '' : s).replace(/\D/g, ''); }
@@ -3236,7 +3241,7 @@ function idPrepNum(texto) {
   var t = String(texto || '').toUpperCase();
   for (var i = 0; i < 3; i++) t = t.replace(/(\d)O/g, '$10').replace(/O(\d)/g, '0$1');
   // v85: letra trocada no prefixo ("VT-1709-S008", "VG-…") — só quando o resto é exatamente o formato do pedido.
-  t = t.replace(/(^|[^A-Z0-9])V[A-EG-Z]\s*[-–]\s*(\d{4})\s*[-–]\s*([SMAVW]X?\d{1,4})(?![A-Z0-9])/g, '$1VF-$2-$3');
+  t = t.replace(/(^|[^A-Z0-9])V[A-EG-Z]\s*[-–]\s*(\d{4})\s*[-–]\s*([SMAVWP]X?\d{1,4})(?![A-Z0-9])/g, '$1VF-$2-$3');
   return t;
 }
 /* número do pedido normalizado ou '' */

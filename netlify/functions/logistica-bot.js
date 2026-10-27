@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v11  ·  05/10/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v12  ·  27/10/2026
+   v12 (27/10, Thiago: atacado PJC com prefixo P): o número digitado aceita a letra P (VF-DDMM-P001). Bloco de identificação:
+     [SMAVW] → [SMAVWP], igual à Athena v110 e à página de rastreio v10. Resto = v11.
    v11 (ordem do Thiago, 05/10: "quero que resolva e que fique simples pois não está funcionando" — a logística mandava #bot
        para TIRAR o bot da conversa e ele continuava respondendo, porque #bot fazia o contrário): os comandos pelo celular da
        logística ficam assim:
@@ -475,10 +477,10 @@ function resumo(it) {
    CPF: com/sem ponto/traço/espaço; 10 dígitos = perdeu o zero da frente (o índice do GAS guarda com 11) */
 var ID_SEP = '[\\s\\-_.\\/]*';
 var ID_RE_VF = new RegExp('V\\s*F' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2})' + ID_SEP + '([A-Z]{1,2})' + ID_SEP + '(\\d{1,4})(?![0-9])');
-var ID_RE_SEM_VF = /(?:^|[^A-Z0-9])(\d{2})[\/\-.]?(\d{2})[\s\-_.\/]*([SMAVW]X?)[\-_.]?(\d{1,4})(?![A-Z0-9])/;
+var ID_RE_SEM_VF = /(?:^|[^A-Z0-9])(\d{2})[\/\-.]?(\d{2})[\s\-_.\/]*([SMAVWP]X?)[\-_.]?(\d{1,4})(?![A-Z0-9])/;
 var ID_RE_SEM_LETRA = new RegExp('V\\s*F' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2})' + ID_SEP + '(\\d{2,4})(?![0-9])');
-var ID_RE_FINAL = /(?:^|[^A-Z0-9])([SMAVW]X?)[\-_.]?(\d{2,4})(?![A-Z0-9])/;
-var ID_LETRAS = /^[SMAVW]X?$/;
+var ID_RE_FINAL = /(?:^|[^A-Z0-9])([SMAVWP]X?)[\-_.]?(\d{2,4})(?![A-Z0-9])/;
+var ID_LETRAS = /^[SMAVWP]X?$/;
 var ID_MESES = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
 
 function idSoDig(s) { return String(s == null ? '' : s).replace(/\D/g, ''); }

@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v22  ·  16/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v23  ·  27/10/2026
+   v23 (27/10, Thiago: atacado PJC com prefixo P): pedido P também é atacado (origem PY, prazo de atacado) e a linha D
+     feita à mão acha o pedido de origem P. Resto = v22.
    v22 (16/10, Thiago: "quero saber o motivo de esses email não ter sido enviado"): linha D criada pela PRÓPRIA RODADA (novoD —
        o pedido já tinha outro código) nunca pedia o e-mail "seu pedido vai em N pacotes" (só o Compras pedia, ao marcar comprado).
        Agora, no fim da rodada, cada pedido que ganhou linha D passa por emailPacotes (envia, ou entra na fila "esperando a origem").
@@ -390,7 +392,7 @@ function montarPedidos(base) {
     if (st === 'PEDIDO EXTRAVIADO') extr = true;
     if (st === 'PEDIDO APREENDIDO') apre = true;
     if (!tConf) { var md = String(b.data || '').match(/^(\d{2})\/(\d{2})\/(\d{4})/); if (md) tConf = new Date(md[3] + '-' + md[2] + '-' + md[1] + 'T12:00:00-03:00').getTime(); }
-    var atacado = /VF-\d{4}-W/i.test(b.pedido) || R.semAcentoUp(b._forn).indexOf('CAMILA') >= 0;
+    var atacado = /VF-\d{4}-[WP]/i.test(b.pedido) || R.semAcentoUp(b._forn).indexOf('CAMILA') >= 0;
     out.push({ k: R.histKey(b.pedido), pedido: b.pedido, nome: b.nome, email: String(l[2] || '').trim(), uf: b.estado, cidade: b.cidade,
       status: b.status, st: st, naoPagou: R.naoPagou(b.status, l[12]), final: !!FINAL[st], data: b.data,
       transp: transpNome(b.transportadora), transpTxt: b.transportadora, codigo: b._rast, forn: fornNome(b._forn), fornTxt: b._forn,
@@ -1184,7 +1186,7 @@ function duplicadosLista(peds, vistos, emails, agora) {
     if (p.pai) return String(p.pai).trim().toUpperCase();
     var m = String(p.pedido || '').trim().toUpperCase().match(/^(VF-\d{4}-)D(\d+)$/);
     if (!m) return '';
-    var achou = ''; ['S', 'A', 'W', 'V', 'M', 'O'].forEach(function (L) { if (!achou && porPed[m[1] + L + m[2]]) achou = m[1] + L + m[2]; });
+    var achou = ''; ['S', 'A', 'W', 'P', 'V', 'M', 'O'].forEach(function (L) { if (!achou && porPed[m[1] + L + m[2]]) achou = m[1] + L + m[2]; });
     if (achou) return achou;
     Object.keys(porPed).forEach(function (k) { if (!achou && k.indexOf(m[1]) === 0 && k !== m[1] + 'D' + m[2] && k.slice(m[1].length + 1) === m[2] && !ehLinhaD(porPed[k])) achou = k; });
     return achou;

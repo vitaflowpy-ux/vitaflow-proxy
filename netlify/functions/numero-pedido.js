@@ -1,6 +1,10 @@
 'use strict';
 /* =============================================================================
-   numero-pedido.js — NÚMERO DO PEDIDO SEM APPS SCRIPT (VitaFlow)  ·  v2  ·  15/10/2026  (v1 = 30/09/2026)
+   numero-pedido.js — NÚMERO DO PEDIDO SEM APPS SCRIPT (VitaFlow)  ·  v3  ·  27/10/2026  (v2 = 15/10, v1 = 30/09/2026)
+
+   v3 (27/10/2026 — Thiago: "os pedidos do atacado de PJC tenham outro prefixo diferente do W"): tipo P = ATACADO DO
+     ESTOQUE PEDRO JUAN CABALLERO (VF-DDMM-P001). Contador próprio no Firebase vitaflow_seq/<ddMM>/atacado_pjc, começa do 0,
+     igual ao W. O W continua sendo o atacado de Ciudad del Este (CDE).
 
    v2 (15/10/2026 — painel único, item 5, bloco 1): O NÚMERO SAI DO BANCO NOVO.
      • Com as variáveis de ambiente VFDB_SERVICE_KEY (e opcional VFDB_URL, padrão https://api.vitaflowoficial.com),
@@ -30,7 +34,7 @@
             vitaflow_pedidos) e, se for de HOJE, avança o contador até ele (o próximo gerado
             não repete). Resposta: { success:true, numero, existe:false, contador_avancado:true }
             ou { success:false, existe:true, nome:'Fulano' } / { success:false, erro:'...' }
-   tipo: S=site  M=manual (Orçamento)  A=Athena  V=revendedor  W=atacado
+   tipo: S=site  M=manual (Orçamento)  A=Athena  V=revendedor  W=atacado CDE  P=atacado PJC (v3)
 
    COMEÇO DO DIA (contador ainda vazio): igual à linha nova da aba Sequencial do GAS —
    manual começa em 50 (1º = M051); os outros em 0 (1º = 001).
@@ -43,8 +47,8 @@
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var FB_SECRET = process.env.FIREBASE_SECRET || '';
 
-var COL = { S: 'site', M: 'manual', A: 'athena', V: 'revendedor', W: 'atacado' };
-var INICIO_DIA = { site: 0, manual: 50, athena: 0, revendedor: 0, atacado: 0 };
+var COL = { S: 'site', M: 'manual', A: 'athena', V: 'revendedor', W: 'atacado', P: 'atacado_pjc' };   /* v3: P = atacado PJC */
+var INICIO_DIA = { site: 0, manual: 50, athena: 0, revendedor: 0, atacado: 0, atacado_pjc: 0 };
 var SALTO_MAX_RESERVA = 30;   /* número digitado não pode pular mais que isso à frente do contador */
 
 /* v2: banco novo (Supabase no servidor). A chave fica SÓ na variável de ambiente do Netlify. */
