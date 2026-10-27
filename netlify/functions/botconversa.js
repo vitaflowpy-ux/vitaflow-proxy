@@ -1,5 +1,7 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v108 (27/10/2026 — Thiago: "pode publicar o atacado"): ATACADO_PAUSADO = false, junto com a página nova (v-atk15).
+
 // v107 (26/10/2026, noite — Thiago: "mantenha a página fora do ar até eu dar o pronto"): ATACADO_PAUSADO = true de novo,
 //   junto com a página do site. Para voltar: false.
 
@@ -1563,7 +1565,7 @@ Qualquer dúvida sobre a revenda, é só me chamar!
 
 0️⃣ Voltar ao menu`;
 
-const ATACADO_PAUSADO = true;   // v107 (26/10/2026, noite): PAUSADO DE NOVO até o Thiago dar o "pronto" (página nova do atacado em preparo). v106 = no ar
+const ATACADO_PAUSADO = false;   // v108 (27/10/2026): atacado de VOLTA com a página nova v-atk15 (Thiago: "pode publicar o atacado"). v107 = pausado
 const MSG_ATACADO_PAUSADO = `*⏸️ Atacado temporariamente pausado*
 
 Estamos aguardando a *estabilização do câmbio* para atualizar as tabelas de atacado.
