@@ -1,6 +1,23 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v7  ·  01/10/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v8  ·  27/10/2026
+   v8 (27/10/2026, leitura da conversa inteira do grupo de 19/09 a 27/10 — pedido do Thiago):
+       * SÓ RESPONDE PERGUNTA. Até a v7 qualquer menção à palavra disparava o texto ("tava valor bom
+         atacado", "transportadora são fodas", "cobram caro o frete" = 100+ respostas fora de hora).
+         Palavra-chave agora só vale com cara de pergunta (? / quanto / qual / como / tem / alguém
+         sabe… ou chamando a Stella pelo nome). Comando (!) continua valendo sempre.
+       * Cada assunto com padrões mais certeiros: "quantos dias após aplicação" não é prazo de entrega;
+         "atacado parcela?" responde o pagamento; "atacado tem seguro?" / "se cair reembolsa?" respondem
+         o seguro.
+       * Respostas novas: seguro, frete grátis, rastreio (onde está meu pedido), como comprar,
+         calculadora (diluição/UI), protocolo, confiança, e BUSCA DE PRODUTO no catálogo do site
+         ("vocês têm X?", "tem X no site?", !produto X) com preço, disponibilidade e link.
+       * SEM DUPLICADO: o mesmo webhook chegando 2x contava 2 strikes (23/10: participante removido
+         no que devia ser o 2º aviso) e postava aviso dobrado. Agora cada mensagem só é tratada uma
+         vez (trava atômica por messageId com ETag do Firebase) e as travas de tempo também são atômicas.
+       * Textos revistos: atacado com os 2 estoques (CDE e PJC), mínimo por estoque, cartão em 12x e
+         seguro; transportadora recomendando a Transportadora (única com seguro); frete por estado com
+         a linha do frete grátis; origem com os 2 estoques do Paraguai; site com a Minha Conta.
    v7: texto padrão do !prazo com os PRAZOS NOVOS (tabela por estado aprovada em 29/09; postagem
        varejo 3 dias úteis, atacado 6). O texto que vale no grupo é o do Firebase (painel VIP, aba Textos).
    v6: LINKS LIBERADOS pelo painel (aba Exceções) — grupo_vip/config/links_liberados.
@@ -206,13 +223,58 @@ async function telegram(texto) {
 
 /* ----------------------------------------------------------- trava de tempo
    Impede o bot de repetir a mesma resposta. Grava o timestamp no Firebase.
-   Retorna true quando PODE falar.                                            */
+   Retorna true quando PODE falar.
+   v8: ATÔMICA. Até a v7 era "lê, confere, grava" — duas chamadas do webhook ao mesmo tempo
+   liam as duas "livre" e as duas falavam (aviso dobrado no grupo em 14/10 e 21/10).
+   Agora lê com ETag e grava com if-match: só uma das duas consegue (a outra leva 412).
+   Firebase fora do ar = deixa passar (melhor falar 2x do que calar o bot).              */
+async function fbLerComEtag(caminho) {
+  var r = await fetch(fbUrl(caminho), { headers: { 'X-Firebase-ETag': 'true' } });
+  if (!r.ok) return null;
+  return { etag: r.headers.get('ETag'), valor: await r.json() };
+}
+async function fbGravarSeIgual(caminho, etag, valor) {
+  var r = await fetch(fbUrl(caminho), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'if-match': etag },
+    body: JSON.stringify(valor)
+  });
+  return r.status !== 412 && r.ok;
+}
 async function travaOk(chave, minutos) {
-  var agora = Date.now();
-  var reg = await fbGet(RAIZ + '/travas/' + chave);
-  if (reg && reg.t && (agora - reg.t) < minutos * 60000) return false;
-  await fbPut(RAIZ + '/travas/' + chave, { t: agora });
-  return true;
+  var agora = Date.now(), caminho = RAIZ + '/travas/' + chave;
+  try {
+    var lido = await fbLerComEtag(caminho);
+    if (!lido || !lido.etag) return true;
+    var reg = lido.valor;
+    if (reg && reg.t && (agora - reg.t) < minutos * 60000) return false;
+    return await fbGravarSeIgual(caminho, lido.etag, { t: agora });
+  } catch (e) { return true; }
+}
+
+/* v8: cada mensagem é tratada UMA vez. Em 23/10 o mesmo link chegou 2x pelo webhook, contou
+   2 strikes e o participante saiu do grupo no que devia ser o 2º aviso (em 14/10 o aviso de
+   remoção saiu dobrado). Marca vitaflow_sync/grupo_vip/vistos/<dia>/<messageId> de forma atômica;
+   quem chegar depois desiste. Sem messageId (não deveria acontecer) = segue como antes.        */
+function diaBRT() {
+  return new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10).replace(/-/g, '');
+}
+async function primeiraVez(messageId) {
+  if (!messageId) return true;
+  var dia = diaBRT();
+  var caminho = RAIZ + '/vistos/' + dia + '/' + String(messageId).replace(/[.#$\/\[\]]/g, '_');
+  try {
+    var lido = await fbLerComEtag(caminho);
+    if (!lido || !lido.etag) return true;
+    if (lido.valor !== null) return false;
+    var ok = await fbGravarSeIgual(caminho, lido.etag, Date.now());
+    /* faxina: de vez em quando apaga o dia de anteontem (o nó não cresce pra sempre) */
+    if (ok && Math.random() < 0.05) {
+      var ante = new Date(Date.now() - 3 * 3600000 - 2 * 86400000).toISOString().slice(0, 10).replace(/-/g, '');
+      try { await fetch(fbUrl(RAIZ + '/vistos/' + ante), { method: 'DELETE' }); } catch (e2) {}
+    }
+    return ok;
+  } catch (e) { return true; }
 }
 
 /* ------------------------------------------------------------ data/hora BRT
@@ -302,24 +364,83 @@ var T = {
 
   transportadora:
 '🚚 *COMO ENVIAMOS*\n⠀\n' +
-'Trabalhamos com os *Correios* e com as principais transportadoras do mercado: *Jadlog, Loggi, J&T Express e Total Express*.\n⠀\n' +
-'🛡️ *Seguro gratuito* contra apreensão e extravio — *exclusivamente* para os envios feitos via *transportadora*.\n⠀\n' +
-'No fechamento você escolhe entre *PAC*, *SEDEX* e *Transportadora*.',
+'No fechamento do pedido você escolhe:\n' +
+'🚛 *Transportadora* (Jadlog, Loggi, J&T Express ou Total Express) — com *seguro grátis* contra apreensão e extravio\n' +
+'📮 *PAC* ou ⚡ *SEDEX* (Correios) — *sem* seguro\n⠀\n' +
+'👉 A gente recomenda a *Transportadora*: é a única opção com seguro.',
 
   atacado:
 '🏭 *ATACADO VITAFLOW*\n⠀\n' +
-'Agora você compra no atacado *direto pelo site*, 24h por dia, sem fila de atendimento:\n👉 *vitaflowoficial.com/pages/atacado*\n⠀\n' +
-'✅ *FRETE GRÁTIS* pro Brasil inteiro\n✅ Pedido mínimo de *R$ 3.000* — pode misturar produtos\n' +
-'✅ Catálogo ao vivo, com o preço do dia e foto de cada produto\n✅ PIX ou cartão\n⠀\n' +
-'Prefere pelo WhatsApp? A *Athena* também fecha o seu atacado, também com *frete grátis*:\n🤖 wa.me/5511926100192\n⠀\n' +
-'_No atacado não entram os 3% nem cupom — o benefício é o frete grátis._',
+'Compra direto pelo site, 24h, com o preço do dia:\n👉 *vitaflowoficial.com/pages/atacado*\n⠀\n' +
+'Agora são *2 estoques*: *Ciudad del Este* e *Pedro Juan Caballero* — você escolhe na página.\n⠀\n' +
+'✅ *Frete grátis* para todo o Brasil\n' +
+'✅ Pedido mínimo de *R$ 3.000 por estoque* (pode misturar produtos do mesmo estoque)\n' +
+'✅ *Pix* ou *cartão em até 12x*\n' +
+'✅ *Seguro grátis* contra apreensão e extravio\n⠀\n' +
+'Cada estoque é um pedido separado. Prefere pelo WhatsApp? A *Athena* também fecha o seu atacado:\n🤖 wa.me/5511926100192\n⠀\n' +
+'_Atacado não entra em cupom nem promoção — o benefício é o frete grátis._',
+
+  atacado_pagamento:
+'💳 *ATACADO: PIX OU CARTÃO EM ATÉ 12x*\n⠀\n' +
+'Na página do atacado tem o botão *"Simular parcelas"* — você vê as parcelas antes de fechar.\n' +
+'👉 *vitaflowoficial.com/pages/atacado*\n⠀\n' +
+'Frete grátis e pedido mínimo de *R$ 3.000 por estoque*.',
+
+  seguro:
+'🛡️ *SEGURO GRÁTIS*\n⠀\n' +
+'Cobre *apreensão e extravio*, sem custo nenhum, nos envios por *Transportadora* — no varejo e no atacado.\n⠀\n' +
+'Se acontecer, você não fica no prejuízo: o pedido é *reenviado ou reembolsado*. É só falar com a nossa logística:\n' +
+'💬 wa.me/447537155718 (seg a sex 8h–18h · sáb 9h–14h)\n⠀\n' +
+'⚠️ *PAC e SEDEX (Correios) não têm o seguro.* Na hora de fechar, escolha *Transportadora*.',
+
+  frete_gratis:
+'🚚 *FRETE GRÁTIS*\n⠀\n' +
+'• *Varejo:* automático em pedidos a partir de *R$ 1.000* em produtos — sem cupom, aparece direto no carrinho.\n' +
+'• *Atacado:* sempre grátis (pedido mínimo de R$ 3.000 por estoque).\n⠀\n' +
+'Não acumula com cupom ou outra promoção: se o pedido tiver mais de um benefício, o carrinho mostra as opções e você escolhe a melhor.\n⠀\n' +
+'🛡️ O seguro grátis continua valendo na *Transportadora*.',
+
+  rastreio:
+'🔎 *ONDE ESTÁ O MEU PEDIDO?*\n⠀\n' +
+'Acompanhe por aqui, a qualquer hora:\n' +
+'👉 *vitaflowoficial.com/pages/rastrear-pedido*\n' +
+'👉 ou na sua *Minha Conta*: vitaflowoficial.com/pages/minha-conta\n⠀\n' +
+'Quando o pedido é postado, você também recebe um e-mail com o rastreio.\n⠀\n' +
+'Algo diferente do esperado? Fale com a logística:\n💬 wa.me/447537155718 (seg a sex 8h–18h · sáb 9h–14h)',
+
+  comprar:
+'🛒 *COMO COMPRAR NA VITAFLOW*\n⠀\n' +
+'🌐 *No site*, 24h: *vitaflowoficial.com* — Pix ou cartão em até 12x\n' +
+'🤖 *Com a Athena*, no WhatsApp: wa.me/5511926100192\n' +
+'💬 *Atendimento:* wa.me/5511911338515\n⠀\n' +
+'🏭 Atacado (a partir de R$ 3.000, frete grátis): vitaflowoficial.com/pages/atacado',
+
+  calculadora:
+'🧮 *CALCULADORA DE PEPTÍDEOS*\n⠀\n' +
+'Quanto de água colocar e quantas unidades (UI) marcar na seringa — a calculadora faz a conta pra você, de graça:\n' +
+'👉 *vitaflowoficial.com/pages/calculadora-de-peptideos*\n⠀\n' +
+'_Cada marca tem a sua concentração: confira a do seu frasco antes de calcular._',
+
+  protocolo:
+'📋 *GERADOR DE PROTOCOLOS*\n⠀\n' +
+'Monte um protocolo de peptídeos ou de hormônios em 2 minutos, de graça:\n' +
+'👉 *vitaflowoficial.com/pages/gerador-de-protocolo*\n⠀\n' +
+'_É material de referência — a dose certa pra você deve ser acompanhada por um profissional de saúde._',
+
+  confianca:
+'💙 *SOBRE A VITAFLOW*\n⠀\n' +
+'São *8 anos* de mercado. Se algo der errado com o seu pedido, a gente resolve: *reenvio, troca ou reembolso*.\n⠀\n' +
+'🛡️ Escolha *Transportadora* no fechamento — tem seguro grátis contra apreensão e extravio.\n' +
+'🔎 Acompanhe o pedido em *vitaflowoficial.com/pages/rastrear-pedido*\n⠀\n' +
+'E aqui no grupo você vê, todo dia, gente mostrando o pedido que chegou. 📦',
 
   site:
 '🛒 *LINKS OFICIAIS VITAFLOW*\n⠀\n' +
 '🌐 Loja → *vitaflowoficial.com*\n📦 Rastrear pedido → *vitaflowoficial.com/pages/rastrear-pedido*\n' +
 '🧮 Calculadora de Peptídeos → *vitaflowoficial.com/pages/calculadora-de-peptideos*\n' +
 '📋 Gerador de Protocolos → *vitaflowoficial.com/pages/gerador-de-protocolo*\n' +
-'🏭 Atacado → *vitaflowoficial.com/pages/atacado*\n⠀\n' +
+'🏭 Atacado → *vitaflowoficial.com/pages/atacado*\n' +
+'👤 Minha Conta (pedidos e rastreio) → *vitaflowoficial.com/pages/minha-conta*\n⠀\n' +
 '🤖 Athena, consultora 24h → wa.me/5511926100192\n⠀\n' +
 '💬 *Atendimento:*\n• (11) 91133-8515 → wa.me/5511911338515\n• +44 7537 155723 → wa.me/447537155723\n⠀\n' +
 '📧 *E-mail:* contato@vitaflowoficial.com\n⠀\n' +
@@ -336,7 +457,7 @@ var T = {
 '📦 *DE ONDE SAI O SEU PEDIDO*\n⠀\n' +
 'A VitaFlow trabalha com estoques em *lugares diferentes*, pra ter sempre o produto disponível pra você:\n⠀\n' +
 '🏭 *São Paulo* — 3 estoques\n🏭 *Mato Grosso do Sul*\n' +
-'🇵🇾 *Paraguai* — de onde sai o *atacado*, com uma logística própria e por isso com prazo maior\n⠀\n' +
+'🇵🇾 *Paraguai* — *Ciudad del Este* e *Pedro Juan Caballero*, de onde sai o *atacado*, com logística própria e por isso com prazo maior\n⠀\n' +
 'No varejo, cada produto sai de *SP* ou de *MS*, conforme a disponibilidade do momento.\n⠀\n' +
 'Por isso uma mesma compra pode chegar em *até 3 envios separados*, em dias diferentes. Você recebe *um número para cada envio* e acompanha todos no mesmo lugar:\n🔎 *vitaflowoficial.com/pages/rastrear-pedido*\n⠀\n' +
 '✅ *E você paga UM frete só.* A logística dos envios fica por nossa conta.',
@@ -349,7 +470,12 @@ var T = {
 '👉 Veja os seus números: *vitaflowoficial.com/pages/sorteio*',
 
   frete_sem_uf:
-'🚚 Me diz o *estado* que eu te passo o frete!\n⠀\nExemplo: *!frete RJ* ou *frete para a Bahia*'
+'🚚 Me diz o *estado* que eu te passo o valor do frete!\n⠀\nExemplo: *!frete RJ* ou *quanto é o frete pra Bahia?*\n⠀\n' +
+'🎁 Em pedidos de varejo a partir de *R$ 1.000* o frete é grátis.',
+
+  produto_nada:
+'🔎 Não achei *{BUSCA}* no site agora.\n⠀\n' +
+'Dá uma olhada na loja (*vitaflowoficial.com*) ou pergunta pra *Athena*: wa.me/5511926100192'
 };
 
 async function carregarTextos() {
@@ -419,25 +545,139 @@ async function respostaFrete(texto) {
     '📮 PAC — *' + reais(no.PAC) + '*\n' +
     '⚡ SEDEX — *' + reais(no.SEDEX) + '*\n' +
     '🚛 Transportadora — *' + reais(no.Transportadora) + '*\n⠀\n' +
-    '🛡️ O *seguro gratuito* contra apreensão e extravio vale *só* para envios por *transportadora*.';
+    '🛡️ O *seguro grátis* contra apreensão e extravio vale *só* na *Transportadora*.\n' +
+    '🎁 Pedidos de varejo a partir de *R$ 1.000*: frete grátis automático.';
 }
 
-/* ------------------------------------------------------------- roteamento */
+/* ------------------------------------------------------- busca de produto (v8)
+   "vocês têm X?", "tem X no site?", !produto X → procura no catálogo público da loja
+   (a mesma busca do site) e devolve até 4 produtos com preço, disponibilidade e link.
+   Só dados públicos da vitrine. Pergunta natural sem achado = fica calado (não polui o grupo);
+   no comando responde "não achei".                                                          */
+var LOJA = 'https://vitaflowoficial.com';
+var PALAVRAS_VAZIAS = ' o a os as um uma uns umas de da do das dos pra para por com e ou no na nos nas ai aqui la ' +
+  'ainda tambem tbm vcs voces vc voce site loja vita vitaflow vender venda vende vendem tem ter esse essa esses essas isso ' +
+  'disponivel estoque agora hoje alguma algum previsao chegar quando volta voltar ';
+function limparBusca(q) {
+  var t = normaliza(q).replace(/[?!.,;:()"'*_~]/g, ' ').replace(/\s+/g, ' ').trim();
+  var p = t.split(' ').filter(function (w) { return w && PALAVRAS_VAZIAS.indexOf(' ' + w + ' ') < 0; });
+  return p.join(' ').trim();
+}
+/* devolve o texto procurado, ou null se a mensagem não é um "vocês têm X?" */
+function extrairBuscaProduto(texto) {
+  var t = normaliza(texto).replace(/\s+/g, ' ').trim();
+  var m = t.match(/^!(produto|tem|preco)\s+(.{2,60})$/);
+  if (m) return { q: m[2], cmd: true };
+  if (/\b(desse|dessa|deste|desta|esse|essa|isso|aquele|aquela)\b/.test(t)) return null;   /* fala de foto/mensagem anterior */
+  var pergunta = String(texto).indexOf('?') >= 0;
+  /* "vocês têm X?" — só no plural/nome da loja ("vc tem que ver…" é papo entre membros) */
+  m = t.match(/^(?:(?:bom dia|boa tarde|boa noite|ola|oi|pessoal|galera)[ ,!]*)*(?:voces|vcs|a vita|a vitaflow|vitaflow)\s+(?:tem|vende|vendem|trabalha com|trabalham com)\s+(?:o |a |os |as )?(.{2,50}?)(?:\s+(?:no site|ai|a venda|pra vender|disponivel))?\s*\??$/);
+  if (m && !/^(que|q|alguma previsao|previsao)\b/.test(m[1])) return { q: m[1], cmd: false };
+  m = t.match(/\b(?:voces|vcs|a vita|a vitaflow|vitaflow)\s+(?:tem|vende|vendem)\s+(?:o |a |os |as )?(.{2,50}?)\s*\?/);
+  if (m && pergunta && !/^(que|q|alguma previsao|previsao)\b/.test(m[1])) return { q: m[1], cmd: false };
+  m = t.match(/\btem\s+(?:o |a |os |as )?(.{2,40}?)\s+(?:no site|na vita|na vitaflow|pra vender|a venda)\s*\?/);
+  if (m && pergunta && !/^(tudo|algo|alguma coisa|calculadora|um agente)\b/.test(m[1])) return { q: m[1], cmd: false };
+  return null;
+}
+function reaisTxt(v) {
+  var n = Number(v); if (!(n > 0)) return '';
+  return 'R$ ' + n.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+async function buscarProdutos(q) {
+  try {
+    var url = LOJA + '/search/suggest.json?q=' + encodeURIComponent(q) +
+              '&resources[type]=product&resources[limit]=10&resources[options][unavailable_products]=last';
+    var r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) { console.error('[grupo-vip] busca HTTP ' + r.status); return []; }
+    var d = await r.json();
+    return (d && d.resources && d.resources.results && d.resources.results.products) || [];
+  } catch (e) { console.error('[grupo-vip] busca estourou: ' + e.message); return []; }
+}
+async function respostaProduto(busca) {
+  var q = limparBusca(busca.q);
+  if (q.length < 3) return busca.cmd ? T.produto_nada.replace('{BUSCA}', busca.q.trim()) : null;
+  var lista = await buscarProdutos(q);
+  /* só o que tem as palavras procuradas no nome (a busca do site é solta demais) */
+  var termos = q.split(' ').filter(function (w) { return w.length >= 3 || /\d/.test(w); });
+  lista = lista.filter(function (p) {
+    var n = normaliza(p.title);
+    return termos.every(function (w) { return n.indexOf(w) >= 0; });
+  });
+  if (!lista.length) return busca.cmd ? T.produto_nada.replace('{BUSCA}', busca.q.trim()) : null;
+  lista.sort(function (a, b) { return (b.available ? 1 : 0) - (a.available ? 1 : 0); });
+  var linhas = lista.slice(0, 4).map(function (p) {
+    var link = String(p.url || '').split('?')[0];
+    return '▪️ *' + p.title + '*\n' +
+           (p.available ? '   ' + reaisTxt(p.price) + ' · ✅ disponível' : '   ⛔ esgotado no momento') + '\n' +
+           '   vitaflowoficial.com' + link;
+  });
+  return '🔎 *No site agora:*\n⠀\n' + linhas.join('\n⠀\n') +
+         (lista.length > 4 ? '\n⠀\n_Tem mais opções na busca do site._' : '') +
+         '\n⠀\n🏭 Pra comprar em quantidade: vitaflowoficial.com/pages/atacado';
+}
+
+/* ------------------------------------------------------------- roteamento
+   v8: COMANDO (!) vale sempre. PALAVRA-CHAVE só com cara de pergunta — até a v7 qualquer
+   menção disparava ("tava valor bom atacado" → texto do atacado; 100+ respostas fora de hora
+   entre 19/09 e 27/10). Cada assunto tem padrões próprios, testados contra a conversa real.  */
 var GATILHOS = [
-  { chave: 'atacado',        cmd: ['!atacado'],                 palavras: ['atacado', 'por atacado', 'compra grande'] },
-  { chave: 'frete',          cmd: ['!frete'],                   palavras: ['frete', 'quanto custa o envio', 'valor do envio'] },
-  { chave: 'prazo',          cmd: ['!prazo'],                   palavras: ['prazo', 'quanto tempo demora', 'demora quanto', 'quantos dias'] },
-  { chave: 'transportadora', cmd: ['!transportadora'],          palavras: ['transportadora', 'quem entrega', 'correios', 'jadlog', 'loggi', 'total express'] },
-  { chave: 'origem',         cmd: ['!origem'],                  palavras: ['de onde sai', 'de onde vem', 'onde fica o estoque', 'sai de onde'] },
-  { chave: 'sorteio',        cmd: ['!sorteio'],                 palavras: ['sorteio', 'numero da sorte', 'numeros da sorte', 'vale-compras'] },
-  { chave: 'telegram',       cmd: ['!telegram'],                palavras: ['telegram'] },
-  { chave: 'site',           cmd: ['!site', '!links', '!ajuda'], palavras: ['link do site', 'qual o site', 'links oficiais'] }
+  { chave: 'atacado',        cmd: ['!atacado'] },
+  { chave: 'frete',          cmd: ['!frete'] },
+  { chave: 'frete_gratis',   cmd: ['!fretegratis', '!frete-gratis'] },
+  { chave: 'prazo',          cmd: ['!prazo'] },
+  { chave: 'transportadora', cmd: ['!transportadora', '!envio'] },
+  { chave: 'seguro',         cmd: ['!seguro'] },
+  { chave: 'rastreio',       cmd: ['!rastreio', '!rastrear', '!pedido'] },
+  { chave: 'origem',         cmd: ['!origem'] },
+  { chave: 'sorteio',        cmd: ['!sorteio'] },
+  { chave: 'telegram',       cmd: ['!telegram'] },
+  { chave: 'comprar',        cmd: ['!comprar'] },
+  { chave: 'calculadora',    cmd: ['!calculadora', '!diluicao'] },
+  { chave: 'protocolo',      cmd: ['!protocolo', '!gerador'] },
+  { chave: 'confianca',      cmd: ['!confianca'] },
+  { chave: 'site',           cmd: ['!site', '!links', '!ajuda'] }
 ];
 
-/* soComando=true ignora as palavras-chave e so aceita !comando.
-   E o que vale pro ADMIN desde 21/09: o VitaFlow postou a promo do atacado, a
-   palavra "atacado" estava no anuncio, e o bot respondeu com o texto pronto por
-   cima da promo dele. Quando ele quiser o texto, manda !atacado. */
+/* "é pergunta?" — ? em qualquer lugar, começa com palavra de pergunta, ou chama a Stella/bot */
+function ehPergunta(textoOriginal) {
+  var o = String(textoOriginal || '');
+  var t = normaliza(o).trim();
+  if (/\bstella\b/.test(t)) return true;
+  if (/k{3,}|\bhaha|\brsrs|\brs\b/.test(t)) return false;
+  if (o.indexOf('?') >= 0) return true;
+  if (/\bstella\b/.test(t)) return true;
+  if (/k{3,}|\bhaha|\brsrs|\brs\b/.test(t)) return false;   /* piada/zoeira não é pergunta pro bot */
+  return /^(quanto|quantos|quantas|qual|quais|como|onde|quando|alguem sabe|alguem ai|sabe se|sabem se|da pra|e possivel|gostaria de saber|quero saber|preciso saber|me fala|me diz|informac)/.test(t);
+}
+
+/* padrões por assunto (texto já normalizado: minúsculo, sem acento) */
+var RX = {
+  seguro:       /\b(tem|com|o|um|inclui|incluso|incluir|contempla|vem|ha|existe|sem|de|do|e o) seguro\b|\bseguro (contra|incluso|gratis|gratuito|vale|cobre)\b|^seguro\b|\b(apreend\w*|apreensao|extravi\w*|reembols\w*|ressarc\w*)\b|\bse (cair|for pego|pegarem|segurarem)\b|\b(caiu|cair) (o|meu) pedido\b/,
+  seguroCompra: /\be seguro (comprar|pedir|comprar aqui)\b/,
+  fretegratis:  /\bfrete (gratis|gratuito|free|zero)\b/,
+  frete:        /\bfrete\b/,
+  freteValor:   /\b(quanto|valor|custa|custo|preco|fica|sai|cobram|cobra)\b/,
+  atacado:      /\batacado\b/,
+  pagamento:    /\b(parcel\w*|cartao|credito|12x|\d+x|vezes|pix|boleto|pagamento|pagar)\b/,
+  prazoDireto:  /\bprazo\b/,
+  prazoTempo:   /\b(quanto tempo|quantos dias|demora|demoram|leva quantos|chega em quantos|em quanto tempo)\b/,
+  prazoEntrega: /\b(chega|chegar|chegam|chegou|entrega|entregar|envio|enviar|envia|postag\w*|posta|pedido|encomenda|correio|correios|transportadora|sedex|pac)\b/,
+  naoEntrega:   /\b(aplica\w*|dose|dosagem|semana|semanas|efeito|resultado|ciclo|tomar|usar|uso|treino|dieta|exame)\b/,
+  transportadora: /\b(qual|quais|que) (a |as |e a |sao as )?(transportadora|transportadoras)\b|\bquem (faz a |que )?entrega\b|\b(envia|enviam|manda|mandam|vem|vai) (por|pelos?|pela) (correios|transportadora|sedex|pac)\b|\b(pac ou sedex|sedex ou pac|transportadora ou (pac|sedex|correios)|(pac|sedex|correios) ou transportadora)\b|\bmelhor (forma de |opcao de )?envio\b/,
+  rastreio:     /\b(rastre\w*|codigo de rastreio|meu pedido|minha encomenda|meu pacote|nao chegou|nao recebi|ainda nao chegou|cade (o )?meu|status do (meu )?pedido|foi postado|em separacao|pedido feito|atualizar o pedido)\b/,
+  origem:       /\b(de onde sai|de onde vem|onde fica o estoque|sai de onde|vem de onde|sao enviados de onde)\b/,
+  sorteio:      /\b(sorteio|numero da sorte|numeros da sorte|vale-compras|vale compras)\b/,
+  telegram:     /\btelegram\b/,
+  comprar:      /\b(como (eu )?(compro|comprar|faco (o |um )?pedido|faco pra comprar)|onde (eu )?(compro|comprar)|vende direto|vendem direto|como faz pra comprar|qual (e )?o site|link do site|links oficiais)\b/,
+  calculadora:  /\b(diluir|diluo|dilua|diluicao|diluiu|dilui em|reconstituir|reconstituo|quantas ui|quantos ui|quantas unidades|quantos tracinhos|quantas marcacoes|quanto de agua|quanta agua|quantos ml|ml de agua)\b/,
+  calcNao:      /\b(vem dilu\w*|ja vem|liofiliz\w*|diluida ou|diluido ou)\b/,
+  protocolo:    /\b(protocolo de uso|qual (o |seria o )?protocolo|algum protocolo|tem (o |um )?protocolo|qual (a |seria a )?dose|qual (a |seria a )?dosagem|dosagem (diaria|semanal)|como (devo |eu )?(usar|aplicar|tomar))\b/,
+  protNao:      /\b(seu|teu|esse|desse|meu|nosso) protocolo\b|\b(tu|vc|voce|voces|vcs) (usou|usa|usaram|faz|fez)\b|\bque (vc|voce|tu) usa\b/,
+  confianca:    /\b(?:quem|alguem) ja comprou (?:aqui|nessa loja|na vita|na vitaflow|no site|com voces|com vcs)\b|\bja comprou\b.*\bconfiav|\bconfiav\w*\b.*\bja comprou\b|\b(?:loja|site|vita|vitaflow|voces|vcs|aqui)\b.*\b(?:confiavel|de confianca|serios?|golpe)\b|\b(?:confiavel|de confianca|golpe)\b.*\b(?:loja|site|vita|vitaflow|voces|vcs|aqui)\b|\be seguro (comprar|pedir)\b|\bda pra confiar\b|\bposso confiar\b/
+};
+
+/* devolve a chave da resposta, ou null.
+   soComando=true (admin) ignora palavra-chave — desde 21/09 o admin só dispara por comando. */
 function rotear(texto, soComando) {
   var t = normaliza(texto).trim();
   var i, g, j;
@@ -448,14 +688,30 @@ function rotear(texto, soComando) {
     }
   }
   if (soComando) return null;
-  for (i = 0; i < GATILHOS.length; i++) {
-    g = GATILHOS[i];
-    for (j = 0; j < g.palavras.length; j++) {
-      if (t.indexOf(normaliza(g.palavras[j])) >= 0) return g.chave;
-    }
-  }
+  if (!ehPergunta(texto)) return null;
+
+  /* ordem importa: o mais específico primeiro */
+  if (RX.confianca.test(t) && (RX.seguroCompra.test(t) || !RX.seguro.test(t))) return 'confianca';
+  if (RX.seguro.test(t)) return 'seguro';
+  if (RX.sorteio.test(t) || /\bcotas?\b/.test(t) && RX.atacado.test(t)) return 'sorteio';
+  if (RX.rastreio.test(t) && /\b(meu|minha|um) pedido\b|\bpedido (feito|na conta)\b/.test(t)) return 'rastreio';
+  if (RX.atacado.test(t)) return RX.pagamento.test(t) ? 'atacado_pagamento' : 'atacado';
+  if (RX.fretegratis.test(t)) return 'frete_gratis';
+  if (RX.frete.test(t) && (RX.freteValor.test(t) || acharUF(texto))) return 'frete';
+  if (RX.rastreio.test(t)) return 'rastreio';
+  if ((RX.prazoDireto.test(t) || (RX.prazoTempo.test(t) && RX.prazoEntrega.test(t))) && !RX.naoEntrega.test(t)) return 'prazo';
+  if (RX.transportadora.test(t)) return 'transportadora';
+  if (RX.origem.test(t)) return 'origem';
+  if (RX.telegram.test(t)) return 'telegram';
+  if (RX.comprar.test(t)) return 'comprar';
+  if (RX.calculadora.test(t) && !RX.calcNao.test(t)) return 'calculadora';
+  if (RX.protocolo.test(t) && !RX.protNao.test(t)) return 'protocolo';
   return null;
 }
+
+/* minutos de silêncio por assunto depois de responder (dose/diluição são papo constante entre os
+   membros — o bot lembra da ferramenta no máximo 1x por hora) */
+var TRAVA_MIN = { calculadora: 120, protocolo: 120, confianca: 60 };
 
 /* ============================ MODERACAO DE LINK ============================
    Regra fechada com o VitaFlow em 21/09/2026.
@@ -719,6 +975,8 @@ exports.handler = async function (event) {
     var apagar = !!motivo || !!(fora && fora.duro);
 
     if (apagar) {
+      /* v8: o mesmo webhook chegando 2x não pode contar 2 strikes */
+      if (!(await primeiraVez(body.messageId))) return { statusCode: 200, body: 'duplicado — ja tratado' };
       var apagou = await apagarMensagem(chat, body.messageId);
       var reg = await contarStrike(autor, body.senderName, paraModerar, fora ? fora.link : '');
 
@@ -772,6 +1030,7 @@ exports.handler = async function (event) {
     if (fora) {
       /* Link MOLE: nao apaga e NAO conta strike — pode ser so um espaco faltando
          depois do ponto. So o lembrete, com trava. */
+      if (!(await primeiraVez(body.messageId))) return { statusCode: 200, body: 'duplicado — ja tratado' };
       await fbPut(RAIZ + '/log/' + Date.now(), {
         tipo: 'link', acao: 'avisado', autor: autor, nome: body.senderName || '',
         link: fora.link, trecho: paraModerar.slice(0, 300), t: Date.now()
@@ -785,8 +1044,24 @@ exports.handler = async function (event) {
 
   // ---- respostas
   var chave = rotear(texto, ehAdmin);
-  if (!chave) return { statusCode: 200, body: 'sem gatilho' };
-  if (!(await travaOk('resp_' + chave, 10))) return { statusCode: 200, body: 'trava de 10min' };
+
+  /* v8: "vocês têm X?" / "tem X no site?" / !produto X → busca no catálogo da loja.
+     Só quando nenhum outro assunto bateu (pergunta de atacado/frete/prazo tem prioridade). */
+  if (!chave) {
+    var busca = extrairBuscaProduto(texto);
+    if (busca && (busca.cmd || !ehAdmin)) {
+      var chaveBusca = (busca.cmd ? 'prodcmd_' : 'prod_') + limparBusca(busca.q).replace(/[^a-z0-9]+/g, '_').slice(0, 60);
+      if (!(await travaOk(chaveBusca, 30))) return { statusCode: 200, body: 'trava produto' };
+      var resp = await respostaProduto(busca);
+      if (!resp) return { statusCode: 200, body: 'produto: nada achado (calado)' };
+      if (!(await primeiraVez(body.messageId))) return { statusCode: 200, body: 'duplicado — ja tratado' };
+      await enviar(chat, resp);
+      return { statusCode: 200, body: 'respondido: produto' };
+    }
+    return { statusCode: 200, body: 'sem gatilho' };
+  }
+  if (!(await travaOk('resp_' + chave, TRAVA_MIN[chave] || 10))) return { statusCode: 200, body: 'trava de tempo' };
+  if (!(await primeiraVez(body.messageId))) return { statusCode: 200, body: 'duplicado — ja tratado' };
 
   var msg;
   if (chave === 'frete') {
@@ -807,7 +1082,9 @@ exports.handler = async function (event) {
 
 /* exportado so pra teste local (node) — nao usado pela Netlify */
 exports._teste = {
-  rotear: rotear, ehGolpe: ehGolpe, acharUF: acharUF,
+  rotear: rotear, ehGolpe: ehGolpe, acharUF: acharUF, ehPergunta: ehPergunta,
+  extrairBuscaProduto: extrairBuscaProduto, limparBusca: limparBusca, respostaProduto: respostaProduto,
+  textos: T,
   cicloSorteio: cicloSorteio, reais: reais, ddmm: ddmm, diaSemana: diaSemana
 };
 
