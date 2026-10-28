@@ -174,6 +174,34 @@ async function status() {
   return { ok: true, ativo: cfg.ativo, limite: cfg.limite, usados: usados, restam: Math.max(0, cfg.limite - usados), pct: cfg.pct, dias: cfg.dias };
 }
 
+/* ---------- Z-API (mesma instância do bot do Grupo VIP — env ZAPI_*) ---------- */
+function zapiUrl(rota) { return 'https://api.z-api.io/instances/' + (process.env.ZAPI_INSTANCE || '') + '/token/' + (process.env.ZAPI_TOKEN || '') + '/' + rota; }
+async function zapiGet(rota) {
+  var r = await fetch(zapiUrl(rota), { headers: { 'Client-Token': process.env.ZAPI_CLIENT_TOKEN || '' } });
+  var t = await r.text(); var d = null; try { d = JSON.parse(t); } catch (e) {}
+  if (!r.ok) throw new Error('Z-API ' + r.status + ' ' + String(t).slice(0, 120));
+  return d;
+}
+/* TEMPORÁRIO (v1b, 28/10): descobrir o id do Grupo VIP 2 e o formato dos membros. Devolve só nome, id e CONTAGENS (nenhum telefone). */
+async function diagGrupos() {
+  var chats = await zapiGet('chats?page=1&pageSize=200');
+  var gs = (Array.isArray(chats) ? chats : []).filter(function (c) { return c && (c.isGroup || /-group$|@g\.us$/.test(String(c.phone || ''))); }).slice(0, 15);
+  var out = [];
+  for (var i = 0; i < gs.length; i++) {
+    var g = { id: gs[i].phone, nome: gs[i].name || '' };
+    try {
+      var m = await zapiGet('group-metadata/' + encodeURIComponent(gs[i].phone));
+      var ps = (m && m.participants) || [];
+      g.nomeGrupo = m && m.subject; g.total = ps.length;
+      g.comTelefone = ps.filter(function (p) { var d = soDig(p.phone); return d.length >= 10 && d.length <= 13 && !/lid/i.test(String(p.phone)); }).length;
+      g.campos = ps[0] ? Object.keys(ps[0]).join(',') : '';
+      g.exemploFormato = ps[0] ? String(ps[0].phone || '').replace(/\d/g, '9').slice(0, 30) : '';
+    } catch (e) { g.erro = e.message.slice(0, 120); }
+    out.push(g);
+  }
+  return { ok: true, grupos: out };
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
   if (!FB_SECRET) return resp(500, { ok: false, erro: 'falha', msg: 'Servidor sem configuração (FIREBASE_SECRET).' });
@@ -181,6 +209,7 @@ exports.handler = async function (event) {
     if (event.httpMethod === 'GET') {
       var q = event.queryStringParameters || {};
       if (q.acao === 'status') return resp(200, await status());
+      if (q.acao === 'diag_grupos') return resp(200, await diagGrupos());
       return resp(200, { ok: true, servico: 'cupom-vip2 v1' });
     }
     var body = {};
