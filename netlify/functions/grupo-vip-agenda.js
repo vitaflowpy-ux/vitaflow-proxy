@@ -1,4 +1,12 @@
-/* grupo-vip-agenda.js — Agendador dos posts do Bot do Grupo VIP (19/09/2026) — v7 (21/09/2026)
+/* grupo-vip-agenda.js — Agendador dos posts do Bot do Grupo VIP (19/09/2026) — v8 (28/10/2026)
+ *
+ * v8 (28/10/2026, Thiago: "todas as postagens devem seguir nos dois grupos"): cada post sai no
+ *   VitaFlow VIP #1 (GRUPO_VIP_ID) E no VitaFlow VIP #2 (GRUPO_VIP2_ID; sem a env, usa o mesmo id
+ *   padrao do grupo-vip.js v9). Ordem: #1, pausa, #2. Fixar vale nos dois.
+ *   Nao repete em grupo que ja recebeu: cada grupo que deu certo fica gravado na hora em
+ *   agenda/<id>/feito_grupos/<1|2> = messageId. Se o #2 falhar, a nova tentativa manda SO o #2.
+ *   Quando os dois saem, feito_grupos zera (a proxima ocorrencia de um post repetido manda nos dois).
+ *   messageId = o do #1 (como antes) · messageId2 = o do #2.
  *
  * Companheiro do grupo-vip.js. Enquanto o grupo-vip.js RESPONDE (webhook do Z-API),
  * este PUBLICA: de tempos em tempos olha a fila em vitaflow_sync/grupo_vip/agenda,
@@ -27,7 +35,7 @@
  * Post cuja hora cai dentro da janela so sai quando ela fechar — ver horarioEfetivo().
  *
  * Variaveis de ambiente (projeto Netlify vitaflow-proxy):
- *   ZAPI_INSTANCE, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN, FIREBASE_SECRET, GRUPO_VIP_ID,
+ *   ZAPI_INSTANCE, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN, FIREBASE_SECRET, GRUPO_VIP_ID, GRUPO_VIP2_ID (v8),
  *   TELEGRAM_TOKEN, TELEGRAM_CHAT, CRON_SECRET
  */
 
@@ -44,6 +52,15 @@ var ZAPI_TOKEN = process.env.ZAPI_TOKEN || '';
 var CLIENT_TOKEN = process.env.ZAPI_CLIENT_TOKEN || '';
 var FB_SECRET = process.env.FIREBASE_SECRET || '';
 var GRUPO_VIP_ID = (process.env.GRUPO_VIP_ID || '').trim();
+/* v8: VitaFlow VIP #2 — mesmo id padrao do grupo-vip.js v9. */
+var GRUPO_VIP2_ID = (process.env.GRUPO_VIP2_ID || '120363414079749398-group').trim();
+/* Grupos que recebem os posts, na ordem de envio. */
+function gruposDoPost() {
+  var g = [];
+  if (GRUPO_VIP_ID) g.push({ n: '1', id: GRUPO_VIP_ID, nome: 'VIP #1' });
+  if (GRUPO_VIP2_ID) g.push({ n: '2', id: GRUPO_VIP2_ID, nome: 'VIP #2' });
+  return g;
+}
 var TG_TOKEN = process.env.TELEGRAM_TOKEN || '';
 var TG_CHAT = process.env.TELEGRAM_CHAT || '';
 var CRON_SECRET = process.env.CRON_SECRET || '';
@@ -142,11 +159,11 @@ async function telegram(texto) {
 }
 
 /* Envia e devolve o messageId, que o pin precisa. */
-async function enviarTexto(texto) {
+async function enviarTexto(grupoId, texto) {
   var r = await fetch(zapiUrl('send-text'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Client-Token': CLIENT_TOKEN },
-    body: JSON.stringify({ phone: GRUPO_VIP_ID, message: texto })
+    body: JSON.stringify({ phone: grupoId, message: texto })
   });
   var corpo = null;
   try { corpo = await r.json(); } catch (e) { corpo = null; }
@@ -159,11 +176,11 @@ async function enviarTexto(texto) {
 /* Post com imagem sai por /send-image, com o texto como LEGENDA. A imagem e uma URL
    do CDN do Shopify, subida pelo painel via atacado-imagem-upload — no Firebase fica
    so a URL. Devolve o messageId, igual ao texto, pro pin funcionar do mesmo jeito. */
-async function enviarImagem(urlImagem, legenda) {
+async function enviarImagem(grupoId, urlImagem, legenda) {
   var r = await fetch(zapiUrl('send-image'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Client-Token': CLIENT_TOKEN },
-    body: JSON.stringify({ phone: GRUPO_VIP_ID, image: urlImagem, caption: legenda || '' })
+    body: JSON.stringify({ phone: grupoId, image: urlImagem, caption: legenda || '' })
   });
   var corpo = null;
   try { corpo = await r.json(); } catch (e) { corpo = null; }
@@ -173,16 +190,42 @@ async function enviarImagem(urlImagem, legenda) {
   return (corpo && (corpo.messageId || corpo.id)) || '';
 }
 
+/* v8: manda UM post num grupo — mesma regra da v6 (limites do WhatsApp). Com imagem: legenda = 1a
+   parte (ate LIMITE_LEGENDA, cortada no fim de um paragrafo) e o resto vai como texto em seguida.
+   Sem imagem: texto partido em pedacos de ate LIMITE_TEXTO. O messageId (pro pin) e o do 1o envio. */
+async function enviarPostNoGrupo(grupoId, post) {
+  var textoPost = String(post.texto || '');
+  var messageId = '', continuacao = [];
+  if (post.imagem) {
+    var legendaPartes = partirTexto(textoPost, LIMITE_LEGENDA);
+    var legenda = legendaPartes.length ? legendaPartes[0] : '';
+    var sobra = textoPost.slice(textoPost.indexOf(legenda) + legenda.length).replace(/^[\s⠀]+/, '');
+    messageId = await enviarImagem(grupoId, String(post.imagem), legenda);
+    if (sobra) continuacao = partirTexto(sobra, LIMITE_TEXTO);
+  } else {
+    var textoPartes = partirTexto(textoPost, LIMITE_TEXTO);
+    messageId = await enviarTexto(grupoId, textoPartes.length ? textoPartes[0] : textoPost);
+    continuacao = textoPartes.slice(1);
+  }
+  var partes = 1;
+  for (var c = 0; c < continuacao.length; c++) {
+    await dormir(PAUSA_MS);
+    await enviarTexto(grupoId, continuacao[c]);
+    partes++;
+  }
+  return { messageId: messageId, partes: partes };
+}
+
 /* Fixar e OPCIONAL: se falhar, o post ja foi e nao vamos reenviar por causa disso.
    Retorna o motivo da falha (string) ou '' se deu certo. */
-async function fixar(messageId, duracao) {
+async function fixar(grupoId, messageId, duracao) {
   if (!messageId) return 'sem messageId no retorno do envio';
   try {
     var r = await fetch(zapiUrl('pin-message'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Client-Token': CLIENT_TOKEN },
       body: JSON.stringify({
-        phone: GRUPO_VIP_ID,
+        phone: grupoId,
         messageId: messageId,
         messageAction: 'pin',
         pinMessageDuration: duracao
@@ -453,38 +496,38 @@ exports.handler = async function (event) {
        grupo e pior do que atrasar. */
     await fbPatch(RAIZ + '/agenda/' + id, { status: 'enviando', lock: Date.now() });
 
+    /* v8: grupos que JA receberam esta ocorrencia (tentativa anterior que falhou no meio). */
+    var feitos = (post.feito_grupos && typeof post.feito_grupos === 'object') ? post.feito_grupos : {};
+    var gruposEnvio = gruposDoPost();
     try {
-      /* v6: respeita os limites do WhatsApp. Com imagem: legenda = 1a parte (ate LIMITE_LEGENDA,
-         cortada no fim de um paragrafo) e o resto vai como texto em seguida. Sem imagem: texto
-         partido em pedacos de ate LIMITE_TEXTO. O messageId (pro pin) e SEMPRE o do 1o envio. */
-      var textoPost = String(post.texto || '');
-      var messageId = '', continuacao = [];
-      if (post.imagem) {
-        var legendaPartes = partirTexto(textoPost, LIMITE_LEGENDA);
-        var legenda = legendaPartes.length ? legendaPartes[0] : '';
-        var sobra = textoPost.slice(textoPost.indexOf(legenda) + legenda.length).replace(/^[\s\u2800]+/, '');
-        messageId = await enviarImagem(String(post.imagem), legenda);
-        if (sobra) continuacao = partirTexto(sobra, LIMITE_TEXTO);
-      } else {
-        var textoPartes = partirTexto(textoPost, LIMITE_TEXTO);
-        messageId = await enviarTexto(textoPartes.length ? textoPartes[0] : textoPost);
-        continuacao = textoPartes.slice(1);
-      }
-      var partes = 1;
-      for (var c = 0; c < continuacao.length; c++) {
-        await dormir(PAUSA_MS);
-        await enviarTexto(continuacao[c]);
-        partes++;
-      }
-      var aviso = partes > 1 ? ('saiu em ' + partes + ' mensagens (limite do WhatsApp)') : '';
-      if (post.fixar) {
-        var erroPin = await fixar(messageId, String(post.fixar));
-        if (erroPin) {
-          aviso = (aviso ? aviso + ' · ' : '') + 'enviado, mas nao fixou: ' + erroPin;
-          await telegram('📌 Post do Grupo VIP foi enviado mas NAO fixou.\n' + erroPin +
-            '\n(o numero do bot e admin do grupo?)');
+      var avisos = [], partesMax = 1, ids = {};
+      for (var g = 0; g < gruposEnvio.length; g++) {
+        var grp = gruposEnvio[g];
+        if (feitos[grp.n]) { ids[grp.n] = (feitos[grp.n] === 'ok') ? '' : String(feitos[grp.n]); continue; }   // ja foi nesse grupo — nao repete
+        if (g > 0) await dormir(PAUSA_MS);
+        var r1;
+        try {
+          r1 = await enviarPostNoGrupo(grp.id, post);
+        } catch (eg) {
+          throw new Error(grp.nome + ': ' + eg.message);
+        }
+        ids[grp.n] = r1.messageId || '';
+        partesMax = Math.max(partesMax, r1.partes);
+        /* grava NA HORA que esse grupo recebeu, pra uma falha no proximo nao reenviar este */
+        await fbPatch(RAIZ + '/agenda/' + id + '/feito_grupos', (function (k, v) { var o = {}; o[k] = v || 'ok'; return o; })(grp.n, r1.messageId));
+        if (post.fixar) {
+          var erroPin = await fixar(grp.id, r1.messageId, String(post.fixar));
+          if (erroPin) {
+            avisos.push(grp.nome + ' enviado, mas nao fixou: ' + erroPin);
+            await telegram('📌 Post do Grupo VIP foi enviado no ' + grp.nome + ' mas NAO fixou.\n' + erroPin +
+              '\n(o numero do bot e admin do ' + grp.nome + '?)');
+          }
         }
       }
+      var partes = partesMax;
+      var aviso = (partes > 1 ? ['saiu em ' + partes + ' mensagens (limite do WhatsApp)'] : []).concat(avisos).join(' · ');
+      var messageId = ids['1'] || '';
+      var messageId2 = ids['2'] || '';
       var vezes = Number(post.vezes || 0) + 1;
       var prox = proximaVez(post.quando, post.repetir, post.intervalo, Date.now(), post.ate, post.dias, post.hora);
       if (prox) {
@@ -495,6 +538,8 @@ exports.handler = async function (event) {
           quando: prox,
           enviado_em: Date.now(),
           messageId: messageId || '',
+          messageId2: messageId2 || '',
+          feito_grupos: null,
           aviso: aviso,
           partes: partes,
           vezes: vezes,
@@ -506,6 +551,8 @@ exports.handler = async function (event) {
           status: 'enviado',
           enviado_em: Date.now(),
           messageId: messageId || '',
+          messageId2: messageId2 || '',
+          feito_grupos: null,
           aviso: aviso,
           partes: partes,
           vezes: vezes,
@@ -523,10 +570,14 @@ exports.handler = async function (event) {
         erro: String(e.message).slice(0, 300),
         lock: null
       });
+      /* v8: desistiu = zera os grupos ja feitos (se reagendar no painel, sai nos dois de novo).
+         Vai tentar de novo = NAO mexe: o grupo que ja recebeu continua marcado e nao repete. */
+      if (desiste) await fbPatch(RAIZ + '/agenda/' + id, { feito_grupos: null });
       falhas++;
       detalhes.push({ id: id, ok: false, tentativa: tent, erro: String(e.message).slice(0, 200) });
       await telegram('❌ Post do Grupo VIP falhou (tentativa ' + tent + (desiste ? ', DESISTINDO' : '') +
-        ')\n\n' + String(e.message).slice(0, 300));
+        ')\n\n' + String(e.message).slice(0, 300) +
+        (Object.keys(ids || {}).length ? '\n(ja tinha saido em: ' + Object.keys(ids).map(function (k) { return 'VIP #' + k; }).join(', ') + ' — nao repete la)' : ''));
     }
 
     if (i < lote.length - 1) await dormir(PAUSA_MS);
