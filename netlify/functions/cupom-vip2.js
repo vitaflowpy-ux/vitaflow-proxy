@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   cupom-vip2.js — CUPOM PESSOAL DO GRUPO VIP 2 (VitaFlow)  ·  v1  ·  28/10/2026
+   cupom-vip2.js — CUPOM PESSOAL DO GRUPO VIP 2 (VitaFlow)  ·  v2  ·  28/10/2026
+   v2 (28/10, Thiago: "acrescenta nessa página o telefone, pois este deverá estar no grupo novo" / "confere o grupo e mostra um aviso
+   para o cliente que ele deve estar no grupo para receber o cupom"): pede o telefone (WhatsApp) e só gera se ele estiver no Grupo VIP 2
+   (membros lidos pela Z-API, mesma instância do bot do grupo — env ZAPI_INSTANCE/ZAPI_TOKEN/ZAPI_CLIENT_TOKEN). Aceita com ou sem 55 e
+   com ou sem o 9. Fora do grupo → erro 'fora_do_grupo' com o aviso. Z-API fora → 'grupo_indisponivel' (tente de novo) + Telegram.
+   Quem já tinha cupom pelo CPF recebe o mesmo, sem nova conferência. O telefone vai junto no registro (tel).
    Pedido do Thiago (28/10): "quero uma funcionalidade para o cliente entrar em um link e preencher o nome e o cpf dele, então o
    cupom é gerado automaticamente e vinculado àquele cpf" · 5% · primeiros 100 · 30 dias · não acumula ("sim, pode fazer tudo").
 
@@ -8,8 +13,9 @@
    Página que chama: vitaflowoficial.com/pages/vip2 (formulário nome + CPF).
 
    AÇÕES (POST JSON, CORS aberto):
-     { acao:'gerar', nome, cpf }     → { ok:true, codigo, expira, pct, jaTinha } · { ok:false, erro, msg }
-                                       erro: cpf_invalido · nome_invalido · esgotado · encerrada · falha
+     { acao:'gerar', nome, telefone, cpf } → { ok:true, codigo, expira, pct, jaTinha } · { ok:false, erro, msg }
+                                       erro: nome_invalido · tel_invalido · cpf_invalido · esgotado · encerrada ·
+                                             fora_do_grupo · grupo_indisponivel · falha
      { acao:'conferir', codigo, cpf } → { ok:true, travado:false } (cupom que não é do VIP 2)
                                        { ok:true, travado:true, confere:true|false }
      GET ?acao=status                 → { ok:true, ativo, limite, usados, restam, pct, dias }
@@ -22,9 +28,9 @@
        maxUsos 1, usosAtual 0, origem 'grupo-vip2', travaCpf true.
      • PRIVACIDADE: a coleção cupons_vitaflow é aberta para LEITURA (o site lê). Por isso o CPF e o nome NÃO vão nela — nem no id do
        documento (o id é um hash do CPF com o segredo do servidor). CPF e nome ficam só no Realtime Database (fechado):
-         vitaflow_sync/cupom_vip2/cpf/<cpf 11 dígitos> = { nome, codigo, criado, expira }
-         vitaflow_sync/cupom_vip2/codigo/<CÓDIGO>      = { cpf, nome, criado }
-         vitaflow_sync/cupom_vip2/config               = { ativo, limite, pct, dias, prefixo }   (opcional; sem ele vale o padrão)
+         vitaflow_sync/cupom_vip2/cpf/<cpf 11 dígitos> = { nome, tel, codigo, criado, expira }
+         vitaflow_sync/cupom_vip2/codigo/<CÓDIGO>      = { cpf, nome, tel, criado }
+         vitaflow_sync/cupom_vip2/config               = { ativo, limite, pct, dias, prefixo, grupo }   (opcional; sem ele vale o padrão)
      • Quem confere o CPF: carrinho do site (ao aplicar e ao finalizar), Athena (pede o CPF do titular) e Apps Script (avisa no
        Telegram se um pedido usar o cupom com outro CPF).
    Variáveis de ambiente (já existem no vitaflow-proxy): FIREBASE_SECRET · TELEGRAM_TOKEN (aviso de esgotado).
@@ -36,7 +42,7 @@ var FB_SECRET = process.env.FIREBASE_SECRET || '';
 var RAIZ = 'vitaflow_sync/cupom_vip2';
 var FS_PROJETO = 'pricehub-f0236';
 var FS_KEY = process.env.FIRESTORE_KEY || 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';   /* chave web pública — a mesma do carrinho, da Athena e do logistica-painel */
-var PADRAO = { ativo: true, limite: 100, pct: 5, dias: 30, prefixo: 'VIP2' };
+var PADRAO = { ativo: true, limite: 100, pct: 5, dias: 30, prefixo: 'VIP2', grupo: '120363414079749398-group' };
 var ALFA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   /* sem I, O, 0 e 1 — o cliente digita isso */
 
 var CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -80,6 +86,7 @@ async function config() {
   o.limite = Math.max(0, Math.min(10000, Number(o.limite) || PADRAO.limite));
   o.pct = Math.max(1, Math.min(50, Number(o.pct) || PADRAO.pct));
   o.dias = Math.max(1, Math.min(365, Number(o.dias) || PADRAO.dias));
+  o.grupo = String(o.grupo || PADRAO.grupo).trim();
   o.prefixo = String(o.prefixo || PADRAO.prefixo).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || PADRAO.prefixo;
   return o;
 }
@@ -132,9 +139,10 @@ async function fsCriarCupom(docId, c) {
 
 /* ---------- ações ---------- */
 async function gerar(body, agora) {
-  var cpf = soDig(body.cpf), nome = nomeLimpo(body.nome);
-  if (!cpfValido(cpf)) return { ok: false, erro: 'cpf_invalido', msg: 'CPF inválido. Confira os números e tente de novo.' };
+  var cpf = soDig(body.cpf), nome = nomeLimpo(body.nome), tel = telNorm(body.telefone);
   if (nome.length < 3 || !/[A-Za-zÀ-ÿ]/.test(nome)) return { ok: false, erro: 'nome_invalido', msg: 'Escreva o seu nome completo.' };
+  if (!/^55\d{10,11}$/.test(tel)) return { ok: false, erro: 'tel_invalido', msg: 'Telefone inválido. Use o número do WhatsApp com DDD.' };
+  if (!cpfValido(cpf)) return { ok: false, erro: 'cpf_invalido', msg: 'CPF inválido. Confira os números e tente de novo.' };
   var cfg = await config();
   /* já tem? devolve o mesmo (mesmo com a campanha encerrada ou esgotada) */
   var ja = await fbGet(RAIZ + '/cpf/' + cpf);
@@ -142,6 +150,17 @@ async function gerar(body, agora) {
   if (!cfg.ativo) return { ok: false, erro: 'encerrada', msg: 'A campanha de cupons do Grupo VIP 2 foi encerrada.' };
   var usados = await quantosGerados();
   if (usados >= cfg.limite) return { ok: false, erro: 'esgotado', msg: 'Os ' + cfg.limite + ' cupons do Grupo VIP 2 já foram distribuídos.' };
+  /* v2: o telefone tem que estar no Grupo VIP 2 */
+  var membros;
+  try { membros = await membrosDoGrupo(cfg.grupo); }
+  catch (eZ) {
+    console.error('[cupom-vip2] Z-API: ' + eZ.message);
+    if (Date.now() - _avisoZapiEm > 600000) { _avisoZapiEm = Date.now(); await telegram('⚠️ CUPOM VIP 2: não consegui ler os membros do grupo pela Z-API (' + String(eZ.message).slice(0, 80) + '). Os clientes estão recebendo "tente de novo".'); }
+    return { ok: false, erro: 'grupo_indisponivel', msg: 'Não consegui confirmar agora se você está no Grupo VIP 2. Tente de novo em alguns minutos.' };
+  }
+  if (!telVariantes(tel).some(function (x) { return membros[x]; })) {
+    return { ok: false, erro: 'fora_do_grupo', msg: 'Este telefone não está no Grupo VIP 2. Para receber o cupom você precisa estar no grupo com este número de WhatsApp. Entre no grupo e tente de novo.' };
+  }
   var docId = docIdDoCpf(cpf);
   /* se o documento já existe (clique duplo / registro perdido), reaproveita o cupom dele */
   var existente = await fsLerDoc(docId);
@@ -156,8 +175,8 @@ async function gerar(body, agora) {
     else if (!cr.ok) throw new Error(cr.erro || 'Firestore');
   }
   var reg = {};
-  reg['cpf/' + cpf] = { nome: nome, codigo: codigo, criado: agora, expira: expira };
-  reg['codigo/' + codigo] = { cpf: cpf, nome: nome, criado: agora };
+  reg['cpf/' + cpf] = { nome: nome, tel: tel, codigo: codigo, criado: agora, expira: expira };
+  reg['codigo/' + codigo] = { cpf: cpf, nome: nome, tel: tel, criado: agora };
   await fbPatch(RAIZ, reg);
   if (usados + 1 === cfg.limite) await telegram('🎟️ GRUPO VIP 2: os ' + cfg.limite + ' cupons de ' + cfg.pct + '% acabaram de ser distribuídos (último: ' + codigo + ').');
   return { ok: true, jaTinha: false, codigo: codigo, expira: expira, pct: cfg.pct };
@@ -182,25 +201,31 @@ async function zapiGet(rota) {
   if (!r.ok) throw new Error('Z-API ' + r.status + ' ' + String(t).slice(0, 120));
   return d;
 }
-/* TEMPORÁRIO (v1b, 28/10): descobrir o id do Grupo VIP 2 e o formato dos membros. Devolve só nome, id e CONTAGENS (nenhum telefone). */
-async function diagGrupos() {
-  var chats = await zapiGet('chats?page=1&pageSize=200');
-  var gs = (Array.isArray(chats) ? chats : []).filter(function (c) { return c && (c.isGroup || /-group$|@g\.us$/.test(String(c.phone || ''))); }).slice(0, 15);
-  var out = [];
-  for (var i = 0; i < gs.length; i++) {
-    var g = { id: gs[i].phone, nome: gs[i].name || '' };
-    try {
-      var m = await zapiGet('group-metadata/' + encodeURIComponent(gs[i].phone));
-      var ps = (m && m.participants) || [];
-      g.nomeGrupo = m && m.subject; g.total = ps.length;
-      g.comTelefone = ps.filter(function (p) { var d = soDig(p.phone); return d.length >= 10 && d.length <= 13 && !/lid/i.test(String(p.phone)); }).length;
-      g.campos = ps[0] ? Object.keys(ps[0]).join(',') : '';
-      g.exemploFormato = ps[0] ? String(ps[0].phone || '').replace(/\d/g, '9').slice(0, 30) : '';
-    } catch (e) { g.erro = e.message.slice(0, 120); }
-    out.push(g);
-  }
-  return { ok: true, grupos: out };
+/* v2 (28/10): o telefone tem que estar no Grupo VIP 2. Lista de membros pela Z-API (group-metadata), guardada 60 s. */
+/* Grupo 2 = PADRAO.grupo ("VitaFlow VIP" nº 2; o nº 1, com 1.024 membros, é 120363406518094425-group). Trocar: config/grupo. */
+var _membrosCache = { id: '', em: 0, set: null };
+function telNorm(t) {
+  var d = soDig(t).replace(/^0+/, '');
+  if (d.length === 10 || d.length === 11) d = '55' + d;
+  return d;
 }
+function telVariantes(t) {
+  var d = telNorm(t), v = [d];
+  if (/^55\d{11}$/.test(d) && d.charAt(4) === '9') v.push(d.slice(0, 4) + d.slice(5));   /* sem o 9 (conta antiga do WhatsApp) */
+  if (/^55\d{10}$/.test(d)) v.push(d.slice(0, 4) + '9' + d.slice(4));                      /* com o 9 */
+  return v;
+}
+async function membrosDoGrupo(grupoId) {
+  if (_membrosCache.set && _membrosCache.id === grupoId && Date.now() - _membrosCache.em < 60000) return _membrosCache.set;
+  var m = await zapiGet('group-metadata/' + encodeURIComponent(grupoId));
+  var ps = (m && m.participants) || [];
+  if (!ps.length) throw new Error('grupo sem membros na resposta');
+  var set = {};
+  ps.forEach(function (p) { telVariantes(p.phone).forEach(function (x) { if (x) set[x] = true; }); });
+  _membrosCache = { id: grupoId, em: Date.now(), set: set };
+  return set;
+}
+var _avisoZapiEm = 0;
 
 exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
@@ -209,7 +234,6 @@ exports.handler = async function (event) {
     if (event.httpMethod === 'GET') {
       var q = event.queryStringParameters || {};
       if (q.acao === 'status') return resp(200, await status());
-      if (q.acao === 'diag_grupos') return resp(200, await diagGrupos());
       return resp(200, { ok: true, servico: 'cupom-vip2 v1' });
     }
     var body = {};
