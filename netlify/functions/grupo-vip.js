@@ -1,6 +1,18 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v8  ·  27/10/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v9  ·  28/10/2026
+   v9 (28/10/2026, Thiago: "configure para o grupo 2 também"): o bot atende os DOIS grupos —
+       VitaFlow VIP #1 (GRUPO_VIP_ID, como sempre) e VitaFlow VIP #2 (GRUPO_VIP2_ID; sem a env,
+       vale o id fixo 120363414079749398-group, o mesmo do cupom-vip2). Mesmas respostas, mesmos
+       textos e mesma moderação nos dois; strikes continuam por número (vale para os dois grupos).
+       * remoção (3º strike) tira do grupo ONDE a mensagem foi postada (antes era sempre o #1);
+       * travas de tempo separadas por grupo (resposta no #1 não cala o #2) e contador de
+         "apresentação" próprio do #2 (as 5 primeiras moderações lá saem com a apresentação do bot);
+       * convite do VIP #2 liberado como link nosso (antes seria apagado como "convite de outro grupo");
+       * "grupo novo" / "migre de grupo" só contam como golpe quando a mensagem traz um link que
+         NÃO é nosso — com o VIP #2, cliente perguntando "qual o link do grupo novo?" levava strike;
+       * Telegram e log dizem de qual grupo veio (VIP #1 / VIP #2);
+       * texto padrão do "golpe" sem o "nunca pede pra trocar de grupo" (a mudança pro VIP #2 é oficial).
    v8 (27/10/2026, leitura da conversa inteira do grupo de 19/09 a 27/10 — pedido do Thiago):
        * SÓ RESPONDE PERGUNTA. Até a v7 qualquer menção à palavra disparava o texto ("tava valor bom
          atacado", "transportadora são fodas", "cobram caro o frete" = 100+ respostas fora de hora).
@@ -79,6 +91,17 @@ var ZAPI_TOKEN = process.env.ZAPI_TOKEN || '';
 var CLIENT_TOKEN = process.env.ZAPI_CLIENT_TOKEN || '';
 var FB_SECRET = process.env.FIREBASE_SECRET || '';
 var GRUPO_VIP_ID = (process.env.GRUPO_VIP_ID || '').trim();
+/* v9: VitaFlow VIP #2 (criado em 28/10/2026, quando o #1 lotou). Mesmo id do cupom-vip2. */
+var GRUPO_VIP2_ID = (process.env.GRUPO_VIP2_ID || '120363414079749398-group').trim();
+/* 1 = VIP #1 · 2 = VIP #2 · 0 = outro chat. Compara só os dígitos: o Z-API às vezes manda
+   "...-group" e às vezes "...@g.us" para o mesmo grupo. */
+function qualGrupo(chat) {
+  var d = so_digitos(chat);
+  if (!d) return 0;
+  if (GRUPO_VIP_ID && d === so_digitos(GRUPO_VIP_ID)) return 1;
+  if (GRUPO_VIP2_ID && d === so_digitos(GRUPO_VIP2_ID)) return 2;
+  return 0;
+}
 var TG_TOKEN = process.env.TELEGRAM_TOKEN || '';
 var TG_CHAT = process.env.TELEGRAM_CHAT || '';
 
@@ -188,12 +211,12 @@ async function apagarMensagem(chatPhone, messageId) {
    O corpo esta confirmado na doc; o ultimo pedaco da URL a doc nao mostra escrito,
    entao o log abaixo grava status e resposta pra aparecer na primeira tentativa se
    estiver errado, em vez de falhar calado. */
-async function removerDoGrupo(numero) {
+async function removerDoGrupo(numero, grupoId) {
   try {
     var r = await fetch(zapiUrl('remove-participant'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Client-Token': CLIENT_TOKEN },
-      body: JSON.stringify({ groupId: GRUPO_VIP_ID, phones: [numero] })
+      body: JSON.stringify({ groupId: grupoId || GRUPO_VIP_ID, phones: [numero] })
     });
     var corpo = '';
     try { corpo = await r.text(); } catch (e2) { corpo = '(sem corpo)'; }
@@ -341,7 +364,7 @@ var T = {
 
   golpe:
 '🚨 *Atenção*\n⠀\n' +
-'🔒 A VitaFlow *nunca* pede pra você *sair deste grupo* nem *trocar por outro grupo de WhatsApp*. Nossos canais oficiais estão todos no site *vitaflowoficial.com* e o nosso e-mail é *contato@vitaflowoficial.com*. Qualquer link diferente disso = golpe.',
+'🔒 Aviso oficial da VitaFlow só sai *dentro do grupo, pelos administradores*, no site *vitaflowoficial.com* e no e-mail *contato@vitaflowoficial.com*. Mudança de grupo só é anunciada assim — *nunca* por mensagem no privado nem por link de desconhecido.\n⠀\nQualquer link diferente disso = golpe.',
 
   privado:
 '📵 *ESTE NÚMERO AGORA É AUTOMÁTICO*\n⠀\n' +
@@ -731,7 +754,9 @@ var TRAVA_MIN = { calculadora: 120, protocolo: 120, confianca: 60 };
      t.me/referencias_vitaflow
      wa.me/ dos 4 numeros oficiais
    ========================================================================= */
-var CONVITE_NOSSO = 'BNa4tPKWjaZ1cTP4XwXtgM';
+var CONVITE_NOSSO = 'BNa4tPKWjaZ1cTP4XwXtgM';            /* VIP #1 */
+var CONVITE_VIP2 = 'Bcw7hkVR3ITE5RQtnYzdD7';             /* v9: VIP #2 */
+function conviteNosso(t) { t = String(t || ''); return t.indexOf(CONVITE_NOSSO) >= 0 || t.indexOf(CONVITE_VIP2) >= 0; }
 
 var WA_OFICIAIS = '5511911338515|5511926100192|447537155723|447537155718';
 
@@ -807,7 +832,7 @@ function linkPermitido(link, liberados) {
   var l = limparFim(link).toLowerCase();
   /* convite de grupo NUNCA passa pela lista do painel — so o nosso */
   if (/^(https?:\/\/)?(www\.)?chat\.whatsapp\.com\//.test(l)) {
-    return limparFim(link).indexOf(CONVITE_NOSSO) >= 0;   /* convite e case-sensitive */
+    return conviteNosso(limparFim(link));   /* convite e case-sensitive · v9: #1 ou #2 */
   }
   if (/^(https?:\/\/)?(www\.)?([a-z0-9-]+\.)*vitaflowoficial\.com(\/|\?|$)/.test(l)) return true;
   if (/^(https?:\/\/)?(www\.)?t\.me\/referencias_vitaflow\/?$/.test(l)) return true;
@@ -862,14 +887,21 @@ async function contarStrike(numero, nome, texto, link) {
 function ehGolpe(texto) {
   var t = String(texto || '');
   var n = normaliza(t);
-  if (/chat\.whatsapp\.com/i.test(t) && t.indexOf(CONVITE_NOSSO) < 0) return 'convite de outro grupo';
+  /* v9: convite de outro grupo = algum chat.whatsapp.com que não é o #1 nem o #2 */
+  var convites = t.match(/chat\.whatsapp\.com\/[^\s<>"']+/gi) || [];
+  for (var ci = 0; ci < convites.length; ci++) { if (!conviteNosso(convites[ci])) return 'convite de outro grupo'; }
   if (/\b(bit\.ly|tinyurl|encurtador|cutt\.ly|is\.gd|t\.co|shorturl)\b/i.test(t)) return 'encurtador';
   if (/wa\.me\/\d+/i.test(t)) {
     if (!/wa\.me\/(5511911338515|5511926100192|447537155723|447537155718)/i.test(t)) return 'wa.me desconhecido';
   }
-  if (n.indexOf('migre de grupo') >= 0 || n.indexOf('grupo novo') >= 0 ||
-      n.indexOf('atualize seu cadastro') >= 0 || n.indexOf('voce foi premiado') >= 0 ||
+  if (n.indexOf('atualize seu cadastro') >= 0 || n.indexOf('voce foi premiado') >= 0 ||
       n.indexOf('voce ganhou') >= 0) return 'texto tipico de golpe';
+  /* v9: com o VIP #2 "grupo novo" virou conversa normal ("qual o link do grupo novo?").
+     Só é golpe quando vem junto com um link que NÃO é nosso. */
+  if (n.indexOf('migre de grupo') >= 0 || n.indexOf('grupo novo') >= 0) {
+    var lks = acharLinks(t);
+    for (var li = 0; li < lks.length; li++) { if (!linkPermitido(lks[li], [])) return 'texto tipico de golpe'; }
+  }
   return null;
 }
 
@@ -962,7 +994,11 @@ exports.handler = async function (event) {
   }
 
   // ---- daqui pra baixo: so o Grupo VIP
-  if (chat !== GRUPO_VIP_ID) return { statusCode: 200, body: 'outro grupo — ignorado' };
+  /* v9: VIP #1 ou VIP #2 */
+  var grupo = qualGrupo(chat);
+  if (!grupo) return { statusCode: 200, body: 'outro grupo — ignorado' };
+  var sfx = grupo === 2 ? '_g2' : '';          /* travas e contador do #2 separados; o #1 fica com as chaves de sempre */
+  var rotulo = 'GRUPO VIP #' + grupo;
   if (!paraModerar) return { statusCode: 200, body: 'sem texto' };
 
   await carregarTextos();
@@ -981,7 +1017,7 @@ exports.handler = async function (event) {
       var reg = await contarStrike(autor, body.senderName, paraModerar, fora ? fora.link : '');
 
       await fbPut(RAIZ + '/log/' + Date.now(), {
-        tipo: motivo ? 'golpe' : 'link',
+        tipo: motivo ? 'golpe' : 'link', grupo: grupo,
         acao: apagou ? 'apagado' : 'falhou_apagar',
         vez: reg.vezes, autor: autor, nome: body.senderName || '',
         link: fora ? fora.link : '', trecho: paraModerar.slice(0, 300), t: Date.now()
@@ -991,7 +1027,7 @@ exports.handler = async function (event) {
          por conta propria — nesse caso o VitaFlow decide na mao. */
       var saiu = false;
       if (reg.vezes >= STRIKES_MAX && !reg.removido) {
-        saiu = await removerDoGrupo(autor);
+        saiu = await removerDoGrupo(autor, chat);
         if (saiu) {
           await fbPut(RAIZ + '/reincidentes/' + autor + '/removido', true);
           await fbPut(RAIZ + '/reincidentes/' + autor + '/removido_em', Date.now());
@@ -999,7 +1035,7 @@ exports.handler = async function (event) {
       }
 
       await telegram(
-        (motivo ? '🚨 GRUPO VIP — GOLPE (' + motivo + ')' : '🚫 GRUPO VIP — link de fora') +
+        (motivo ? '🚨 ' + rotulo + ' — GOLPE (' + motivo + ')' : '🚫 ' + rotulo + ' — link de fora') +
         '\nAutor: ' + (body.senderName || '') + ' (' + autor + ')  ·  ' + reg.vezes + 'a vez' +
         '\nApagou: ' + (apagou ? 'sim' : 'NAO — ver log da funcao') +
         (reg.vezes >= STRIKES_MAX ? '\nRemovido do grupo: ' + (saiu ? 'sim' : 'NAO — ver log') : '') +
@@ -1014,15 +1050,15 @@ exports.handler = async function (event) {
       else if (reg.vezes >= 2) msgMod = T.mod2;
       else {
         sempre = false;
-        var usadas = Number(await fbGet(RAIZ + '/contadores/apresentacoes')) || 0;
+        var usadas = Number(await fbGet(RAIZ + '/contadores/apresentacoes' + sfx)) || 0;
         if (usadas < APRESENTACOES_MAX) {
           msgMod = T.mod_apresenta;
-          await fbPut(RAIZ + '/contadores/apresentacoes', usadas + 1);
+          await fbPut(RAIZ + '/contadores/apresentacoes' + sfx, usadas + 1);
         } else {
           msgMod = T.mod1;
         }
       }
-      if (sempre || await travaOk('aviso_mod', 30)) await enviar(chat, msgMod);
+      if (sempre || await travaOk('aviso_mod' + sfx, 30)) await enviar(chat, msgMod);
 
       return { statusCode: 200, body: 'apagado (' + reg.vezes + 'a vez)' + (saiu ? ' + removido' : '') };
     }
@@ -1032,10 +1068,10 @@ exports.handler = async function (event) {
          depois do ponto. So o lembrete, com trava. */
       if (!(await primeiraVez(body.messageId))) return { statusCode: 200, body: 'duplicado — ja tratado' };
       await fbPut(RAIZ + '/log/' + Date.now(), {
-        tipo: 'link', acao: 'avisado', autor: autor, nome: body.senderName || '',
+        tipo: 'link', grupo: grupo, acao: 'avisado', autor: autor, nome: body.senderName || '',
         link: fora.link, trecho: paraModerar.slice(0, 300), t: Date.now()
       });
-      if (await travaOk('aviso_mod', 30)) await enviar(chat, T.regras);
+      if (await travaOk('aviso_mod' + sfx, 30)) await enviar(chat, T.regras);
       return { statusCode: 200, body: 'link duvidoso — so avisado' };
     }
   }
@@ -1050,7 +1086,7 @@ exports.handler = async function (event) {
   if (!chave) {
     var busca = extrairBuscaProduto(texto);
     if (busca && (busca.cmd || !ehAdmin)) {
-      var chaveBusca = (busca.cmd ? 'prodcmd_' : 'prod_') + limparBusca(busca.q).replace(/[^a-z0-9]+/g, '_').slice(0, 60);
+      var chaveBusca = (busca.cmd ? 'prodcmd_' : 'prod_') + limparBusca(busca.q).replace(/[^a-z0-9]+/g, '_').slice(0, 60) + sfx;
       if (!(await travaOk(chaveBusca, 30))) return { statusCode: 200, body: 'trava produto' };
       var resp = await respostaProduto(busca);
       if (!resp) return { statusCode: 200, body: 'produto: nada achado (calado)' };
@@ -1060,7 +1096,7 @@ exports.handler = async function (event) {
     }
     return { statusCode: 200, body: 'sem gatilho' };
   }
-  if (!(await travaOk('resp_' + chave, TRAVA_MIN[chave] || 10))) return { statusCode: 200, body: 'trava de tempo' };
+  if (!(await travaOk('resp_' + chave + sfx, TRAVA_MIN[chave] || 10))) return { statusCode: 200, body: 'trava de tempo' };
   if (!(await primeiraVez(body.messageId))) return { statusCode: 200, body: 'duplicado — ja tratado' };
 
   var msg;
@@ -1096,5 +1132,6 @@ exports._linkDeFora = linkDeFora;
 exports._listaLiberados = listaLiberados;
 exports._naListaLiberada = naListaLiberada;
 exports._ehGolpe = ehGolpe;
+exports._qualGrupo = qualGrupo;
 exports._rotear = rotear;
 exports._limparFim = limparFim;
