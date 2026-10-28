@@ -1,5 +1,9 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v112 (28/10/2026 — Thiago: "coloque o link do grupo novo em todos os lugares necessários"): o link do Grupo VIP no WhatsApp
+//   (GRUPO_WHATSAPP e a saudação) passa a ser o do VitaFlow VIP #2 (chat.whatsapp.com/Bcw7hkVR3ITE5RQtnYzdD7) — o VIP #1 lotou.
+//   Resto = v111.
+
 // v111 (28/10/2026 — Thiago: cupom de 5% para os 100 primeiros do Grupo VIP 2, gerado num link com nome + CPF e "vinculado
 //   àquele cpf"): 1) cupom com travaCpf (gerado pela função cupom-vip2 em /pages/vip2) → antes de aplicar, a Athena pede o CPF
 //   do titular e confere no RTDB (vitaflow_sync/cupom_vip2/codigo/<CÓDIGO>); outro CPF = sem cupom. Vale em INFORMAR_CUPOM e no
@@ -1509,7 +1513,7 @@ async function anunciarGenesis(session, sid, respond, curto) {
 }
 
 // ── Grupo VIP (WhatsApp + Telegram) ───────────────────────────────────────────
-const GRUPO_WHATSAPP = 'https://chat.whatsapp.com/BNa4tPKWjaZ1cTP4XwXtgM';
+const GRUPO_WHATSAPP = 'https://chat.whatsapp.com/Bcw7hkVR3ITE5RQtnYzdD7';
 const GRUPO_TELEGRAM = 'https://t.me/referencias_vitaflow';
 
 // ── Gerador de Protocolos (peptídeos e hormônios) — grátis, no site ──────────
@@ -2140,7 +2144,7 @@ https://vitaflowoficial.com
 🔬 Temos também um *Gerador de Protocolos gratuito* — de *peptídeos* e de *hormônios* — no site para te ajudar.
 
 📲 *Entre em nossos grupos* e acompanhe novidades, lançamentos, cupons e ofertas relâmpago em primeira mão:
-💬 WhatsApp: https://chat.whatsapp.com/BNa4tPKWjaZ1cTP4XwXtgM
+💬 WhatsApp: https://chat.whatsapp.com/Bcw7hkVR3ITE5RQtnYzdD7
 ✈️ Telegram: https://t.me/referencias_vitaflow
 
 👉 *Me conta: o que você está buscando hoje?* É só escolher a categoria abaixo 👇`;
