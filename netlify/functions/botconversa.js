@@ -1,5 +1,12 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v111 (28/10/2026 — Thiago: cupom de 5% para os 100 primeiros do Grupo VIP 2, gerado num link com nome + CPF e "vinculado
+//   àquele cpf"): 1) cupom com travaCpf (gerado pela função cupom-vip2 em /pages/vip2) → antes de aplicar, a Athena pede o CPF
+//   do titular e confere no RTDB (vitaflow_sync/cupom_vip2/codigo/<CÓDIGO>); outro CPF = sem cupom. Vale em INFORMAR_CUPOM e no
+//   código digitado direto no resumo (marca cupomAguardandoCpf, sem estado novo). 2) COLETA_DADOS: CPF do envio diferente do
+//   titular → aviso no Telegram (pedido já pago, não trava). 3) Configurações sem_desconto/promo_preco lidas por runQuery
+//   filtrado (_lerConfigsVfTipo) — com os cupons novos a coleção passa de 300 documentos. Resto = v110.
+
 // v110 (27/10/2026 — Thiago: pedidos do atacado PJC com prefixo próprio, "o prefixo pode ser o P"): o número digitado pelo
 //   cliente aceita a letra P (VF-DDMM-P001, atacado do estoque Pedro Juan Caballero) — rastreio, sorteio, protocolo. Só o bloco
 //   de identificação (ID_RE_SEM_VF, ID_RE_FINAL, ID_LETRAS, idPrepNum): [SMAVW] → [SMAVWP]. A Athena não vende o atacado PJC,
@@ -4274,14 +4281,25 @@ function _fsCacheVale(ts){ return ts > 0 && (Date.now() - ts) < FS_CACHE_TTL_MS;
 // marcadas são expandidas para produtos {id,nome} no painel (Gestão de Cupons), então aqui
 // basta casar o NOME contra produtos{}. Produto na lista = NENHUM desconto (nem 3% Athena,
 // nem cupom, nem promo). Vale-compras NÃO é bloqueado (é crédito do próprio cliente).
+// v111 (28/10/2026): as configurações (_vfTipo) são lidas por runQuery FILTRADO. Antes lia a coleção inteira com pageSize=300:
+// com os cupons pessoais do Grupo VIP 2 (até 100 novos) a coleção passa de 300 documentos e configurações podiam ficar de fora
+// (produto sem desconto recebendo desconto). O carrinho do site já lia assim (runQuery com _vfTipo).
+async function _lerConfigsVfTipo(tipo) {
+  const r = await fetch(`https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents:runQuery?key=${FIRESTORE_KEY}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ structuredQuery: { from:[{ collectionId:'cupons_vitaflow' }],
+      where:{ fieldFilter:{ field:{ fieldPath:'_vfTipo' }, op:'EQUAL', value:{ stringValue: tipo } } }, limit: 1000 } })
+  });
+  if (!r.ok) return { ok:false, status: r.status };
+  const arr = await r.json();
+  return { ok:true, docs: (Array.isArray(arr) ? arr : []).filter(x => x && x.document).map(x => x.document) };
+}
 async function lerSemDescontoNomes(forcar) {
   if (!forcar && _fsCacheVale(_fsSemDescTs)) return _fsSemDescVal;
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=300`;
-    const r = await fetch(url);
-    if (!r.ok) { console.log('[FS] sem_desconto HTTP', r.status, '— usando cache anterior'); return _fsSemDescVal; }
-    const d = await r.json();
-    const docs = (d && d.documents) || [];
+    const q = await _lerConfigsVfTipo('sem_desconto');
+    if (!q.ok) { console.log('[FS] sem_desconto HTTP', q.status, '— usando cache anterior'); return _fsSemDescVal; }
+    const docs = q.docs;
     const set = {};
     docs.forEach(doc => {
       const f = doc.fields || {};
@@ -4306,11 +4324,9 @@ function produtoBloqueado(nome, setNomes) {
 async function lerPromoPrecos(forcar) {
   if (!forcar && _fsCacheVale(_fsPromoPTs)) return _fsPromoPVal;
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/cupons_vitaflow?key=${FIRESTORE_KEY}&pageSize=300`;
-    const r = await fetch(url);
-    if (!r.ok) { console.log('[FS] promo_preco HTTP', r.status, '— usando cache anterior'); return _fsPromoPVal; }
-    const d = await r.json();
-    const docs = (d && d.documents) || [];
+    const q = await _lerConfigsVfTipo('promo_preco');   // v111: runQuery filtrado (ver _lerConfigsVfTipo)
+    if (!q.ok) { console.log('[FS] promo_preco HTTP', q.status, '— usando cache anterior'); return _fsPromoPVal; }
+    const docs = q.docs;
     const grupos = [];
     docs.forEach(doc => {
       const f = doc.fields || {};
@@ -4444,8 +4460,31 @@ async function validarCupom(codigo, subtotalProdutos) {
     const descontoFrete = tipo === 'frete' ? valor : 0;
     return { ok:true, docId: found.id, descontoReais, descTxt, codigo: cod,
              tipo, pct: valor, maxDesc, valorFixo: valor, freteGratis, descontoFrete,
-             valorVale: (tipo === 'vale' ? valor : 0) };
+             valorVale: (tipo === 'vale' ? valor : 0),
+             travaCpf: !!(f.travaCpf && f.travaCpf.booleanValue) };   // v111: cupom pessoal (Grupo VIP 2)
   } catch { return { ok:false, motivo:'Erro ao verificar cupom. Tente novamente.' }; }
+}
+// v111 (28/10/2026) — CUPOM PESSOAL do Grupo VIP 2: gerado em vitaflowoficial.com/pages/vip2 (função cupom-vip2 do vitaflow-proxy),
+// só vale para o CPF de quem gerou. O titular fica no RTDB (vitaflow_sync/cupom_vip2/codigo/<CÓDIGO> = {cpf, nome}) — nunca no
+// documento do cupom (a coleção cupons_vitaflow é aberta para leitura). ⚠️ A MESMA trava existe no carrinho do site e no Apps Script.
+// true = é o titular · false = outro CPF · null = não deu pra conferir (rede) → segue (não trava a venda).
+async function conferirCupomCpf(codigo, cpf) {
+  const cod = String(codigo || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  const c = idSoDig(cpf);
+  if (!cod) return null;
+  try {
+    const r = await fetchT(fbUrl(`/vitaflow_sync/cupom_vip2/codigo/${cod}.json`), {}, 4000);
+    if (!r.ok) return null;
+    const reg = await r.json();
+    if (!reg || !reg.cpf) return true;          // sem titular registrado = não é pessoal
+    return c.length === 11 && c === String(reg.cpf);
+  } catch { return null; }
+}
+// Cupom pessoal digitado (em INFORMAR_CUPOM ou direto no resumo): antes de aplicar, pede o CPF do titular.
+// Fica no estado INFORMAR_CUPOM com a marca cupomAguardandoCpf (não cria estado novo).
+async function pedirCpfCupomPessoal(session, sid, codigo, respond) {
+  await saveSession(sid, { ...session, state:'INFORMAR_CUPOM', cupomAguardandoCpf: codigo });
+  return respond(`🎟️ O cupom *${codigo}* é *pessoal* — só vale para o CPF de quem o gerou.\n\nMe manda o *CPF do titular do cupom* (só os números) pra eu confirmar. 😊\n_Ou digite *2* para seguir sem cupom._`);
 }
 async function incrementarUsoCupom(docId) {
   if (!docId) return;
@@ -7296,12 +7335,36 @@ exports.handler = async (event) => {
     if (state === 'INFORMAR_CUPOM') {
       const carrinho = session.carrinho || [];
       const totalProd = session.totalProd || totalCarrinho(carrinho);
+      // v111: cupom pessoal (Grupo VIP 2) esperando o CPF do titular
+      if (session.cupomAguardandoCpf) {
+        const _codP = session.cupomAguardandoCpf;
+        const _semCup = { ...session, cupomAguardandoCpf: null, cupomDocId: null, cupomCodigo: null };
+        if (/^(2|nao|não|sem cupom|pular|seguir|seguir sem cupom)$/.test(n)) return await fecharResumoNormal(_semCup, sid, null, respond);
+        const _cP = idCpf(mensagem);
+        if (!_cP.cpf) {
+          return respond(_cP.errado
+            ? `🔎 O CPF *${idCpfFmt(_cP.errado)}* não confere — parece ter algum número trocado ou faltando. Me manda de novo o *CPF do titular do cupom*.\n_Ou digite *2* para seguir sem cupom._`
+            : `Me manda os *11 números do CPF* do titular do cupom *${_codP}*. 😊\n_Ou digite *2* para seguir sem cupom._`);
+        }
+        const _conf = await conferirCupomCpf(_codP, _cP.cpf);
+        if (_conf === false) {
+          await saveSession(sid, { ..._semCup, state:'INFORMAR_CUPOM' });
+          return respond(`❌ Esse CPF não é o do titular do cupom *${_codP}*. O cupom do Grupo VIP é *pessoal* e só vale para o CPF de quem o gerou.\n\nDigite outro código ou *2* para seguir sem cupom.`);
+        }
+        const _r2 = await validarCupom(_codP, totalProd);   // revalida (uso/validade podem ter mudado)
+        if (!_r2.ok) {
+          await saveSession(sid, { ..._semCup, state:'INFORMAR_CUPOM' });
+          return respond(`❌ ${_r2.motivo || 'Não consegui validar o cupom agora.'}\n\nDigite outro código ou *2* para seguir sem cupom.`);
+        }
+        return await fecharResumoNormal({ ..._semCup, cupomCpf: _cP.cpf, cupomCpfCod: _codP }, sid, _r2, respond);
+      }
       const resultado = await validarCupom(mensagem, totalProd);
       if (!resultado.ok && resultado.erroTecnico) {
         await enviarTelegram(`⚠️ *CUPOM: falha técnica na consulta*\n🏷️ ${(mensagem||'').trim()}\n📱 ${sid}\nO cliente digitou um cupom e o Firestore não respondeu (cota/rede).`);
         return respond(`Tive um problema pra consultar esse cupom agora. 😕 *Não é você* — é do nosso lado.\n\nTenta de novo em uns minutinhos, ou digite *2* pra seguir sem cupom (seu desconto de ${DESCONTO_ATHENA_PCT}% continua valendo). Se for cupom de promoção, me chama que eu resolvo. 💚`);
       }
       if (!resultado.ok) return respond(`❌ ${resultado.motivo}\n\nDigite outro código ou *menu* para recomeçar.\n_Ou digite *2* para seguir sem cupom._`);
+      if (resultado.travaCpf && session.cupomCpfCod !== resultado.codigo) return await pedirCpfCupomPessoal(session, sid, resultado.codigo, respond);   // v111
       return await fecharResumoNormal(session, sid, resultado, respond);
     }
 
@@ -7519,6 +7582,9 @@ exports.handler = async (event) => {
       if (pareceCupom && session.descontoTipo !== 'promo' && session.descontoTipo !== 'namorados') {
         const totalProd = session.totalProd || totalCarrinho(session.carrinho || []);
         const resultado = await validarCupom(mensagem, totalProd);
+        if (resultado.ok && resultado.travaCpf && session.cupomCpfCod !== resultado.codigo) {   // v111: cupom pessoal → pede o CPF do titular
+          return await pedirCpfCupomPessoal({ ...session, cupomDocId:null, cupomCodigo:null }, sid, resultado.codigo, respond);
+        }
         if (resultado.ok) {
           // Cupom de FRETE (frete grátis ou desconto no frete, ex.: FRETEZERO): aplica SEMPRE.
           // (até a v75 somava com os 3%; na v76 o fecharResumoNormal escolhe o MAIOR: frete OU 3%.)
@@ -7733,6 +7799,10 @@ exports.handler = async (event) => {
       const frete    = session.freteSelecionado || {};
       const total    = session.total || 0;
       const num_pedido = session.orderNsu || await gerarNumeroPedido(tipoNumeroAthena(session));
+      // v111: cupom pessoal do Grupo VIP 2 usado com OUTRO CPF no envio → só avisa (o pedido já está pago).
+      if (session.cupomCodigo && /^VIP2-/i.test(String(session.cupomCodigo)) && (await conferirCupomCpf(session.cupomCodigo, coleta.cpf)) === false) {
+        await enviarTelegram(`⚠️ *CUPOM PESSOAL com outro CPF (Athena)*\n🏷️ ${session.cupomCodigo}\n📦 ${num_pedido || '—'}\n📱 ${sid}\nO CPF do envio não é o do titular do cupom (Grupo VIP 2). Confira antes de enviar.`);
+      }
 
       // Endereço completo + telefone no recibo, pro cliente CONFERIR e corrigir ANTES do envio.
       const _cepFmt = String(coleta.cep || '').replace(/\D/g,'').replace(/^(\d{5})(\d{3})$/, '$1-$2') || (coleta.cep || '');
