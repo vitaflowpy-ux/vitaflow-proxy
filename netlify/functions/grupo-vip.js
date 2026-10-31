@@ -1,6 +1,12 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v9  ·  28/10/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v10  ·  31/10/2026
+   v10 (31/10/2026, Thiago: "permitir links dos participantes desde que sejam links de notícias ou
+       artigos" — opção B): link de fora de participante PASSA (notícia, artigo, vídeo, qualquer site
+       comum). O bot só continua APAGANDO (+ strike) link de VENDA: marketplace/loja conhecida, host com
+       cara de loja (loja|shop|store|ofertas|...), TLD .shop/.store/.vip ou caminho de produto/checkout.
+       Golpe (convite de outro grupo, encurtador, wa.me desconhecido, texto típico) continua como antes.
+       Link "mole" (palavra.com sem barra) só leva lembrete quando também tem cara de venda.
    v9 (28/10/2026, Thiago: "configure para o grupo 2 também"): o bot atende os DOIS grupos —
        VitaFlow VIP #1 (GRUPO_VIP_ID, como sempre) e VitaFlow VIP #2 (GRUPO_VIP2_ID; sem a env,
        vale o id fixo 120363414079749398-group, o mesmo do cupom-vip2). Mesmas respostas, mesmos
@@ -850,15 +856,42 @@ function linkDuro(link) {
   return false;
 }
 
+/* ---- v10: LINK DE VENDA -------------------------------------------------------
+   Regra B (31/10/2026): o que o bot apaga agora e so link de VENDA. Noticia, artigo,
+   video, blog, PDF etc. passam sem aviso e sem strike.
+   Devolve o motivo (string) ou null. */
+var HOSTS_VENDA = 'mercadolivre|mercadolibre|meli\\.la|shopee|amazon|aliexpress|alibaba|magazineluiza|magalu|' +
+  'americanas|casasbahia|pontofrio|submarino|extra\\.com|olx|enjoei|kabum|netshoes|dafiti|centauro|' +
+  'hotmart|kiwify|eduzz|monetizze|braip|nuvemshop|lojaintegrada|myshopify|tray\\.com|yampi|cartpanda|' +
+  'bagy|tiendanube|temu|shein|wish\\.com|ebay|etsy|drogasil|drogaraia|ultrafarma|paguemenos|panvel|' +
+  'iherb|myprotein|growthsupplements|gsuplementos|netfarma|farmadelivery|consultaremedios';
+var RE_HOST_VENDA = new RegExp('(^|\\.)(' + HOSTS_VENDA + ')(\\.|$)', 'i');
+var RE_HOST_LOJA = /(loja|shop|store|vendas|oferta|promo|outlet|comprar|atacado|distribuidora|farmacia|drogaria|suplement|peptid|anaboliz|hormon)/i;   /* palavra em qualquer parte do dominio (peptideosbrasil.com.br) */
+var RE_TLD_LOJA = /\.(shop|store|vip)$/i;
+var RE_PATH_VENDA = /(^|\/)(produto|produtos|product|products|item|itens|checkout|carrinho|cart|comprar|buy|pedido|order|catalogo|catalog|loja|store|shop|oferta|ofertas|promocao|promo|collections|dp|p|pd|itm)(\/|$|\?|#)/i;
+function linkDeVenda(link) {
+  var l = limparFim(link).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '');
+  var host = l.split(/[\/?#]/)[0], path = l.slice(host.length);
+  if (!host) return null;
+  if (RE_HOST_VENDA.test(host)) return 'marketplace/loja';
+  if (RE_TLD_LOJA.test(host)) return 'dominio de loja';
+  if (RE_HOST_LOJA.test(host)) return 'site com cara de loja';
+  if (path && RE_PATH_VENDA.test(path)) return 'pagina de produto/compra';
+  return null;
+}
+
 /* Devolve o link de fora mais grave da mensagem, ou null se estiver tudo liberado.
-   Duro ganha de mole: "vitaflowoficial.com e tambem https://outraloja.com/x" apaga. */
+   Duro ganha de mole: "vitaflowoficial.com e tambem https://outraloja.com/x" apaga.
+   v10: so conta link com cara de VENDA (linkDeVenda). O resto e ignorado. */
 function linkDeFora(texto, liberados) {
-  var achados = acharLinks(texto), i, l, mole = null;
+  var achados = acharLinks(texto), i, l, v, mole = null;
   for (i = 0; i < achados.length; i++) {
     l = limparFim(achados[i]);
     if (linkPermitido(l, liberados)) continue;
-    if (linkDuro(l)) return { link: l, duro: true };
-    if (!mole) mole = { link: l, duro: false };
+    v = linkDeVenda(l);
+    if (!v) continue;                                   /* v10: noticia/artigo/video passa */
+    if (linkDuro(l)) return { link: l, duro: true, venda: v };
+    if (!mole) mole = { link: l, duro: false, venda: v };
   }
   return mole;
 }
@@ -1035,7 +1068,7 @@ exports.handler = async function (event) {
       }
 
       await telegram(
-        (motivo ? '🚨 ' + rotulo + ' — GOLPE (' + motivo + ')' : '🚫 ' + rotulo + ' — link de fora') +
+        (motivo ? '🚨 ' + rotulo + ' — GOLPE (' + motivo + ')' : '🚫 ' + rotulo + ' — link de venda (' + (fora && fora.venda || '') + ')') +   /* v10 */
         '\nAutor: ' + (body.senderName || '') + ' (' + autor + ')  ·  ' + reg.vezes + 'a vez' +
         '\nApagou: ' + (apagou ? 'sim' : 'NAO — ver log da funcao') +
         (reg.vezes >= STRIKES_MAX ? '\nRemovido do grupo: ' + (saiu ? 'sim' : 'NAO — ver log') : '') +
