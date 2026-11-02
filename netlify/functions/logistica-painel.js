@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v23  ·  27/10/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v24  ·  02/11/2026
+   v24 (02/11, bloco 28 — Compras dentro do painel único): email_pacotes aceita também o LOGIN DO PAINEL (tokenPainel = JWT
+     do banco novo + apikey, conferido em api.vitaflowoficial.com/auth/v1/user, igual ao GAS v76). Resto = v23.
    v23 (27/10, Thiago: atacado PJC com prefixo P): pedido P também é atacado (origem PY, prazo de atacado) e a linha D
      feita à mão acha o pedido de origem P. Resto = v22.
    v22 (16/10, Thiago: "quero saber o motivo de esses email não ter sido enviado"): linha D criada pela PRÓPRIA RODADA (novoD —
@@ -2348,6 +2350,31 @@ async function acaoAdminV4(acao, d, uid, agora) {
   return null;
 }
 
+/* v24: login do painel único (JWT do banco novo, role authenticated) conferido no próprio banco com a apikey pública do painel. */
+var _painelVistos = {};
+async function conferirPainel(token, apikey) {
+  token = String(token || ''); apikey = String(apikey || '');
+  if (token.split('.').length !== 3 || apikey.split('.').length !== 3) return '';
+  var pl;
+  try { pl = JSON.parse(Buffer.from(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); } catch (e) { return ''; }
+  if (String(pl.role || '') !== 'authenticated' || !pl.sub) return '';
+  var exp = Number(pl.exp || 0) * 1000;
+  if (exp && exp <= Date.now()) return '';
+  var k = require('crypto').createHash('sha256').update(token).digest('hex');
+  var c = _painelVistos[k];
+  if (c && c.ate > Date.now()) return c.email;
+  try {
+    var ctrl = new AbortController(); var t = setTimeout(function () { ctrl.abort(); }, 8000);
+    var r = await fetch('https://api.vitaflowoficial.com/auth/v1/user', { headers: { apikey: apikey, Authorization: 'Bearer ' + token }, signal: ctrl.signal });
+    clearTimeout(t);
+    if (!r.ok) return '';
+    var u = await r.json();
+    var email = String(u && u.email || '');
+    if (!email) return '';
+    _painelVistos[k] = { email: email, ate: Math.min(Date.now() + 10 * 60 * 1000, exp || (Date.now() + 10 * 60 * 1000)) };
+    return email;
+  } catch (e) { return ''; }
+}
 async function conferirAdmin(token) {
   token = String(token || '');
   var partes = token.split('.');
@@ -2382,7 +2409,8 @@ exports.handler = async function (event) {
     if (acao === 'codigos_fila' || acao === 'codigos_entrada') return await acaoComTicket(acao, d, agora);
     if (acao === 'email_pacotes') {
       var chaveOk = !!process.env.COMPRAS_KEY && String(d.chave || '') === process.env.COMPRAS_KEY;
-      if (!chaveOk && !(await conferirAdmin(d.token))) return resp({ ok: false, erro: 'sem permissão' }, 401);
+      var painelOk = !!d.tokenPainel && !!(await conferirPainel(d.tokenPainel, d.apikey));   /* v24: Compras dentro do painel */
+      if (!chaveOk && !painelOk && !(await conferirAdmin(d.token))) return resp({ ok: false, erro: 'sem permissão' }, 401);
       return resp(await emailPacotes(d.pedido, { agora: agora, forcar: d.forcar === true && !chaveOk }));
     }
   } catch (e0) {
