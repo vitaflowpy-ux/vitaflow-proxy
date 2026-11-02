@@ -1,5 +1,14 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v114 (02/11/2026 — Thiago: promoção do Mounjaro KwikPen 15mg, "a famosa caneta original", de R$ 1.999 por R$ 1.499, lote com
+//   validade 02/2028, estoque reduzido, não acumula): a PROMO_RELAMPAGO (opção 8 / "promo", menu, saudação, IA) volta a ser
+//   usada — agora SEM hora de fim (fim: '' = vale enquanto durar o estoque; pra desligar: ativa:false) e com o campo novo `obs`
+//   (lote + "preço final, não acumula"), que sai na lista da promo, na opção 8 e no contexto da IA. O bloqueio de cupom / 3% /
+//   negociação nesse produto NÃO é aqui: é a lista "Produtos sem desconto" (Firestore cupons_vitaflow, _vfTipo sem_desconto),
+//   que a Athena (por nome) e o carrinho do site (por id) já leem. HALLOWEEN15 (v113) continua no código, mas já expirou pela data.
+//   Resto = v113.
+// v113 (30/10/2026 — HALLOWEEN15: 15% em todo o site só em 31/10, frete grátis automático pausado no dia; ver blocos "v113").
+
 // v112 (28/10/2026 — Thiago: "coloque o link do grupo novo em todos os lugares necessários"): o link do Grupo VIP no WhatsApp
 //   (GRUPO_WHATSAPP e a saudação) passa a ser o do VitaFlow VIP #2 (chat.whatsapp.com/Bcw7hkVR3ITE5RQtnYzdD7) — o VIP #1 lotou.
 //   Resto = v111.
@@ -896,17 +905,20 @@ function ehProdutoPromo(item){
 const FIRESTORE_PROJECT = 'pricehub-f0236';
 const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
 
-// v92: Primobolan 100mg - Cooper Pharma, de R$ 1.499 por R$ 899, só 08/10 até 23h59 (ou enquanto durar o estoque).
-// `fim`: depois dessa hora a promoção some sozinha de todos os lugares. Pra desligar antes: ativa:false.
-// (A anterior era a do MyoMax Inibition™, de R$ 1.598 por R$ 999 — já encerrada.)
+// v114 (02/11/2026): Mounjaro KwikPen 15mg (Caneta - 4 doses - Total 60mg) - Eli Lilly — "a famosa caneta original" —
+// de R$ 1.999 por R$ 1.499, ESTOQUE REDUZIDO, enquanto durar o estoque (sem hora de fim: fim = ''). Lote com validade 02/2028.
+// NÃO acumula: o produto está na lista "sem desconto" (cupom, 3% e negociação ficam fora — Athena e site). Pra desligar: ativa:false.
+// `fim`: se preenchido, depois dessa hora a promoção some sozinha de todos os lugares.
+// (Anteriores: Primobolan 100mg Cooper de R$ 1.499 por R$ 899 só em 08/10; MyoMax Inibition™ de R$ 1.598 por R$ 999 — encerradas.)
 const PROMO_RELAMPAGO = {
   ativa: true,
-  fim: '2026-10-08T23:59:59-03:00',
-  validade: 'só hoje até 23h59 ou enquanto durarem os estoques',
-  titulo: 'PROMOÇÃO RELÂMPAGO — Primobolan 100mg Cooper Pharma',
-  link: 'https://vitaflowoficial.com/products/1772046866667-s8ppx',
+  fim: '',
+  validade: 'ESTOQUE REDUZIDO — só enquanto durar o estoque',
+  obs: 'Lote com validade até 02/2028. O preço da promoção já é o final: não acumula com cupom, outras promoções nem com os 3% da Athena.',
+  titulo: 'MOUNJARO KwikPen 15mg — a caneta original, de R$ 1.999 por R$ 1.499',
+  link: 'https://vitaflowoficial.com/products/mounjaro-kwikpen-15mg-total-60mg',
   produtos: [
-    { nome: 'Primobolan 100mg - Cooper Pharma', de: 1499, por: 899 },
+    { nome: 'Mounjaro KwikPen 15mg (Caneta - 4 doses - Total 60mg) - Eli Lilly', de: 1999, por: 1499 },
   ],
 };
 function promoAtiva() {
@@ -1297,7 +1309,7 @@ async function contextoPromo(){
   const rel = promoAtiva();
   if (rel && rel.produtos && rel.produtos.length) {
     const its = rel.produtos.map(p => `${p.nome}: de R$ ${reais(p.de)} por R$ ${reais(p.por)}`).join('; ');
-    linhas.push(`PROMOÇÃO RELÂMPAGO ATIVA AGORA: ${rel.titulo} — ${its}${rel.validade ? ' — ' + rel.validade : ''}. Link: ${rel.link}. SEMPRE que o cliente perguntar de promoção/desconto ou demonstrar interesse nesse produto, DIVULGUE esta promoção.`);
+    linhas.push(`PROMOÇÃO RELÂMPAGO ATIVA AGORA: ${rel.titulo} — ${its}${rel.validade ? ' — ' + rel.validade : ''}.${rel.obs ? ' ' + rel.obs : ''} Link: ${rel.link}. SEMPRE que o cliente perguntar de promoção/desconto ou demonstrar interesse nesse produto, DIVULGUE esta promoção.`);   // v114: obs (lote + não acumula)
   }
   if (PROMO_PRODUTO.ativa && (PROMO_PRODUTO.produtos || []).length) {
     linhas.push(`PROMOÇÃO DO MOMENTO ATIVA AGORA: ${PROMO_PRODUTO.titulo} — ${PROMO_PRODUTO.pct}% OFF em ${(PROMO_PRODUTO.produtos || []).join(', ')}${PROMO_PRODUTO.validade ? ' até ' + PROMO_PRODUTO.validade : ''}.`);
@@ -1480,6 +1492,7 @@ function msgPromoAtual(){
   if (_rel) {
     return `⚡ *${_rel.titulo}*${_rel.validade ? ' — ' + _rel.validade : ''}! 🔥\n\n` +
       _rel.produtos.map(p => `• *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`).join('\n') +
+      (_rel.obs ? `\n\n_${_rel.obs}_` : '') +   // v114
       `\n\n👉 ${_rel.link}`;
   }
   if (promoHalloweenAtiva()) {   // v113
@@ -4173,7 +4186,8 @@ function listaPromoMsg(promo) {
   ).join('\n');
   const _cab = promo.validade ? `⚡ *${promo.titulo}* — ${promo.validade}! 🔥` : `⚡ *${promo.titulo}* — exclusiva comigo (Athena) e enquanto durarem os estoques! 🔥`;
   return `${_cab}\n\n` +
-    `${linhas}\n\n👉 Detalhes: ${promo.link}\n\n*Digite o número do produto para comprar*, ou *menu* para voltar ao início.`;
+    `${linhas}` + (promo.obs ? `\n\n_${promo.obs}_` : '') +   // v114: lote + "não acumula"
+    `\n\n👉 Detalhes: ${promo.link}\n\n*Digite o número do produto para comprar*, ou *menu* para voltar ao início.`;
 }
 async function abrirPromo(session, sid) {
   const promo = promoAtiva();
