@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   listar-pedidos.js — PEDIDOS PARA OS PAINÉIS SEM APPS SCRIPT (VitaFlow)  ·  v2  ·  15/10/2026
+   listar-pedidos.js — PEDIDOS PARA OS PAINÉIS SEM APPS SCRIPT (VitaFlow)  ·  v3  ·  02/11/2026
+   v3 (02/11/2026, bloco 28 — Compras dentro do painel único): aceita também o LOGIN DO PAINEL (tokenPainel = JWT do banco novo
+       + apikey), conferido em api.vitaflowoficial.com/auth/v1/user — igual ao GAS v76. Resposta acima de 1 MB vai em gzip
+       (o navegador descomprime sozinho), então o limite para cair no GAS sobe. Resto = v2.
    v2 (15/10/2026): aceita o login de admin (tokenAdmin) — a chave saiu das páginas. Ver autorizado().
    Netlify Function no repo vitaflow-proxy → netlify/functions/listar-pedidos.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/listar-pedidos
@@ -20,10 +23,14 @@
      FIREBASE_SECRET (já existe)  ·  COMPRAS_KEY (NOVA — o mesmo valor vfc_... dos painéis/GAS)
    ============================================================================= */
 
+var zlib = require('zlib');
+var crypto = require('crypto');
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
+var VFDB = 'https://api.vitaflowoficial.com';
 var FB_SECRET = process.env.FIREBASE_SECRET || '';
 var COMPRAS_KEY = process.env.COMPRAS_KEY || '';
-var LIMITE_BYTES = 5500000;   /* a Netlify corta resposta acima de 6 MB — acima disso, o GAS responde */
+var LIMITE_BYTES = 5500000;   /* a Netlify corta resposta acima de 6 MB — acima disso, o GAS responde (v3: vale para o corpo já comprimido) */
+var COMPRIMIR_ACIMA = 1000000;
 var CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type',
@@ -51,8 +58,35 @@ async function conferirAdmin(token) {
     return (await r.json()) === true ? uid : null;
   } catch (e) { return null; }
 }
+/* v3: login do painel único (JWT do banco novo, role authenticated) conferido no próprio banco com a apikey pública do painel.
+   Guarda o "sim" por 10 min na instância quente. */
+var _painelVistos = {};
+async function conferirPainel(token, apikey) {
+  token = String(token || ''); apikey = String(apikey || '');
+  if (token.split('.').length !== 3 || apikey.split('.').length !== 3) return '';
+  var pl;
+  try { pl = JSON.parse(Buffer.from(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); } catch (e) { return ''; }
+  if (String(pl.role || '') !== 'authenticated' || !pl.sub) return '';
+  var exp = Number(pl.exp || 0) * 1000;
+  if (exp && exp <= Date.now()) return '';
+  var k = crypto.createHash('sha256').update(token).digest('hex');
+  var c = _painelVistos[k];
+  if (c && c.ate > Date.now()) return c.email;
+  try {
+    var ctrl = new AbortController(); var t = setTimeout(function () { ctrl.abort(); }, 8000);
+    var r = await fetch(VFDB + '/auth/v1/user', { headers: { apikey: apikey, Authorization: 'Bearer ' + token }, signal: ctrl.signal });
+    clearTimeout(t);
+    if (!r.ok) return '';
+    var u = await r.json();
+    var email = String(u && u.email || '');
+    if (!email) return '';
+    _painelVistos[k] = { email: email, ate: Math.min(Date.now() + 10 * 60 * 1000, exp || (Date.now() + 10 * 60 * 1000)) };
+    return email;
+  } catch (e) { return ''; }
+}
 async function autorizado(d) {
   if (COMPRAS_KEY && String(d.chave || '') === COMPRAS_KEY) return true;
+  if (d.tokenPainel && (await conferirPainel(d.tokenPainel, d.apikey))) return true;   /* v3 */
   return !!(await conferirAdmin(d.tokenAdmin));
 }
 
@@ -81,6 +115,11 @@ exports.handler = async function (event) {
     var linhas = [hdr];
     for (var i = 0; i < chaves.length; i++) linhas.push(mapa[chaves[i]]);
     var corpo = JSON.stringify({ success: true, linhas: linhas, fonte: 'firebase' });
+    if (corpo.length > COMPRIMIR_ACIMA) {   /* v3: comprimido — só cai no GAS se nem comprimido couber */
+      var gz = zlib.gzipSync(Buffer.from(corpo, 'utf8')).toString('base64');
+      if (gz.length > LIMITE_BYTES) return usarGas('resposta grande demais');
+      return { statusCode: 200, headers: Object.assign({}, CORS, { 'Content-Encoding': 'gzip' }), body: gz, isBase64Encoded: true };
+    }
     if (corpo.length > LIMITE_BYTES) return usarGas('resposta grande demais');
     return resp(corpo);
   } catch (e) {
