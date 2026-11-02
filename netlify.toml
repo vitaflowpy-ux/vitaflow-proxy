@@ -14,3 +14,6 @@
   timeout = 26
 [functions."conta-cliente"]
   timeout = 26
+[functions."pedidos-paliativo"]
+  schedule = "*/5 * * * *"
+  timeout = 26
