@@ -1,5 +1,9 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v116 (04/11/2026 — Thiago: "esta errado! se o cliente quiser acumular?" → "Pergunta antes"): o cashback NÃO é mais descontado
+//   sozinho. No resumo (varejo, promo e atacado) a Athena mostra o saldo e o cliente escolhe: digita *usar cashback* (desconta) ou
+//   segue normal / *acumular* (guarda). A escolha vale só para o pedido em andamento (zera quando o link é gerado). Textos do
+//   saldo e da IA ajustados ("você escolhe usar ou acumular"). Resto = v115.
 // v115 (04/11/2026 — Thiago: CASHBACK no lugar do sorteio, "na athena ok" + "Informa e desconta"): 3% do que o cliente pagou em
 //   produtos volta como saldo (45 dias). A Athena acha o saldo pelo WhatsApp do cliente (o telefone das compras que geraram o
 //   cashback — índice vitaflow_cashback/tel, gravado pelo Apps Script) e DESCONTA SOZINHA no resumo (só dos produtos, nunca do
@@ -1078,12 +1082,20 @@ function ehIntencaoCashback(n) {
   if (!CASHBACK.ativa) return false;
   return /\bcash ?back\b|\bmeu saldo\b|\bsaldo de cashback\b|\bsaldo do cashback\b/.test(n);
 }
+// v116: o cliente escolhe no resumo — "usar cashback" desconta; "acumular" / "não usar" guarda
+function ehUsarCashback(t) { t = String(t || '').trim(); return /\b(usar|usa|uso|aplicar|aplica|descontar|desconta)( o| meu)? cash ?back\b/.test(t) && !/\b(nao|sem)\b/.test(t); }
+function ehAcumularCashback(t) { t = String(t || '').trim().replace(/[!.]+$/, ''); return /^(acumular|acumula|acumulo|guardar|guarda|juntar|deixar acumulando|deixa acumulando|nao usar|nao quero usar|sem cashback)( o| meu)?( cash ?back)?( pra depois| para depois)?$/.test(t) || /\b(nao|sem) (usar )?(o |meu )?cash ?back\b/.test(t); }
+function linhaCashbackEscolha(saldoCent, usadoReais) {
+  if (usadoReais > 0) return `💰 *Seu cashback:* -R$ ${_cbBR(usadoReais)}` + (saldoCent / 100 - usadoReais > 0.004 ? ` _(sobram R$ ${_cbBR(saldoCent / 100 - usadoReais)})_` : '') + `\n_Prefere guardar pra depois? Digite *acumular*._\n`;
+  if (saldoCent > 0) return `💰 Você tem *R$ ${_cbBR(saldoCent / 100)} de cashback*. Digite *usar cashback* para descontar agora — ou siga normalmente que ele fica *acumulando*.\n`;
+  return '';
+}
 function msgCashback(cb) {
   const como = `_A cada compra paga você ganha *${CASHBACK.pct}%* do valor dos produtos (frete não entra) de volta, válido por *${CASHBACK.dias} dias*. ` +
-    `Ele é descontado sozinho aqui comigo e no carrinho do site (com o mesmo CPF e e-mail das compras) — e vale junto com cupons e promoções._`;
+    `Você escolhe quando usar: no resumo do pedido aqui comigo (é só digitar *usar cashback*) ou no carrinho do site (com o mesmo CPF e e-mail das compras) — ou deixa acumulando. Vale junto com cupons e promoções._`;
   if (!cb || !(cb.saldo > 0)) return `💰 *Cashback VitaFlow*\n\nPor aqui não achei saldo de cashback no seu WhatsApp ainda.\n\n${como}\n\n_Se você comprou com outro número, o saldo aparece no site em vitaflowoficial.com/pages/minha-conta._`;
   const lotes = (cb.lotes || []).slice(0, 5).map(l => `• R$ ${_cbBR(l.valor / 100)} — vence em ${l.validade}`).join('\n');
-  return `💰 *Seu cashback: R$ ${_cbBR(cb.saldo / 100)}*\n\n${lotes}\n\nNa sua próxima compra comigo ele já entra descontado no resumo. 😉\n\n${como}`;
+  return `💰 *Seu cashback: R$ ${_cbBR(cb.saldo / 100)}*\n\n${lotes}\n\nNo resumo do seu próximo pedido eu te mostro o saldo e você escolhe: *usar na hora* ou *acumular*. 😉\n\n${como}`;
 }
 
 // Ciclo vigente — MESMA conta do GAS e da página. Nunca precisa trocar data.
@@ -1365,7 +1377,7 @@ async function contextoPromo(){
     linhas.push(`SORTEIO QUINZENAL ATIVO AGORA: a cada R$ ${SORTEIO.porNumero} pagos EM PRODUTOS dentro do ciclo, o cliente ganha 1 NÚMERO DA SORTE e concorre a um VALE-COMPRAS DE ${SORTEIO.premio} na VitaFlow. Ciclo atual: ${sorteioDDMM(_c.ini)} a ${sorteioDDMM(_c.fim)}${_d > 0 ? ' (fecha em ' + _d + ' dia(s))' : ''}. O sorteio é no ${sorteioDiaSemana(_c)} ${sorteioDDMM(_c.sorteio)} às ${sorteioHoraTxt(_c)}, pela LOTERIA FEDERAL — a VitaFlow não escolhe o ganhador. Vale a SOMA de todas as compras do cliente no período (não precisa ser num pedido só) e conta o valor PAGO em produtos, já com desconto; FRETE NÃO CONTA para gerar número. Só pedidos com pagamento confirmado. Os números ZERAM a cada ciclo. O prêmio é vale-compras (NÃO é dinheiro) e vale para produtos e frete. O cliente consulta os próprios números pelo CPF — aqui comigo ou em ${SORTEIO.link}. SEMPRE que o cliente perguntar de promoção/desconto/sorteio, DIVULGUE o sorteio. Se ele perguntar quantos números tem, peça o CPF.`);
   }
   if (CASHBACK.ativa) {
-    linhas.push(`CASHBACK ATIVO (programa permanente): ${CASHBACK.pct}% do valor PAGO em produtos (frete não entra; cupom/desconto já descontados) volta como saldo, liberado logo depois da confirmação do pagamento e válido por ${CASHBACK.dias} dias. Pedido cancelado/estornado perde o cashback. Revendedor não participa; atacado participa. O saldo é descontado SOZINHO no resumo do pedido aqui na Athena (achado pelo WhatsApp das compras) e no carrinho do site (mesmo CPF e e-mail das compras), e vale JUNTO com cupons e promoções (é a exceção ao "não acumula"). Abate só dos produtos, nunca do frete. O cliente vê o saldo digitando *cashback* aqui ou na Minha Conta do site (vitaflowoficial.com/pages/minha-conta). Lembrete por e-mail 5 dias antes de vencer. NÃO invente valores de saldo.`);
+    linhas.push(`CASHBACK ATIVO (programa permanente): ${CASHBACK.pct}% do valor PAGO em produtos (frete não entra; cupom/desconto já descontados) volta como saldo, liberado logo depois da confirmação do pagamento e válido por ${CASHBACK.dias} dias. Pedido cancelado/estornado perde o cashback. Revendedor não participa; atacado participa. O CLIENTE ESCOLHE usar ou acumular: no resumo do pedido aqui na Athena aparece o saldo (achado pelo WhatsApp das compras) e ele digita *usar cashback* para descontar (ou *acumular* para guardar); no carrinho do site aparece um quadro "Usar meu cashback" (mesmo CPF e e-mail das compras) que ele marca se quiser. Cada crédito vence 45 dias depois da compra que o gerou. Vale JUNTO com cupons e promoções (é a exceção ao "não acumula"). Abate só dos produtos, nunca do frete. O cliente vê o saldo digitando *cashback* aqui ou na Minha Conta do site (vitaflowoficial.com/pages/minha-conta). Lembrete por e-mail 5 dias antes de vencer. NÃO invente valores de saldo.`);
   }
   if (linhas.length === 1) linhas.push('Não há promoção relâmpago nem lançamento com desconto especial ativos no momento (só o benefício padrão acima). NÃO invente promoções.');
   return linhas.join('\n');
@@ -4819,15 +4831,16 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   }
 
   // v115: CASHBACK — saldo achado pelo WhatsApp; abate só dos produtos (nunca do frete), JUNTO com os outros descontos.
+  // v116: só desconta se o cliente escolheu usar (session.cbEscolha === 'usar'); senão mostra o saldo e ele decide
   let cashbackReais = 0, linhaCashback = '';
   if (CASHBACK.ativa) {
     const _cbC = await cashbackDoCliente(sid);
     if (_cbC && _cbC.saldo > 0) {
-      cashbackReais = cashbackAbate(_cbC.saldo, totalComDesconto - freteValorFinal);
-      if (cashbackReais > 0) {
-        totalComDesconto = Math.round((totalComDesconto - cashbackReais) * 100) / 100;
-        linhaCashback = `💰 *Seu cashback:* -R$ ${_cbBR(cashbackReais)}` + (_cbC.saldo / 100 - cashbackReais > 0.004 ? ` _(sobram R$ ${_cbBR(_cbC.saldo / 100 - cashbackReais)} pra próxima)_` : '') + `\n`;
+      if (session.cbEscolha === 'usar') {
+        cashbackReais = cashbackAbate(_cbC.saldo, totalComDesconto - freteValorFinal);
+        if (cashbackReais > 0) totalComDesconto = Math.round((totalComDesconto - cashbackReais) * 100) / 100;
       }
+      linhaCashback = linhaCashbackEscolha(_cbC.saldo, cashbackReais);
     }
   }
   const _cbGanha = CASHBACK.ativa ? Math.round(Math.max(0, totalComDesconto - freteValorFinal) * CASHBACK.pct) / 100 : 0;
@@ -5182,15 +5195,23 @@ async function mostrarResumoPedido(session, sid, respond) {
   if (session.fluxoPromo) {
     const descPct = session.descontoPromoPct || 0;
     const descValor = totalProd * (descPct / 100);
-    const totalComDesconto = totalProd - descValor + frete.valor;
+    let totalComDesconto = totalProd - descValor + frete.valor;   // v116: let (cashback)
+    let _cbPr = 0, _lnCbPr = '';
+    if (CASHBACK.ativa) {
+      const _c = await cashbackDoCliente(sid);
+      if (_c && _c.saldo > 0) {
+        if (session.cbEscolha === 'usar') { _cbPr = cashbackAbate(_c.saldo, totalComDesconto - frete.valor); totalComDesconto = Math.round((totalComDesconto - _cbPr) * 100) / 100; }
+        _lnCbPr = '\n' + linhaCashbackEscolha(_c.saldo, _cbPr).replace(/\n$/, '');
+      }
+    }
     const resumo =
       `*📋 RESUMO DO PEDIDO*\n\n${resumoCarrinho(carrinho)}\n\n` +
       `    Subtotal: R$ ${totalProd.toFixed(2).replace('.',',')}\n\n` +
       `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
       `🔥 *${session.promoTitulo||'Promoção Relâmpago'}* — preços promocionais já aplicados` +
-      (descPct ? `\n🏷️ Desconto extra (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') +
+      (descPct ? `\n🏷️ Desconto extra (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') + _lnCbPr +
       `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`;
-    await saveSession(sid, { ...session, state:'CONFIRMAR', simulouParcela: null, freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo', cashbackReais: null });   // v115: cashback no "Pedido gerado"
+    await saveSession(sid, { ...session, state:'CONFIRMAR', simulouParcela: null, freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo', cashbackReais: _cbPr });   // v116: cashback só se o cliente escolheu usar
     return respond(resumo);
   }
   return await fecharResumoNormal({ ...session, freteSelecionado: frete, totalProd }, sid, null, respond);
@@ -5199,11 +5220,11 @@ async function mostrarResumoPedido(session, sid, respond) {
 async function mostrarResumoAtacado(session, sid, respond) {
   const cart = session.carrinhoAtk || [];
   const sub = totalCarrinho(cart);
-  await saveSession(sid, { ...session, state:'ATK_CONFIRMAR' });
   // v115: cashback (atacado participa igual) — aqui só mostra; o desconto e a reserva saem no gerarLinkPedido
   let _cbAtk = 0, _lnCbAtk = '';
-  if (CASHBACK.ativa) { const _c = await cashbackDoCliente(sid); if (_c && _c.saldo > 0) { _cbAtk = cashbackAbate(_c.saldo, sub); if (_cbAtk > 0) _lnCbAtk = `💰 *Seu cashback:* -R$ ${_cbBR(_cbAtk)}\n`; } }
+  if (CASHBACK.ativa) { const _c = await cashbackDoCliente(sid); if (_c && _c.saldo > 0) { if (session.cbEscolha === 'usar') _cbAtk = cashbackAbate(_c.saldo, sub); _lnCbAtk = linhaCashbackEscolha(_c.saldo, _cbAtk); } }   // v116
   const _totAtk = Math.round((sub - _cbAtk) * 100) / 100;
+  await saveSession(sid, { ...session, state:'ATK_CONFIRMAR', cashbackReais: _cbAtk });   // v116: o gerarLinkPedido usa este valor
   return respond(`*📋 RESUMO DO PEDIDO — ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n🚚 Frete: *GRÁTIS* 🎉\n${_lnCbAtk}\n💰 *Total: R$ ${_totAtk.toFixed(2).replace('.', ',')}*\n\n*Confirma?*\n1️⃣ Sim, gerar o link de pagamento\n2️⃣ Não, voltar`);
 }
 // Fecha o pedido de ATACADO direto, sem passar pelo resumo/observação. Usado quando o
@@ -5235,6 +5256,7 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
   let cashbackReais = 0;
   if (CASHBACK.ativa && orderNsu) {
     let _cbQ = (typeof session.cashbackReais === 'number') ? session.cashbackReais : null;
+    if (_cbQ === null && session.cbEscolha !== 'usar') _cbQ = 0;   // v116: sem resumo (fechar direto) só usa se o cliente escolheu
     if (_cbQ === null) {
       const _c = await cashbackDoCliente(sid);
       _cbQ = (_c && _c.saldo > 0) ? cashbackAbate(_c.saldo, totalFinal - ((frete && frete.valor) || 0)) : 0;
@@ -5311,7 +5333,7 @@ async function gerarLinkPedido(session, sid, respond, assistente) {
         valor: totalFinal.toFixed(2).replace('.',','), phone: sid })
     });
   } catch {}
-  await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, cashbackReais: cashbackReais, orderNsu, link: link || '', ...camposPixSessao(pix, totalFinal), cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
+  await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', total: totalFinal, cashbackReais: cashbackReais, cbEscolha: null, orderNsu, link: link || '', ...camposPixSessao(pix, totalFinal), cupomDocId: session.cupomDocId || null, cupomCodigo: session.cupomCodigo || null, brinde: session.brinde || null });
   if (!link && !pix) return await responderDireto(sid, `Acesse vitaflowoficial.com para finalizar seu pedido.`, respond, assistente);
   const separado = !(assistente && assistente !== 'Athena');
   const principal =
@@ -6920,6 +6942,9 @@ exports.handler = async (event) => {
     }
 
     if (state === 'ATK_CONFIRMAR') {
+      if (CASHBACK.ativa && (ehUsarCashback(n) || ehAcumularCashback(n))) {   // v116
+        return await mostrarResumoAtacado({ ...session, cbEscolha: ehUsarCashback(n) ? 'usar' : 'acumular' }, sid, respond);
+      }
       const cart = session.carrinhoAtk || [];
       if (num === 2) { await saveSession(sid, { ...session, state:'ATK_CART' }); return respond(msgCarrinhoAtk(cart)); }
       if (num === 1) {
@@ -6927,7 +6952,7 @@ exports.handler = async (event) => {
         const sub = totalCarrinho(cart);
         if (sub < ATACADO_MIN) { await saveSession(sid, { ...session, state:'ATK_CART' }); return respond(`O pedido está abaixo de R$ 3.000 (faltam R$ ${faltaAtk(sub).toFixed(2).replace('.', ',')}). Adicione mais um produto pra fechar. 😊`); }
         // Reutiliza o gerador de link do varejo, com carrinho de ATACADO, frete grátis e SEM desconto/cupom.
-        const sessAtk = { ...session, carrinho: cart, freteSelecionado: { label: 'Grátis (atacado)', valor: 0 }, estadoCliente: '', descontoReais: 0, descontoLabel: '', descontoTipo: 'atacado', total: sub, cupomDocId: null, cupomCodigo: null, brinde: null, atacado: true, carrinhoAtk: [], cashbackReais: null };   // v115
+        const sessAtk = { ...session, carrinho: cart, freteSelecionado: { label: 'Grátis (atacado)', valor: 0 }, estadoCliente: '', descontoReais: 0, descontoLabel: '', descontoTipo: 'atacado', total: sub, cupomDocId: null, cupomCodigo: null, brinde: null, atacado: true, carrinhoAtk: [], cashbackReais: (typeof session.cashbackReais === 'number' ? session.cashbackReais : null) };   // v116: o valor que o resumo do atacado mostrou
         return await gerarLinkPedido(sessAtk, sid, respond, nomeAssistente);
       }
       if (_ehQueroFechar((mensagem || '').trim())) {
@@ -7677,6 +7702,13 @@ exports.handler = async (event) => {
     }
 
     if (state === 'CONFIRMAR') {
+      // v116: cashback — "usar cashback" desconta, "acumular" guarda (refaz o resumo com a escolha)
+      if (CASHBACK.ativa && (ehUsarCashback(n) || ehAcumularCashback(n))) {
+        const _esc = ehUsarCashback(n) ? 'usar' : 'acumular';
+        const _sCb = { ...session, cbEscolha: _esc };
+        if (session.descontoTipo === 'promo') return await mostrarResumoPedido(_sCb, sid, respond);
+        return await fecharResumoNormal({ ..._sCb, cupomDocId: null, cupomCodigo: null }, sid, session.cupomUlt || null, respond);
+      }
       // v109: "sair/cancelar/não quero mais" no resumo = voltar (2), e a marca da simulação cai — "2" depois disso NUNCA gera o Pix
       // (Ivan 10/10: "Sair" → "Não reconheci Sair como cupom… 2 voltar" → "2" gerou Pix de R$ 2.795).
       if (/^(sair|cancelar|cancela|parar|desistir|desisto|nao quero|nao quero mais|deixa|deixa pra la|esquece|depois)[!.]*$/.test(n.trim())) { num = 2; session.simulouParcela = false; }
