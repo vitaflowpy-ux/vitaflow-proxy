@@ -2043,8 +2043,8 @@ const MSG_PERGUNTA_TIPO_PRAZO = `📦 *Sobre prazo de entrega* — me diz qual o
 // Tabela IGUAL à do site (main-cart-footer). Valores em reais. Atualizada 16/09/2026 (+R$5).
 // CE PAC = R$77,50. RR tem Transportadora (igual ao site).
 const FRETES = {
-  AC:{PAC:135,SEDEX:115,Transp:155}, AL:{PAC:105,SEDEX:130,Transp:95},
-  AM:{PAC:105,SEDEX:130,Transp:115}, AP:{PAC:105,SEDEX:130,Transp:125},
+  AC:{PAC:135,SEDEX:115,Transp:155}, AL:{PAC:105,SEDEX:130,Transp:125},
+  AM:{PAC:105,SEDEX:130,Transp:125}, AP:{PAC:105,SEDEX:130,Transp:125},
   BA:{PAC:63,SEDEX:95,Transp:85},    CE:{PAC:77.5,SEDEX:110,Transp:85},
   DF:{PAC:50,SEDEX:65,Transp:77},    ES:{PAC:50,SEDEX:75,Transp:75},
   GO:{PAC:50,SEDEX:75,Transp:81},    MA:{PAC:105,SEDEX:130,Transp:95},
@@ -2053,9 +2053,9 @@ const FRETES = {
   PB:{PAC:105,SEDEX:130,Transp:105}, PE:{PAC:92,SEDEX:120,Transp:125},
   PI:{PAC:105,SEDEX:130,Transp:115}, PR:{PAC:50,SEDEX:65,Transp:75},
   RJ:{PAC:50,SEDEX:75,Transp:75},    RN:{PAC:105,SEDEX:130,Transp:105},
-  RO:{PAC:105,SEDEX:115,Transp:175}, RR:{PAC:135,SEDEX:115,Transp:155},
+  RO:{PAC:105,SEDEX:115,Transp:175}, RR:{PAC:135,SEDEX:115,Transp:125},
   RS:{PAC:50,SEDEX:75,Transp:105},   SC:{PAC:50,SEDEX:75,Transp:75},
-  SE:{PAC:105,SEDEX:130,Transp:95},  SP:{PAC:37,SEDEX:45,Transp:53},
+  SE:{PAC:105,SEDEX:130,Transp:125},  SP:{PAC:37,SEDEX:45,Transp:53},
   TO:{PAC:92,SEDEX:110,Transp:115},
 };
 
