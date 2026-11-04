@@ -1,6 +1,10 @@
 'use strict';
 /* =============================================================================
-   cashback.js — CASHBACK VITAFLOW  ·  v1  ·  04/11/2026
+   cashback.js — CASHBACK VITAFLOW  ·  v2  ·  04/11/2026
+   v2 (04/11, Thiago: "pode fazer A, B e C" — consultar o cashback do cliente e usar o saldo na venda do ORÇAMENTO): ações de ADMIN
+       (idToken do Firebase Auth + admins/<uid> = true, igual à conta-cliente): adm_consultar {idToken, cpf} → saldo, vencimentos,
+       histórico e nome · adm_reservar {idToken, cpf, pedido, valor} → reserva sem conferir e-mail/telefone (canal 'orcamento') ·
+       adm_liberar {idToken, cpf, pedido}.
    Pedido do Thiago (04/11): trocar o sorteio por cashback para todo cliente que compra.
    Regras dele: 3% · validade 45 dias · liberado logo depois da confirmação do pagamento (cancelado/estornado → o crédito cai
    sozinho) · só sobre o valor PAGO em produtos (cupom já descontado, frete nunca) · atacado participa igual · revendedor (V) fora ·
@@ -213,6 +217,62 @@ async function acaoLiberar(b, agora) {
   return { ok: true };
 }
 
+/* ---------- admin (Orçamento) ---------- */
+async function conferirAdmin(token) {
+  token = String(token || '');
+  var partes = token.split('.');
+  if (partes.length !== 3) return null;
+  var uid = '';
+  try { var pl = JSON.parse(Buffer.from(partes[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); uid = pl.user_id || pl.sub || ''; } catch (e) { return null; }
+  if (!uid || !/^[A-Za-z0-9]+$/.test(uid)) return null;
+  try {
+    var r = await fetch(FB_BASE + '/admins/' + uid + '.json?auth=' + encodeURIComponent(token));
+    if (!r.ok) return null;
+    return (await r.json()) === true ? uid : null;
+  } catch (e) { return null; }
+}
+async function acaoAdmConsultar(b, agora) {
+  var cpf = cpf11(b.cpf);
+  if (cpf.length !== 11) return { ok: false, erro: 'cpf_invalido' };
+  var cr = (await fbGet(RAIZ + '/creditos/' + cpf)) || {};
+  var r = await resumoConta([cpf], agora);
+  var nome = '', ult = 0;
+  Object.keys(cr).forEach(function (k) { var c = cr[k] || {}; if (c.nome && (Number(c.em) || 0) >= ult) { ult = Number(c.em) || 0; nome = c.nome; } });
+  r.ok = true; r.cpf = cpf; r.nome = nome;
+  return r;
+}
+async function acaoAdmReservar(b, agora, uid) {
+  var cfg = await config();
+  if (!cfg.ativo) return { ok: false, erro: 'desligado', valor: 0 };
+  var cpf = cpf11(b.cpf), pedido = String(b.pedido || '').trim().toUpperCase();
+  if (cpf.length !== 11) return { ok: false, erro: 'cpf_invalido', valor: 0 };
+  if (!pedidoValido(pedido)) return { ok: false, erro: 'pedido_invalido', valor: 0 };
+  var pedir = Math.round(Number(b.valor) || 0);
+  if (pedir <= 0) return { ok: false, erro: 'valor_invalido', valor: 0 };
+  var cr = (await fbGet(RAIZ + '/creditos/' + cpf)) || {};
+  var usos = (await fbGet(RAIZ + '/usos/' + cpf)) || {};
+  var k = chave(pedido);
+  if (usos[k] && (usos[k].status === 'reservado' || usos[k].status === 'usado')) return { ok: true, valor: Number(usos[k].valor) || 0, ja: true };
+  var calc = cbCalcular(cr, usos, agora);
+  var valor = Math.min(pedir, calc.saldo);
+  if (valor > 0) {
+    var mud = {}; mud[k] = { pedido: pedido, valor: valor, em: agora, status: 'reservado', canal: 'orcamento', admin: uid };
+    await fbPatch(RAIZ + '/usos/' + cpf, mud);
+  }
+  return { ok: true, valor: valor, saldo: calc.saldo };
+}
+async function acaoAdmLiberar(b, agora) {
+  var cpf = cpf11(b.cpf), pedido = String(b.pedido || '').trim().toUpperCase();
+  if (cpf.length !== 11 || !pedidoValido(pedido)) return { ok: false, erro: 'dados_invalidos' };
+  var usos = (await fbGet(RAIZ + '/usos/' + cpf)) || {};
+  var k = chave(pedido);
+  if (usos[k] && usos[k].status === 'reservado') {
+    var m = {}; m[k + '/status'] = 'liberado'; m[k + '/motivo'] = 'orcamento'; m[k + '/atualizado'] = agora;
+    await fbPatch(RAIZ + '/usos/' + cpf, m);
+  }
+  return { ok: true };
+}
+
 /* Minha Conta (conta-cliente.js): resumo dos CPFs da conta — a conta já foi autenticada lá (sessão) */
 async function resumoConta(cpfs, agora) {
   var cfg = await config();
@@ -254,6 +314,13 @@ exports.handler = async function (event) {
     if (b.acao === 'saldo') return resp(200, await acaoSaldo(b, agora));
     if (b.acao === 'reservar') return resp(200, await acaoReservar(b, agora));
     if (b.acao === 'liberar') return resp(200, await acaoLiberar(b, agora));
+    if (b.acao === 'adm_consultar' || b.acao === 'adm_reservar' || b.acao === 'adm_liberar') {
+      var uid = await conferirAdmin(b.idToken);
+      if (!uid) return resp(200, { ok: false, erro: 'nao_admin' });
+      if (b.acao === 'adm_consultar') return resp(200, await acaoAdmConsultar(b, agora));
+      if (b.acao === 'adm_reservar') return resp(200, await acaoAdmReservar(b, agora, uid));
+      return resp(200, await acaoAdmLiberar(b, agora));
+    }
     return resp(400, { ok: false, erro: 'acao' });
   } catch (e) {
     console.error('[cashback] ' + e.message);
