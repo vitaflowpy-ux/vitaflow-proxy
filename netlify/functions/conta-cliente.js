@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v11  ·  08/10/2026
+   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v12  ·  04/11/2026
+   v12 (04/11 — cashback no lugar do sorteio, pedido do Thiago): 'minha_conta' devolve `cashback` { ativo, pct, dias, saldo, lotes,
+       historico, validade_proxima } dos CPFs da conta (os mesmos do sorteio: CPFs dos pedidos pagos deste e-mail). Lê com a
+       função irmã cashback.js (require), que tem o MESMO cálculo do Apps Script. Falha na leitura nunca derruba a conta (vem null).
    v11 (08/10 — o reenvio VF-0710-R002 não foi dividido; GAS v62 passa a criar linha D também para reenvio R): o cartão do REENVIO
        mostra as linhas D dele como pacotes 2, 3… (código de rastreio de cada um), e cada item no pacote certo. Antes: só a linha R.
    v10 (ordem do Thiago, 05/10: "os clientes sejam obrigados a se cadastrar ao realizarem a compra… deixe apenas um botão para o
@@ -107,8 +110,9 @@
    ============================================================================= */
 var crypto = require('crypto');
 var R = require('./rastreio-consulta.js').lib;
+var CB = require('./cashback.js').lib;   /* v12 */
 
-var VERSAO = 'v10';
+var VERSAO = 'v12';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_contas';
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxFlaN0FXFbpcC8HZ80sxnq383m5d-xTaj5cg72VcCdnYx47N_qKkiELFN5KAPmm_nb/exec';
@@ -572,7 +576,7 @@ function contaPendente(u, soCompra) {
   }
   return { ok: true, versao: VERSAO, pendente: true, para: mascararEmail(normEmail(u.email)),
     conta: { nome: nomeBonito(u.nome || ''), primeiro_nome: primeiroNome(u.nome || ''), email: normEmail(u.email), desde: '', como_respondido: !!(u.como && u.como.opcao) },
-    kpis: { pedidos: 0, total: 0, numeros: 0 }, grupos: [], produtos: [], sorteio: null, cupons: [],
+    kpis: { pedidos: 0, total: 0, numeros: 0 }, grupos: [], produtos: [], sorteio: null, cupons: [], cashback: null,
     dados: { nome: nomeBonito(u.nome || ''), email: normEmail(u.email), cpf: mascararCpf(c), telefone: cad ? cad.telefone : '', enderecos: [],
       cadastro: cad ? { salvo: true, telefone: cad.telefone, enderecos: cad.enderecos, principal: cad.principal } : { salvo: false, telefone: '', enderecos: [], principal: 0 } } };
 }
@@ -885,6 +889,8 @@ async function montarConta(u, agora, soCompra) {
   var sorteio = await sorteioDoCliente(conta.cpfs, agora);
   var cupons = [];   /* v3: falha na leitura dos cupons nunca derruba a conta */
   try { cupons = await cuponsDoCliente(normais, agora); } catch (eCp) { console.error('[conta] cupons: ' + (eCp && eCp.message || eCp)); }
+  var cashback = null;   /* v12 */
+  try { cashback = await CB.resumoConta(conta.cpfs, agora); } catch (eCb) { console.error('[conta] cashback: ' + (eCb && eCb.message || eCb)); }
   var nomeConta = (ult && cel(ult, I.nome)) || u.nome || '';
   var dDesde = primeiroData ? new Date(primeiroData - 3 * 3600000) : null;
   return {
@@ -892,7 +898,7 @@ async function montarConta(u, agora, soCompra) {
     conta: { nome: nomeBonito(nomeConta), primeiro_nome: primeiroNome(nomeConta), email: conta.email,
       desde: dDesde ? (MESES[dDesde.getUTCMonth()] + ' de ' + dDesde.getUTCFullYear()) : '', como_respondido: !!(u.como && u.como.opcao) },
     kpis: { pedidos: nPedidos, total: Math.round(totalGasto * 100) / 100, numeros: sorteio ? sorteio.atual.numeros.length : 0 },
-    grupos: lista, produtos: listaProd, sorteio: sorteio, cupons: cupons,
+    grupos: lista, produtos: listaProd, sorteio: sorteio, cupons: cupons, cashback: cashback,
     dados: { nome: nomeBonito(nomeConta), email: conta.email, cpf: mascararCpf(ult ? cel(ult, I.cpf) : ''),
       telefone: telFinal, enderecos: listaEnd, cadastro: cadSaida }
   };
