@@ -35,6 +35,8 @@ const COLECOES = [
   // e têm prazo próprio (até 10 dias úteis). A Athena lê este nó pra saber se o carrinho tem
   // item internacional e só então mostrar o aviso de prazo. Adicionada em 18/09/2026.
   // NÃO entra na lista `cols` do athena_botconversa.js — é só marcador, não categoria de menu.
+  // VitaBeauty (05/11/2026, Thiago: "a Athena pode vender tambem perfumes"): perfumes arabes/internacionais, cosmeticos e capilar.
+  'vitabeauty',
   'internacionais'
 ];
 
