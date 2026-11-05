@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v25  ·  04/11/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v26  ·  05/11/2026
+   v26 (05/11, Thiago: "calcular o prazo baseado nos meus dados" para o envio FULL saindo de SP — "pode fazer"):
+     acao 'prazos_origem' (só leitura, login de admin): o tempo da TRANSPORTADORA (postado → entregue, dias úteis) por
+     ORIGEM do envio (coluna ORIGEM; sem ela, a regra de sempre do rastreio-consulta) × ESTADO, e por origem × transportadora;
+     mais o pago → postado por origem. Correios e "sem transportadora" (motoboy) ficam fora do quadro por estado.
+     Mesma base e mesmas datas da aba Números. Nada é gravado; o painel não muda. Resto = v25.
    v25 (04/11, Thiago: bot próprio para a rodada de códigos no lugar da extensão, "não quero ficar de babá dela"):
      CHAVE DO BOT — quem manda o cabeçalho x-rodada-chave igual à variável de ambiente RODADA_BOT_CHAVE (Netlify do
      vitaflow-proxy) pode fazer SÓ duas coisas sem login de admin: 'codigos_ticket' (a senha de rodada de 45 min, a mesma
@@ -500,6 +505,40 @@ function calcularNumeros(peds, dias, agora) {
     por_uf: porUF, por_transportadora: lista(G.tr, true), por_fornecedor: lista(G.fo), mensal: mensal,
     prazos: { postagem_varejo: R.PRAZOS_ENTREGA.varejo_postagem_du, postagem_atacado: R.PRAZOS_ENTREGA.atacado_postagem_du }
   };
+}
+
+/* ============================ v26: PRAZO POR ORIGEM ============================ */
+function origemDoPedido(p) {
+  var o = String(p.origCol || '').trim().toUpperCase();
+  if (!o) o = R.origemEnvio(p.pedido, p.fornTxt) || '';
+  if (o === 'DANIEL') o = 'DANIEL (origem não anotada)';
+  return o || '?';
+}
+function calcularPrazosOrigem(peds, dias, agora) {
+  agora = agora || Date.now();
+  var ini = agora - dias * DIA;
+  var ok = peds.filter(function (p) { return !p.naoPagou && !p.final && p.tConf && p.tConf >= ini && p.tConf <= agora; });
+  var UF = {}, TR = {}, PO = {};
+  function add(tab, a, b, v) { var x = tab[a] || (tab[a] = {}); (x[b] || (x[b] = [])).push(v); }
+  ok.forEach(function (p) {
+    var o = origemDoPedido(p);
+    if (p.tPost && p.tPost >= p.tConf) add(PO, o, 'pago_postado', R.duEntre(p.tConf, p.tPost));
+    if (!(p.tEnt && p.tPost && p.tEnt >= p.tPost)) return;
+    var d = R.duEntre(p.tPost, p.tEnt);
+    add(TR, o, p.transp, d);
+    if (p.transp !== 'Correios' && p.transp !== 'Sem transportadora' && p.uf) add(UF, o, p.uf, d);
+  });
+  function resumir(tab) {
+    var out = {};
+    Object.keys(tab).forEach(function (a) {
+      out[a] = Object.keys(tab[a]).map(function (b) { var e = estat(tab[a][b]); return { nome: b, n: e.n, mediana: e.mediana, p90: e.p90 }; })
+        .sort(function (x, y) { return y.n - x.n; });
+    });
+    return out;
+  }
+  return { periodo_dias: dias, gerado_ts: agora, pedidos: ok.length,
+    obs: 'dias úteis · por_uf = postado → entregue só por transportadora (sem Correios e sem motoboy) · origem = coluna ORIGEM ou a regra do rastreio',
+    por_origem_uf: resumir(UF), por_origem_transportadora: resumir(TR), pago_postado_por_origem: resumir(PO) };
 }
 
 /* ============================ ATRASOS NA POSTAGEM ============================ */
@@ -2449,6 +2488,15 @@ exports.handler = async function (event) {
     if (acao === 'parados' || acao === 'cupons' || acao === 'cupons_rodar' || acao === 'cupons_enviar' || acao === 'cupons_excluir' || acao === 'placar' || acao === 'ocorrencias' || acao === 'ocorrencias_visto' || acao === 'duplicados' || acao === 'duplicados_visto' || acao === 'passadas_resumo') {   /* v4 · v5 · v8 */
       var rV4 = await acaoAdminV4(acao, d, uid, agora);
       if (rV4) return rV4;
+    }
+    if (acao === 'prazos_origem') {   /* v26: só leitura */
+      var diasO = [90, 180, 365].indexOf(Number(d.dias)) >= 0 ? Number(d.dias) : 180;
+      var ckO = 'po' + diasO;
+      if (!d.forcar && _cache[ckO] && agora - _cache[ckO].t < 300000) return resp({ ok: true, prazos: _cache[ckO].v, cache: true });
+      var baseO = await lerBase(false);
+      var vO = calcularPrazosOrigem(montarPedidos(baseO), diasO, agora);
+      _cache[ckO] = { t: agora, v: vO };
+      return resp({ ok: true, prazos: vO });
     }
     if (acao === 'numeros') {
       var dias = [30, 60, 90, 180, 365].indexOf(Number(d.dias)) >= 0 ? Number(d.dias) : 90;
