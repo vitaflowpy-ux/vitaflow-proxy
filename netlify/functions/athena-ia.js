@@ -1,4 +1,6 @@
 // netlify/functions/athena-ia.js
+// v117 (05/11/2026 — Thiago: "A Athena pode vender também perfumes"): coleção `vitabeauty` entra no catálogo da IA (COLECOES/CI_COLECOES)
+//   e o SYSTEM diz que a VitaFlow vende a linha VitaBeauty (perfumes árabes/internacionais, cosméticos coreanos, capilar) sem 3%/cupom. Resto = v109.
 // v109 (27/10/2026 — leitura das conversas de outubro da Athena): regras novas no SYSTEM (idênticas nos 2 arquivos):
 //   comprar no site não é "impossível"; a IA não mexe em quantidade; pedido já feito (trocar frete/endereço/produto) → logística;
 //   seringas/agulhas/kits existem (farmacia); não afirmar embalagem/gelo/validade; não abrir com "não encontrei produto" quando
@@ -37,7 +39,7 @@ const SHOP_GRAPHQL     = 'https://vitaflowoficial.com/api/2023-10/graphql.json';
 const HIST_MAX_MSGS = 16;
 const HIST_TTL_MS   = 6 * 60 * 60 * 1000; // 6 horas
 
-const COLECOES = ['emagrecedores','peptideos','hormonios','gh','estetica','farmacia','sarms','10-mais-vendidos'];
+const COLECOES = ['emagrecedores','peptideos','hormonios','gh','estetica','farmacia','sarms','10-mais-vendidos','vitabeauty'];   // v117: + VitaBeauty (perfumes/cosméticos)
 
 const MODELOS_FALLBACK = [
   'claude-3-5-sonnet-20241022',
@@ -166,7 +168,7 @@ async function salvarHistorico(phone, msgs){
 //   4) coleção do cache parada há mais de 7 dias é ignorada (proteção contra nome e preço antigos).
 //      A antiga coleção de "sobras" foi EXTINTA (Thiago, 05/10: todo produto tem coleção própria) e saiu daqui de vez.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos'];
+const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos','vitabeauty'];   // v117
 const CI_VALIDADE_MS = 7 * 24 * 3600 * 1000;
 const CI_LOJA_SUGGEST = 'https://vitaflowoficial.com/search/suggest.json';
 const CI_LOJA_TIMEOUT_MS = 2500;
@@ -577,7 +579,7 @@ function sysComCache(sys){
 // ⚠️ REGRA MULTI-SISTEMA: este prompt existe em DOIS arquivos (athena-ia-background.js
 // e aqui). Mexeu num, mexe no outro — senão a Stella e a Athena passam a vender
 // com regras diferentes.
-const SYSTEM = `Você é a Athena, consultora virtual da VitaFlow — loja de peptídeos, hormônios, emagrecedores, GH e performance, com entrega para todo o Brasil. Fala português do Brasil, tom caloroso, humano e direto — NADA robótico. Você é uma vendedora experiente, simpática e persuasiva (sem forçar), e você FECHA a venda aqui mesmo no WhatsApp.
+const SYSTEM = `Você é a Athena, consultora virtual da VitaFlow — loja de peptídeos, hormônios, emagrecedores, GH e performance — e também da linha VitaBeauty (perfumes árabes e internacionais, cosméticos coreanos de skincare, linha capilar e miniaturas), com entrega para todo o Brasil. A VitaFlow VENDE perfumes e cosméticos (linha VitaBeauty): nunca diga que não vende; eles estão no catálogo abaixo. Produto VitaBeauty já sai com o menor preço: não recebe os 3% da Athena nem cupom (o cashback vale normalmente). Fala português do Brasil, tom caloroso, humano e direto — NADA robótico. Você é uma vendedora experiente, simpática e persuasiva (sem forçar), e você FECHA a venda aqui mesmo no WhatsApp.
 
 REGRAS DE OURO (NUNCA viole):
 - Use SOMENTE o catálogo abaixo para dizer se um produto EXISTE e qual o PREÇO/formato/disponibilidade. NUNCA invente preço, estoque, marca, formato (caneta/frasco/mg) ou produto. Se não tiver 100% de certeza, NÃO afirme — abra a lista (ver abaixo) e deixe o sistema mostrar os dados reais.

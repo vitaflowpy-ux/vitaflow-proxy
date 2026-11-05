@@ -1,5 +1,32 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v117 (05/11/2026 — Thiago: "veja as ultimas conversas da athena, identifique possiveis melhoras e correções" → "Pode fazer tudo.
+//   A Athena pode vender também perfumes"). Leitura das 33 conversas de 29/10 a 04/11 (698 mensagens). Correções:
+//   1) PROMO NÃO TIRA MAIS O FRETE GRÁTIS/3%: quem abria a opção 8 (Mounjaro) ficava com fluxoPromo na sessão pra sempre e o RESUMO ia
+//      pelo caminho da promoção — sem frete grátis automático (≥ R$ 1.000), sem 3%, sem cupom, sem a escolha A/B (Kárana pagou R$ 75 de
+//      frete num pedido de R$ 1.208; Tamiris R$ 53 em R$ 1.438). Agora o resumo vai SEMPRE pelo caminho normal: a regra "promoção não
+//      acumula" já é garantida pela lista "sem desconto" (o Mounjaro está nela).
+//   2) "QUANTAS VEZES" NÃO É PARCELAMENTO: "qual o protocolo pra GH, quanto tomar e quantas vezes na semana?" recebia a simulação de
+//      pagamento. Parcelamento só com contexto de pagamento (parcelar, cartão, 12x, a prazo, dividir o pagamento).
+//   3) PERGUNTA LONGA VAI PRA IA: "tem algo que posso tomar junto com testosterona pra continuar produzindo sêmen?" abria o menu de
+//      testosterona 3 vezes; "meus pedidos podem ser guardados até a cirurgia?" caía em Rastrear. "posso tomar/usar", "junto com",
+//      "quero/gostaria/queria saber", "guardar/armazenar/conservar/validade", "laudo/COA" são dúvida; pergunta de 10+ palavras não é rastreio.
+//   4) MONJARO/MOUNJARO/KWIKPEN sozinho abre a promoção da caneta (antes mostrava a lista genérica de tirzepatidas).
+//   5) RÓTULO NÃO É LISTA: "VITAFLOW / TIRZEPATIDE / 60mg 2,4ml" (3 linhas, 4 palavras) virava "lista com 3 itens". Até 3 linhas e
+//      6 palavras sem quantidade na frente = um produto só.
+//   6) PERGUNTA NA QUANTIDADE/LISTA DO ATACADO vai pra IA (antes: "Me diz a quantidade em número" ou a pergunta virava busca).
+//   7) "FINALIZAR/FECHAR" na pergunta de quantidade = 1 unidade (antes ia pra IA, que perguntava qual versão o cliente queria).
+//   8) ÚLTIMO PEDIDO CONSULTADO fica na sessão por 1 h: "quais produtos estavam no pedido?" responde sem pedir o dado de novo.
+//   9) CPF/e-mail/nº VF em qualquer estado de navegação = consulta de pedido (Aline mandou o CPF e recebeu "1 adicionar, 2 finalizar").
+//  10) VITABEAUTY: perfumes (árabes e internacionais), cosméticos coreanos e linha capilar entram no catálogo da Athena (coleção
+//      `vitabeauty`, cache-colecoes) — opção 🔟 do menu, submenu por tipo, busca livre e IA. Item VitaBeauty NÃO recebe 3% nem cupom
+//      (mesma regra do site: tag VitaBeauty); cashback continua normal.
+//  11) FLUXO DO BOTCONVERSA (feito na tela, 05/11): depois do {athena_resposta3} um bloco "Ação → Limpar valor do campo
+//      mensagem_cliente" (fluxos "Atendimento Athena" e "Atendimento Athena Lead"). Foto/áudio/figurinha agora chega com
+//      mensagem VAZIA (antes repetia a mensagem anterior → "simulação de pagamento" duplicada). Vazia fora do checkout =
+//      RESP_MIDIA_PADRAO (já existia, v84); vazia em AGUARDAR_COMPROVANTE = comprovante → "Recebido!" (este ajuste).
+//      A 1ª mensagem que dispara o fluxo continua não chegando ao webhook (o BotConversa não tem campo de sistema com a
+//      última mensagem) — a saudação do fluxo já pede "nome do produto, rastreio, dúvida".
 // v116 (04/11/2026 — Thiago: "esta errado! se o cliente quiser acumular?" → "Pergunta antes"): o cashback NÃO é mais descontado
 //   sozinho. No resumo (varejo, promo e atacado) a Athena mostra o saldo e o cliente escolhe: digita *usar cashback* (desconta) ou
 //   segue normal / *acumular* (guarda). A escolha vale só para o pedido em andamento (zera quando o link é gerado). Textos do
@@ -348,6 +375,12 @@ function contextoLista(session){
   const lista = (session && session.produtoLista) || [];
   const nomes = lista.slice(0, 30).map(p => p && p.nome).filter(Boolean).join('; ');   // v72: era 10 (ordem = a mostrada, número = posição + 1)
   if (nomes) partes.push('O cliente está vendo AGORA esta lista de produtos (responda no contexto DELA, ignore assuntos/produtos de mensagens antigas): ' + nomes);
+  // v117: pedidos consultados há menos de 1 h — a IA responde "quais produtos / qual transportadora / quando foi" sem pedir o dado de novo
+  const _ur = session && session.ultimoRastreio;
+  if (_ur && _ur.ts && Date.now() - _ur.ts < 3600000 && Array.isArray(_ur.pedidos) && _ur.pedidos.length) {
+    partes.push('O cliente ACABOU DE CONSULTAR estes pedidos dele (use quando ele perguntar sobre "o pedido", "esse pedido", "quais produtos", "qual transportadora"): ' +
+      _ur.pedidos.map(p => `${p.pedido} (${p.data || 'sem data'}; status: ${p.status}; produtos: ${p.produtos || 'não informados'}${p.transportadora ? '; transportadora: ' + p.transportadora : ''}${p.codigo ? '; rastreio: ' + p.codigo : ''})`).join(' | '));
+  }
   const carrinho = (session && session.carrinho) || [];
   if (carrinho.length) {
     const nomesCar = carrinho.map(i => i && i.nome).filter(Boolean).join('; ');
@@ -760,7 +793,10 @@ function simularParcelas(valor){
 // Detecta interesse em PARCELAR. (não confunde com rastreio/cupom)
 function ehPedidoParcelamento(nMsg){
   const t = ' ' + _normNomeProd(nMsg) + ' ';
-  return /(parcel|em quantas vezes|quantas vezes|no cartao|cartao de credito|prestacao|\ba prazo\b|em ate 12|em \d+ ?x|\d+ ?vezes|dividir o pagamento|dividir em)/.test(t)
+  // v117: "quantas vezes" / "N vezes" só é parcelamento COM contexto de pagamento ("quantas vezes na semana" é dúvida de uso).
+  const _ctxPag = /(pag|cart|parcel|dividir|vista|pix|boleto|juros)/.test(t);
+  return (/(parcel|no cartao|cartao de credito|prestacao|\ba prazo\b|em ate 12|em \d+ ?x|dividir o pagamento|dividir em)/.test(t)
+      || (_ctxPag && /(em quantas vezes|quantas vezes|\d+ ?vezes)/.test(t)))
     && !/rastre|codigo|cupom/.test(t);
 }
 // Resolve o valor base pra simular: total do pedido > total do carrinho > número na msg.
@@ -2128,7 +2164,42 @@ const MENU_PRINCIPAL_BASE = `🛒 *Comprar produtos*
 6️⃣ SARMS 🧬
 7️⃣ Farmácia 💊
 8️⃣ Promoção do momento 🔥
-9️⃣ Atacado 🏭 _(mínimo R$ 3.000 · frete grátis)_`;
+9️⃣ Atacado 🏭 _(mínimo R$ 3.000 · frete grátis)_
+🔟 Perfumes & Cosméticos 💄 _(linha VitaBeauty)_`;
+
+// v117 — VITABEAUTY (perfumes árabes e internacionais, cosméticos coreanos, linha capilar, miniaturas). Coleções do cache-colecoes.
+// Regra do site (tag VitaBeauty): item VitaBeauty NÃO recebe 3% nem cupom (já sai com o menor preço); cashback continua normal.
+const VB_COLECOES = { busca:'vitabeauty', cosmeticos:'vitabeauty-cosmeticos', capilar:'vitabeauty-linha-capilar', miniaturas:'vitabeauty-miniaturas' };
+const MENU_VITABEAUTY = `💄 *VITABEAUTY — Perfumes & Cosméticos*
+
+Perfumes *árabes* e *internacionais* (Lattafa, Armaf, Al Haramain, Carolina Herrera, Paco Rabanne…), cosméticos coreanos (Medicube, Amuse, Celimax…), linha capilar e miniaturas.
+
+1️⃣ *Perfumes* — me diga o *nome ou a marca* (ex.: Yara, Asad, Lattafa, Sauvage) ou *masculino / feminino*
+2️⃣ *Cosméticos* 🧴 (skincare coreano)
+3️⃣ *Linha capilar* 💇
+4️⃣ *Miniaturas* 🧪
+0️⃣ Voltar ao menu
+
+_Pode também digitar direto o nome do perfume ou produto._`;
+let _vbNomesCache = { ts: 0, set: null };
+// nomes (normalizados) de TUDO que é VitaBeauty — pra travar 3%/cupom no fechamento (cache de 10 min)
+async function vbNomesSet() {
+  if (_vbNomesCache.set && Date.now() - _vbNomesCache.ts < 600000) return _vbNomesCache.set;
+  const set = {};
+  try {
+    const dados = await buscarCache(VB_COLECOES.busca);
+    String(dados || '').split('\n').forEach(l => { const nm = l.split('|')[0]; if (nm) set[_normNomeProd(nm)] = true; });
+  } catch (e) {}
+  _vbNomesCache = { ts: Date.now(), set };
+  return set;
+}
+async function abrirListaVB(session, sid, chave, titulo, respond) {
+  const dados = await buscarCache(VB_COLECOES[chave]);
+  const linhas = String(dados || '').split('\n').filter(Boolean);
+  if (!linhas.length) return respond(`Hmm, não achei produtos disponíveis em *${titulo}* agora. 😕\n\nMe diga o *nome* do que procura que eu busco pra você, ou digite *0* pra voltar.`);
+  await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
+  return respond(`*💄 ${titulo.toUpperCase()}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
+}
 
 function buildMenuPrincipal() {
   let menu = MENU_PRINCIPAL_BASE;
@@ -2616,7 +2687,8 @@ function fmtProdLista(arr) {
 // menu de Hormônios). Reclamação do VitaFlow em 18/09/2026.
 function origemDaLista(session) {
   var st = session && session.state;
-  var MENUS = ['HORMONIOS','PEPTIDEOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','ATACADO','MENU'];
+  var MENUS = ['HORMONIOS','PEPTIDEOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','ATACADO','MENU','VITABEAUTY'];   // v117: + VitaBeauty
+  if (st === 'VB_BUSCA') return 'VITABEAUTY';
   if (MENUS.indexOf(st) >= 0) return st;
   // Já estava numa lista (ou escolhendo quantidade): preserva a origem que já tinha.
   if (st === 'LISTA_PRODUTOS' || st === 'QUANTIDADE') return (session && session.origemLista) || 'MENU';
@@ -2638,8 +2710,11 @@ async function voltarAthena(session, sid, respond) {
     if (org === 'PEPTIDEOS') { await saveSession(sid, { ...session, state: 'PEPTIDEOS' }); return respond('↩️\n\n' + MENU_PEPTIDEOS); }
     if (org === 'SUBMENU_TESTO' || org === 'ESTER_BASE') { await saveSession(sid, { ...session, state: 'SUBMENU_TESTO' }); return respond('↩️\n\n' + MENU_TESTO); }
     if (org === 'ATACADO') { await saveSession(sid, { ...session, state: 'ATACADO' }); return respond('↩️\n\n' + MSG_ATACADO); }
+    if (org === 'VITABEAUTY') { await saveSession(sid, { ...session, state: 'VITABEAUTY' }); return respond('↩️\n\n' + MENU_VITABEAUTY); }   // v117
     await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️ *Voltando às categorias*\n\n' + buildMenuPrincipal());
   }
+  if (st === 'VITABEAUTY') { await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️ *Voltando às categorias*\n\n' + buildMenuPrincipal()); }   // v117
+  if (st === 'VB_BUSCA') { await saveSession(sid, { ...session, state: 'VITABEAUTY' }); return respond('↩️\n\n' + MENU_VITABEAUTY); }
   if (st === 'PEPTIDEOS' || st === 'HORMONIOS' || st === 'ATACADO') {
     await saveSession(sid, { ...session, state: 'MENU' }); return respond('↩️ *Voltando às categorias*\n\n' + buildMenuPrincipal());
   }
@@ -2842,7 +2917,7 @@ function aplicarExclusao(linhas, excluir){
 //   4) coleção do cache parada há mais de 7 dias é ignorada (proteção contra nome e preço antigos).
 //      A antiga coleção de "sobras" foi EXTINTA (Thiago, 05/10: todo produto tem coleção própria) e saiu daqui de vez.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos'];
+const CI_COLECOES = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos','vitabeauty'];   // v117: + VitaBeauty (perfumes/cosméticos)
 const CI_VALIDADE_MS = 7 * 24 * 3600 * 1000;
 const CI_LOJA_SUGGEST = 'https://vitaflowoficial.com/search/suggest.json';
 const CI_LOJA_TIMEOUT_MS = 2500;
@@ -3113,6 +3188,7 @@ async function ciCatalogo() { try { return await ciCarregar(buscarCacheObj); } c
 function ehPerguntaDePreco(nMsg) {
   const t = ' ' + String(nMsg || '').replace(/[?!.,]+/g, ' ') + ' ';
   if (/ como |como us|como tom|como aplic|protocolo|pra que serve|para que serve|dosagem| dose |colateral|faz mal| ciclo| tpc |diferenc|melhor|recomend| indica|monta|explica|pode tomar|pode usar|quantas vezes|quanto tempo|serve p|funciona| o que e | o que eh |efeito/.test(t)) return false;
+  if (/posso tomar|posso usar|posso aplicar|posso misturar|posso combinar|junto com|em conjunto|combinar com|gostaria de saber|quero saber|queria saber|saber se|guardar|armazenar|conservar|geladeira|validade|laudo|certificado de analise/.test(t)) return false;   // v117
   return /(quanto|valor|preco|custa|custo| tem | teria| vende| trabalha|disponi|estoque|chegou|quero|queria|gostaria|comprar|procur| busco)/.test(t);
 }
 // Título da lista aberta pelo catálogo: "PRIMOBOLAN ORAL" (família, quando é uma só) ou as palavras do pedido.
@@ -3311,9 +3387,20 @@ function ehDuvida(nMsg) {
     ' como ','como uso','como usar','como toma','como aplica','protocolo','pra que serve','para que serve',
     ' o que ','dosagem',' dose ','efeito colateral','colateral','faz mal',' ciclo',' tpc ','diferenca','diferença',
     'qual a melhor','qual o melhor','melhor pra','melhor para','recomenda','me indica','indica','monta','montar',
-    'explica','explicar','pode tomar','pode usar','quantas vezes','quanto tempo','serve pra','serve para','funciona'
+    'explica','explicar','pode tomar','pode usar','quantas vezes','quanto tempo','serve pra','serve para','funciona',
+    // v117: perguntas de uso/armazenamento/laudo que caíam no menu do produto ou no rastreio
+    'posso tomar','posso usar','posso aplicar','posso misturar','posso combinar','junto com','em conjunto','combinar com',
+    'gostaria de saber','quero saber','queria saber','saber se','guardar','armazenar','conservar','geladeira','validade','laudo','certificado de analise'
   ];
   return gatilhos.some(x => t.includes(x));
+}
+// v117: pergunta LONGA (10+ palavras) com cara de dúvida ("posso…", "gostaria de saber…", "?") e SEM palavra explícita de rastreio.
+function ehPerguntaLonga(nMsg) {
+  const t = ' ' + String(nMsg || '') + ' ';
+  const nPal = t.trim().split(/\s+/).filter(Boolean).length;
+  if (nPal < 10) return false;
+  if (/rastre|codigo de|status|cade |onde esta|chegou|chegar|atras|demor|nao recebi|extravi/.test(t)) return false;
+  return /\?\s*$/.test(t.trim()) || /\b(posso|consigo|gostaria|queria|quero saber|sera que|como|quanto|qual|quais|quantas|quantos|tem como|da pra|pode)\b/.test(t);
 }
 
 // Pedido EXPLÍCITO do cupom de boas-vindas da Stella. Proposital não casar com "cupom"
@@ -3482,6 +3569,8 @@ function ehIntencaoRastreio(nMsg, msgOriginal) {
   // v109: "Queria fazer meu pedido" / "fechar meu pedido" é COMPRA, não rastreio (Karen 02/10).
   if (/(fazer|faco|montar|finalizar|fechar|concluir|confirmar|completar|terminar|refazer|realizar)( o| a| um| meu| minha)? ?(meu )?pedido/.test(nMsg)
       && !ehNumeroPedido(msgOriginal) && !ehCPFsolto(msgOriginal) && !/rastre|cade|onde esta|status|chegou|chegar|atras/.test(nMsg)) return false;
+  // v117: pergunta longa de uso ("meus pedidos podem ser guardados até a cirurgia?") NÃO é rastreio — vai pra IA. Com nº VF/CPF/e-mail continua consulta.
+  if (ehPerguntaLonga(nMsg) && !ehNumeroPedido(msgOriginal) && !ehCPFsolto(msgOriginal) && !ehEmailSolto(msgOriginal)) return false;
   const palavras = ['rastrear','rastreamento','rastreio','cade meu pedido','cadê meu pedido','meu pedido','onde esta meu pedido','onde está meu pedido','status do pedido','status do meu pedido','acompanhar pedido','codigo de rastreio',
     'atrasou','atrasado','atraso','demorou','demorando','ta demorando','esta demorando','nao chegou','ainda nao chegou','nao recebi','cade meu produto','onde esta minha encomenda'];
   if (palavras.some(p => nMsg.includes(norm(p)))) return true;
@@ -3681,11 +3770,13 @@ function categoriaPorTexto(nt0) {
   if (/^(estetica|esteticos?)$/.test(_nt)) return 5;
   if (/^(sarm(s)?)$/.test(_nt)) return 6;
   if (/^(farmacia|farmacos?)$/.test(_nt)) return 7;
+  if (/^(perfume(s)?|perfumaria|perfumes? (arabes?|importados?|internacionais?|masculinos?|femininos?)|cosmetico(s)?|cosmeticos coreanos|skincare|skin care|vitabeauty|vita beauty|beauty|maquiagem|capilar|linha capilar|cabelo|miniatura(s)?)$/.test(_nt)) return 10;   // v117
   return NaN;
 }
-const CATEGORIA_NOME = { 1:'Emagrecedores', 2:'Peptídeos', 3:'Hormônios', 4:'GH', 5:'Estética', 6:'SARMS', 7:'Farmácia' };
+const CATEGORIA_NOME = { 1:'Emagrecedores', 2:'Peptídeos', 3:'Hormônios', 4:'GH', 5:'Estética', 6:'SARMS', 7:'Farmácia', 10:'Perfumes & Cosméticos' };
 // v86 — abre a categoria (mesmas telas das opções 1 a 7 do menu de compra). O carrinho é preservado.
 async function abrirCategoria(session, sid, cat, respond) {
+  if (cat === 10) { await saveSession(sid, { ...session, state:'VITABEAUTY' }); return respond(MENU_VITABEAUTY); }   // v117
   if (cat === 2) { await saveSession(sid, { ...session, state:'PEPTIDEOS' }); return respond(MENU_PEPTIDEOS); }
   if (cat === 3) { await saveSession(sid, { ...session, state:'HORMONIOS' }); return respond(MENU_HORMONIOS); }
   const LISTAS = { 1:['emagrecedores','*💊 EMAGRECEDORES*'], 4:['gh','*⚡ GH*'], 5:['estetica','*💅 ESTÉTICA*'], 6:['sarms','*🧬 SARMS*'], 7:['farmacia','*💊 FARMÁCIA*'] };
@@ -3743,6 +3834,12 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   const _temCarrinho = (session.carrinho || []).length > 0;
   // v93 — a mensagem CITA a promoção relâmpago ativa → abre a relâmpago (nunca "não tenho"). Frase com outro assunto junto → IA.
   const _relAt = promoAtiva();
+  // v117: "monjaro" / "mounjaro" / "kwikpen" sozinho (até 4 palavras) abre a promoção da caneta — antes caía na lista genérica de tirzepatidas
+  if (_relAt && /\b(mo?u?nj[aá]u?ro|munjaro|manjaro|kwik ?pen)\b/.test(ciNorm(nMsg)) && ciPalavrasDoPedido(nMsg).length <= 4
+      && _relAt.produtos.some(p => /mounjaro|kwikpen/i.test(p.nome))) {
+    const _mMj = await abrirPromo(session, sid);
+    if (_mMj) return respond(_mMj);
+  }
   if (_relAt && /promo|relampago|oferta/.test(ciNorm(nMsg))) {
     const _wsMsg = ciPalavrasDoPedido(nMsg);
     const _citaRel = _relAt.produtos.some(p => { const f = ciPalavrasDoPedido(p.nome)[0]; return !!f && _wsMsg.indexOf(f) >= 0; });
@@ -4657,9 +4754,15 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   // de ele achar que o cupom falhou. (Pedido do Thiago, 08/09.)
   const _nomesPromoPreco = [];   // já estão com preço promocional
   const _nomesSemDesc = [];      // na lista global de "sem desconto"
+  const _vbSet = await vbNomesSet();   // v117: VitaBeauty = sem 3%/cupom (regra do site)
+  const _temVB = carrinho.some(i => !!_vbSet[_normNomeProd(String(i.nome || ''))]);
+  if (_temVB && cupomResultado && cupomResultado.ok && (cupomResultado.tipo === 'frete' || cupomResultado.tipo === 'vale')) {
+    _notaCupomFrete += `_O cupom ${cupomResultado.codigo} não vale com produtos da linha *VitaBeauty* no carrinho — ela já sai com o menor preço e não aceita cupom._\n`;
+    cupomResultado = null;
+  }
   carrinho.forEach(i => {
     const linha = (i.preco || 0) * (i.qtd || 0);
-    if (produtoBloqueado(i.nome, _semDesc)) { _nomesSemDesc.push(i.nome); return; }        // sem desconto: não leva 3%/cupom
+    if (produtoBloqueado(i.nome, _semDesc) || _vbSet[_normNomeProd(String(i.nome || ''))]) { _nomesSemDesc.push(i.nome); return; }        // sem desconto: não leva 3%/cupom (v117: + VitaBeauty)
     if (grupoPromoDoItem(i.nome, _promoP))  { _nomesPromoPreco.push(i.nome); return; }     // preço de promo: idem
     baseSemana += linha;                                         // elegível p/ Semana do Cliente (varejo, fora bloqueados/promo)
     const ehPromo = _promoAtiva && i && i.qtd >= PROMO_DOBRO.qtdMin;
@@ -4948,7 +5051,7 @@ async function buscarCache(colecao) {
   return d.dados;
 }
 async function buscarTodosCache() {
-  const cols = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos'];
+  const cols = ['peptideos','hormonios','gh','emagrecedores','estetica','farmacia','sarms','10-mais-vendidos','vitabeauty'];   // v117
   const resultados = await Promise.all(cols.map(c => buscarCache(c)));
   return resultados.join('\n');
 }
@@ -5192,6 +5295,9 @@ async function mostrarResumoPedido(session, sid, respond) {
   const carrinho = session.carrinho || [];
   const frete = session.freteSelecionado || {};
   const totalProd = (typeof session.totalProd === 'number') ? session.totalProd : totalCarrinho(carrinho);
+  // v117: o caminho da promoção (sem frete grátis/3%/cupom/A-B) NÃO é mais usado — fluxoPromo ficava na sessão depois da opção 8.
+  // A regra "promoção não acumula" é garantida pela lista "sem desconto" no fecharResumoNormal.
+  if (session.fluxoPromo) session = { ...session, fluxoPromo: false };
   if (session.fluxoPromo) {
     const descPct = session.descontoPromoPct || 0;
     const descValor = totalProd * (descPct / 100);
@@ -5803,6 +5909,8 @@ function lerListaColada(msg) {
   const linhas = String(msg || '').split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
   if (linhas.length < 2 || linhas.length > 25) return [];
   if (ehBlocoDados(msg)) return [];
+  // v117: rótulo copiado ("VITAFLOW / TIRZEPATIDE / 60mg 2,4ml") não é lista: até 3 linhas e 6 palavras, sem quantidade no começo das linhas
+  if (linhas.length <= 3 && String(msg || '').split(/\s+/).filter(Boolean).length <= 6 && !linhas.some(function (l) { return /^\d{1,3}\s*(x\s*)?(?!(mg|mcg|ml|ui|iu|g|un|unid)\b)[a-z]/i.test(l.replace(/^[\-•*·>]+\s*/, '')); })) return [];
   const out = [];
   linhas.forEach(function (l0) {
     let l = l0.replace(/^[\-•*·>]+\s*/, '').replace(/[*_~]/g, '').trim();
@@ -6020,6 +6128,43 @@ Retorne SOMENTE o JSON no formato:
 
 // ── Handler principal ─────────────────────────────────────────────────────────
 exports._t = { statusBloco, avisoWhats, extrairProdutosDosPedidos, ehBlocoDados, ehEmailSolto, idPedido, indicePorNomeExato, ehReclamacaoPedido, norm };   // v83: só para teste
+// v117: o RASTREIO virou função — é chamado também quando o cliente manda CPF / nº VF / e-mail em qualquer estado de navegação.
+async function tratarRastreio(session, sid, mensagem, n, respond) {
+    const _incR = respostaIdIncompleto(mensagem, true);   // v81: falta a letra / dia e mês / CPF não confere
+    if (_incR) return respond(_incR + `\n\n_Ou digite *menu* para voltar._`);
+    const termo = extrairTermoRastreio(mensagem);         // v81: número/CPF normalizados (o resto vai como veio)
+    const alnum = termo.replace(/[^a-zA-Z0-9@]/g, '');
+    // v84: frase solta (3+ palavras, sem pedido/CPF/e-mail e sem sequência de 5+ números) não é dado de pedido — não consulta.
+    // v95: QUALQUER mensagem sem nº de pedido / CPF / e-mail / sequência de 5+ números não é consulta ("obrigado", "não chegou",
+    //      "acione a logística") → sai do rastreio e segue o caminho normal (IA, produto, menu).
+    const _semIdR = !idPedido(mensagem) && !idEmail(mensagem) && !idCpf(mensagem).cpf && !/\d{5,}/.test(String(mensagem).replace(/[\s.\-]/g, ''));
+    if (_semIdR && /[a-z]{2,}/i.test(String(mensagem || ''))) {
+      const _sessM = { ...session, state: 'MENU' };
+      await saveSession(sid, _sessM);
+      return await tratarTextoLivre(_sessM, sid, n, buildTriagem(), respond);
+    }
+    if (alnum.length < 2) {
+      return respond(`Hmm, isso não parece um número de pedido, CPF ou e-mail. 🤔\n\nMe manda o *número do pedido*, o *CPF* (11 dígitos) ou o *e-mail* da compra.\n\n_Ou digite *menu* para voltar._`);
+    }
+    let pedidos = await consultarStatusGAS(termo);
+    if (!pedidos.length) {   // v85: pedido + CPF + e-mail na mesma mensagem → tenta os outros
+      const _outrosR = termosRastreio(mensagem).filter(x => x !== termo);
+      for (let _i = 0; _i < _outrosR.length && !pedidos.length; _i++) pedidos = await consultarStatusGAS(_outrosR[_i]);
+    }
+    if (!pedidos.length && RASTREIO_ESTOUROU) return respond(MSG_RASTREIO_DEMOROU);   // v109
+    if (!pedidos.length) {
+      return respond(`🔍 Não encontrei nenhum pedido com *esse dado*.\n\nConfere se digitou certo o *número do pedido*, *CPF* ou *e-mail* da compra e me manda de novo. 😊\n\n📞 Se preferir, fale com a logística: 👉 wa.me/447537155718\n_Ou digite *menu* para voltar._`);
+    }
+    // v117: guarda o que foi consultado por 1 h — "quais produtos estavam no pedido?" é respondido pela IA sem pedir o dado de novo
+    const _ultR = { ts: Date.now(), pedidos: pedidos.slice(-5).map(p => ({ pedido: p.pedido || '', status: p.status || '', data: p.data || '', produtos: String(p.produtos || '').slice(0, 300), transportadora: p.transportadora || '', codigo: p.codigo || p.rastreio || '' })) };
+    await saveSession(sid, { ...session, state: 'MENU', ultimoRastreio: _ultR });   // v95: mostrou o pedido → sai do rastreio
+    if (pedidos.length === 1) {
+      return respond(statusBloco(pedidos[0]) + RASTREIO_RODAPE);
+    }
+    const blocos = pedidos.map(p => statusBloco(p)).join('\n\n\n');
+    return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
+}
+
 exports.handler = async (event) => {
   const headers = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json' };
   if (event.httpMethod === 'OPTIONS') return { statusCode:200, headers, body:'' };
@@ -6168,7 +6313,7 @@ exports.handler = async (event) => {
     // A lista abaixo é TODO estado que o código ATUAL grava, mais os dois que já não são
     // gravados mas ainda têm handler vivo (FABRICANTES, PERGUNTA_CUPOM). Qualquer outro
     // volta pro MENU. O CARRINHO É PRESERVADO — só o estado muda.
-    const ESTADOS_VALIDOS = ['ADM','AGUARDAR_COMPROVANTE','ATACADO','ATK_BLOQUEIO','ATK_CART','ATK_CONFIRMAR','ATK_LISTA','ATK_QTD','ATK_REMOVER','BUSCA_LIVRE','CARRINHO','COLETA_DADOS','CONFIRMAR','CONFIRMAR_CARRINHO','CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO','DUVIDAS','DUVIDAS_LIVRE','ESCOLHER_BRINDE','ESTADO','ESTER_BASE','FABRICANTES','FRETE','FRETE_AVULSO','HORMONIOS','INFORMAR_CUPOM','LISTA_PRODUTOS','MENU','OBS_PERGUNTA','OBS_TEXTO','PEPTIDEOS','PERGUNTA_CUPOM','POS_TABELA_FRAC','PRAZOS_RASTREIO','PRAZO_TIPO','PROMO_OFERECER','PROTO_CLIENTE','PROTO_ESCOLHER','PROTO_HUMANO','PROTO_IDENTIFICAR','PROTO_TIPO','QUANTIDADE','RASTREAR','REMOVER_ITEM','RETOMAR_CARRINHO','SORTEIO','STACK_PROXIMO','SUBMENU_TESTO','TRIAGEM','VAREJO_BLOQUEIO'];
+    const ESTADOS_VALIDOS = ['ADM','AGUARDAR_COMPROVANTE','ATACADO','ATK_BLOQUEIO','ATK_CART','ATK_CONFIRMAR','ATK_LISTA','ATK_QTD','ATK_REMOVER','BUSCA_LIVRE','CARRINHO','COLETA_DADOS','CONFIRMAR','CONFIRMAR_CARRINHO','CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO','DUVIDAS','DUVIDAS_LIVRE','ESCOLHER_BRINDE','ESTADO','ESTER_BASE','FABRICANTES','FRETE','FRETE_AVULSO','HORMONIOS','INFORMAR_CUPOM','LISTA_PRODUTOS','MENU','OBS_PERGUNTA','OBS_TEXTO','PEPTIDEOS','PERGUNTA_CUPOM','POS_TABELA_FRAC','PRAZOS_RASTREIO','PRAZO_TIPO','PROMO_OFERECER','PROTO_CLIENTE','PROTO_ESCOLHER','PROTO_HUMANO','PROTO_IDENTIFICAR','PROTO_TIPO','QUANTIDADE','RASTREAR','REMOVER_ITEM','RETOMAR_CARRINHO','SORTEIO','STACK_PROXIMO','SUBMENU_TESTO','TRIAGEM','VAREJO_BLOQUEIO','VITABEAUTY','VB_BUSCA'];
     if (session.state && ESTADOS_VALIDOS.indexOf(session.state) < 0) {
       console.log('[ESTADO-ORFAO] estado desconhecido:', session.state, '— voltando pro MENU (carrinho preservado).');
       session.state = 'MENU';
@@ -6268,7 +6413,7 @@ exports.handler = async (event) => {
     // v109 ── LISTA COLADA (2+ linhas de produto): fila, um de cada vez (varejo ou atacado). Ver lerListaColada().
     const _ESTADOS_LISTA_COLADA = ['MENU','TRIAGEM','LISTA_PRODUTOS','QUANTIDADE','PEPTIDEOS','HORMONIOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES',
       'BUSCA_LIVRE','STACK_PROXIMO','CARRINHO','DUVIDAS','DUVIDAS_LIVRE','PRAZOS_RASTREIO','CONFIRMAR_PRODUTO','CONFIRMAR_VER_PRODUTO','RETOMAR_CARRINHO',
-      'ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','REMOVER_ITEM'];
+      'ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','REMOVER_ITEM','VITABEAUTY','VB_BUSCA'];
     if (_linhasMsg.length >= 2 && _ESTADOS_LISTA_COLADA.indexOf(state) >= 0 && !_ehMidiaMsgCedo(body)) {
       const _itensLC = lerListaColada(mensagem);
       if (_itensLC.length >= 2) {
@@ -6354,7 +6499,7 @@ exports.handler = async (event) => {
     // (Os estados do ATACADO ficam de fora porque lá a BUSCA na tabela vem primeiro —
     //  "tem klow?" tem que mostrar o preço do atacado, não virar papo. Quando a busca
     //  não acha nada, é o próprio atkAbrirBusca que manda pra IA.)
-    const _JA_TRATA_DUVIDA = ['MENU','TRIAGEM','PRAZOS_RASTREIO','DUVIDAS','DUVIDAS_LIVRE','SUBMENU_TESTO','ESTER_BASE','PEPTIDEOS','HORMONIOS','FABRICANTES','LISTA_PRODUTOS','QUANTIDADE','STACK_PROXIMO','CARRINHO','REMOVER_ITEM','POS_TABELA_FRAC','ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','ATK_REMOVER','ATK_CONFIRMAR','ATK_BLOQUEIO'];
+    const _JA_TRATA_DUVIDA = ['MENU','TRIAGEM','PRAZOS_RASTREIO','DUVIDAS','DUVIDAS_LIVRE','SUBMENU_TESTO','ESTER_BASE','PEPTIDEOS','HORMONIOS','FABRICANTES','LISTA_PRODUTOS','QUANTIDADE','STACK_PROXIMO','CARRINHO','REMOVER_ITEM','POS_TABELA_FRAC','ATACADO','ATK_LISTA','ATK_QTD','ATK_CART','ATK_REMOVER','ATK_CONFIRMAR','ATK_BLOQUEIO','VITABEAUTY','VB_BUSCA'];
     // Nestes o cliente está DIGITANDO um dado livre (endereço, observação, cupom, CPF,
     // sim/não) — uma frase com "?" ali é parte do dado, não pergunta pra IA.
     const _DADO_LIVRE = ['COLETA_DADOS','OBS_TEXTO','INFORMAR_CUPOM','ADM','PROTO_CLIENTE','PROTO_IDENTIFICAR','PROTO_HUMANO'];
@@ -6366,6 +6511,16 @@ exports.handler = async (event) => {
       console.log('[DUVIDA-FORA-DO-MENU] state:', state, '| msg:', String(mensagem).slice(0, 60));
       await saveSession(sid, { ...session, errosSeguidos: 0 });   // estado PRESERVADO
       return await responderComIA(sid, mensagem, contextoLista(session), respond);
+    }
+
+    // v117 ── CPF / nº VF / e-mail SOLTO em estado de navegação = consulta de pedido (Aline 02/11: mandou o CPF e recebeu "1 adicionar, 2 finalizar")
+    const _ESTADOS_NAV_CONSULTA = ['MENU','TRIAGEM','PEPTIDEOS','HORMONIOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','BUSCA_LIVRE','LISTA_PRODUTOS','QUANTIDADE','CARRINHO','REMOVER_ITEM','DUVIDAS','DUVIDAS_LIVRE','PRAZOS_RASTREIO','STACK_PROXIMO','CONFIRMAR_VER_PRODUTO','RETOMAR_CARRINHO','VITABEAUTY','VB_BUSCA'];
+    if (state && _ESTADOS_NAV_CONSULTA.indexOf(state) >= 0 && !_ehMidiaMsg && !emCheckout
+        && (ehCPFsolto(mensagem) || ehNumeroPedido(mensagem) || ehEmailSolto(mensagem))) {
+      console.log('[CONSULTA-EM-QUALQUER-ESTADO] state:', state);
+      const _sR = { ...session, state: 'RASTREAR', errosSeguidos: 0 };
+      await saveSession(sid, _sR);
+      return await tratarRastreio(_sR, sid, mensagem, n, respond);
     }
 
     // ── NOME DE PRODUTO VALE EM QUALQUER ESTADO (17/09/2026) ──────────────────
@@ -6550,7 +6705,7 @@ exports.handler = async (event) => {
       }
     }
     const NAV_VOLTAR = ['MENU_STELLA','MENU','PEPTIDEOS','HORMONIOS','SUBMENU_TESTO','ESTER_BASE','FABRICANTES','BUSCA_LIVRE','LISTA_PRODUTOS','QUANTIDADE','PRAZOS_RASTREIO','PRAZO_TIPO','FRETE_AVULSO','RASTREAR','DUVIDAS','DUVIDAS_LIVRE','ATACADO','ATK_LISTA','ATK_QTD',
-      'CARRINHO','REMOVER_ITEM','ATK_CART','ATK_REMOVER','POS_TABELA_FRAC','PROTO_TIPO','PROTO_ESCOLHER','PROTO_IDENTIFICAR','PROTO_CLIENTE'];
+      'CARRINHO','REMOVER_ITEM','ATK_CART','ATK_REMOVER','POS_TABELA_FRAC','PROTO_TIPO','PROTO_ESCOLHER','PROTO_IDENTIFICAR','PROTO_CLIENTE','VITABEAUTY','VB_BUSCA'];
     if ((n === '0' || n === 'voltar' || n === 'volta') && NAV_VOLTAR.indexOf(state) >= 0) {
       return await voltarAthena(session, sid, respond);
     }
@@ -6873,6 +7028,10 @@ exports.handler = async (event) => {
 
     if (state === 'ATK_LISTA') {
       const _t = (mensagem || '').trim();
+      if (!/^\d/.test(_t) && ehDuvida(n)) {   // v117: "qual a marca do item 2?" é pergunta, não busca
+        await saveSession(sid, { ...session, errosSeguidos: 0 });
+        return await responderComIA(sid, mensagem, contextoLista(session), respond);
+      }
       if (!/^\d/.test(_t)) return await atkAbrirBusca(session, sid, _t, respond); // digitou outro nome → nova busca
       const lista = session.atkLista || [];
       if (!num || num < 1 || num > lista.length) return respond(`Digite um número entre 1 e ${lista.length}, ou me manda outro *nome de produto* do atacado.`);
@@ -6882,6 +7041,10 @@ exports.handler = async (event) => {
     }
 
     if (state === 'ATK_QTD') {
+      if (!/^\d/.test((mensagem || '').trim()) && isNaN(qtdPura(mensagem)) && ehDuvida(n)) {   // v117: pergunta aqui vai pra IA e a quantidade continua pendente
+        await saveSession(sid, { ...session, errosSeguidos: 0 });
+        return await responderComIA(sid, mensagem, contextoLista(session) + '\n(O cliente está escolhendo a QUANTIDADE de "' + ((session.atkSel || {}).nome || '') + '" no atacado. Responda a dúvida e termine pedindo a quantidade em número.)', respond);
+      }
       if (!/^\d/.test((mensagem || '').trim()) && isNaN(qtdPura(mensagem))) return respond('Me diz a *quantidade* em número, por favor (ex.: 10):');
       num = qtdPura(mensagem);   // v84: "60 mg" não é quantidade
       if (!num || num < 1 || num > 999) return respond('Informe uma quantidade válida (1 a 999):');
@@ -7067,42 +7230,35 @@ exports.handler = async (event) => {
         return respond(msgPromoAtual() + '\n\n0️⃣ Voltar ao menu');
       }
       if (num === 9) { return await entrarAtacado(session, sid, respond); }
+      if (num === 10) { await saveSession(sid, { ...session, state:'VITABEAUTY' }); return respond(MENU_VITABEAUTY); }   // v117
       return await tratarTextoLivre(session, sid, n, buildMenuPrincipal(), respond);
     }
 
-    if (state === 'RASTREAR') {
-      const _incR = respostaIdIncompleto(mensagem, true);   // v81: falta a letra / dia e mês / CPF não confere
-      if (_incR) return respond(_incR + `\n\n_Ou digite *menu* para voltar._`);
-      const termo = extrairTermoRastreio(mensagem);         // v81: número/CPF normalizados (o resto vai como veio)
-      const alnum = termo.replace(/[^a-zA-Z0-9@]/g, '');
-      // v84: frase solta (3+ palavras, sem pedido/CPF/e-mail e sem sequência de 5+ números) não é dado de pedido — não consulta.
-      // v95: QUALQUER mensagem sem nº de pedido / CPF / e-mail / sequência de 5+ números não é consulta ("obrigado", "não chegou",
-      //      "acione a logística") → sai do rastreio e segue o caminho normal (IA, produto, menu).
-      const _semIdR = !idPedido(mensagem) && !idEmail(mensagem) && !idCpf(mensagem).cpf && !/\d{5,}/.test(String(mensagem).replace(/[\s.\-]/g, ''));
-      if (_semIdR && /[a-z]{2,}/i.test(String(mensagem || ''))) {
-        const _sessM = { ...session, state: 'MENU' };
-        await saveSession(sid, _sessM);
-        return await tratarTextoLivre(_sessM, sid, n, buildTriagem(), respond);
-      }
-      if (alnum.length < 2) {
-        return respond(`Hmm, isso não parece um número de pedido, CPF ou e-mail. 🤔\n\nMe manda o *número do pedido*, o *CPF* (11 dígitos) ou o *e-mail* da compra.\n\n_Ou digite *menu* para voltar._`);
-      }
-      let pedidos = await consultarStatusGAS(termo);
-      if (!pedidos.length) {   // v85: pedido + CPF + e-mail na mesma mensagem → tenta os outros
-        const _outrosR = termosRastreio(mensagem).filter(x => x !== termo);
-        for (let _i = 0; _i < _outrosR.length && !pedidos.length; _i++) pedidos = await consultarStatusGAS(_outrosR[_i]);
-      }
-      if (!pedidos.length && RASTREIO_ESTOUROU) return respond(MSG_RASTREIO_DEMOROU);   // v109
-      if (!pedidos.length) {
-        return respond(`🔍 Não encontrei nenhum pedido com *esse dado*.\n\nConfere se digitou certo o *número do pedido*, *CPF* ou *e-mail* da compra e me manda de novo. 😊\n\n📞 Se preferir, fale com a logística: 👉 wa.me/447537155718\n_Ou digite *menu* para voltar._`);
-      }
-      await saveSession(sid, { ...session, state: 'MENU' });   // v95: mostrou o pedido → sai do rastreio
-      if (pedidos.length === 1) {
-        return respond(statusBloco(pedidos[0]) + RASTREIO_RODAPE);
-      }
-      const blocos = pedidos.map(p => statusBloco(p)).join('\n\n\n');
-      return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
+    // v117 — VITABEAUTY (perfumes & cosméticos)
+    if (state === 'VITABEAUTY') {
+      if (num === 0 || /^(voltar|volta|menu)$/.test(n.trim())) { await saveSession(sid, { ...session, state:'MENU' }); return respond(buildMenuPrincipal()); }
+      if (num === 1) { await saveSession(sid, { ...session, state:'VB_BUSCA' }); return respond(`🌸 *Perfumes VitaBeauty*\n\nMe diga o *nome* ou a *marca* do perfume (ex.: *Yara*, *Asad*, *Lattafa*, *Sauvage*), ou *masculino* / *feminino* / *unissex* que eu mostro as opções. 😊\n\n_0 para voltar_`); }
+      if (num === 2) return await abrirListaVB(session, sid, 'cosmeticos', 'Cosméticos', respond);
+      if (num === 3) return await abrirListaVB(session, sid, 'capilar', 'Linha capilar', respond);
+      if (num === 4) return await abrirListaVB(session, sid, 'miniaturas', 'Miniaturas', respond);
+      return await tratarTextoLivre(session, sid, n, MENU_VITABEAUTY, respond);
     }
+    if (state === 'VB_BUSCA') {
+      if (num === 0 || /^(voltar|volta)$/.test(n.trim())) { await saveSession(sid, { ...session, state:'VITABEAUTY' }); return respond(MENU_VITABEAUTY); }
+      // "masculino" / "feminino" / "unissex" sozinho = lista de perfumes por gênero (os nomes trazem o gênero)
+      const _gen = n.trim().match(/^(masculino|masculinos|feminino|femininos|unissex|homem|mulher)$/);
+      if (_gen) {
+        const _g = /masc|homem/.test(_gen[1]) ? 'masculino' : (/fem|mulher/.test(_gen[1]) ? 'feminino' : 'unissex');
+        const dados = await buscarCache(VB_COLECOES.busca);
+        const linhas = String(dados || '').split('\n').filter(l => l && _normNomeProd(l.split('|')[0]).indexOf(_g) >= 0 && /edp|edt|parfum|perfume|eau de/i.test(l.split('|')[0]));
+        if (!linhas.length) return respond(`Não achei perfumes *${_g}* disponíveis agora. 😕 Me diga uma *marca* ou *nome* que eu busco.`);
+        await saveSession(sid, { ...session, state:'LISTA_PRODUTOS', origemLista: origemDaLista(session), produtoLista: parseProdutos(linhas) });
+        return respond(`*🌸 PERFUMES ${_g.toUpperCase()}*\n\n${formatarLista(linhas)}\n\n*Digite o número do produto:*\n_(ou *0* para voltar)_`);
+      }
+      return await tratarTextoLivre({ ...session, state:'MENU' }, sid, n, MENU_VITABEAUTY, respond);
+    }
+
+    if (state === 'RASTREAR') return await tratarRastreio(session, sid, mensagem, n, respond);
 
     if (state === 'PROMO_OFERECER') {
       const r = n.trim().toLowerCase();
@@ -7352,9 +7508,11 @@ exports.handler = async (event) => {
     }
 
     if (state === 'QUANTIDADE') {
+      // v117: "finalizar"/"fechar"/"só esse" na pergunta de quantidade = 1 unidade (antes ia pra IA, que perguntava qual versão)
+      const _umaUn = /^(finalizar|fechar|fechar pedido|finalizar pedido|so esse|so essa|so isso|apenas esse|apenas essa|comprar|quero esse|quero essa)$/.test(n.trim());
       // não é número → troca de produto por texto, combo ou dúvida (IA)
-      if (!/^\d/.test(n.trim()) && isNaN(qtdPura(mensagem))) return await tratarTextoLivre(session, sid, n, '', respond);
-      num = qtdPura(mensagem);   // v84: "60 mg" virava 60 unidades (R$ 47.340 no carrinho) — só quantidade pura vale
+      if (!_umaUn && !/^\d/.test(n.trim()) && isNaN(qtdPura(mensagem))) return await tratarTextoLivre(session, sid, n, '', respond);
+      num = _umaUn ? 1 : qtdPura(mensagem);   // v84: "60 mg" virava 60 unidades (R$ 47.340 no carrinho) — só quantidade pura vale
       if (!num || num < 1 || num > 99) return respond('Por favor, informe uma quantidade válida (1 a 99):');
       // v109: o BotConversa repassa a MENSAGEM ANTERIOR quando o cliente manda FOTO. "9" (produto 9) + foto = 9 unidades
       // (Silvana 20/10, R$ 4.221). Quantidade 2+ igual à mensagem anterior → confirma antes de pôr no carrinho.
@@ -7829,7 +7987,11 @@ exports.handler = async (event) => {
       const palavrasPag = ['paguei','pix feito','fiz o pix','transferi','pago','pix realizado','comprovante','ja paguei','ja transferi','sim','yes','realizei','confirmado','feito','ok','okay','comprei','finalizei'];
       const ehMidiaBC = !!(body.type || body.mediaUrl || body.media_url || body.fileUrl || body.url || body.arquivo || body.file || body.caption !== undefined);
       const ehUrlImagem = !!(mensagem && mensagem.match(/https?:\/\/[^\s]+(jpg|jpeg|png|gif|pdf|mp4|webp|ogg|opus)/i));
-      const dizQuePagou = ehMidiaBC || ehUrlImagem || palavrasPag.some(p => n.includes(p));
+      // v117: o fluxo do BotConversa agora LIMPA mensagem_cliente depois de cada resposta → foto/arquivo (comprovante) chega
+      // com mensagem VAZIA. Com o link em aberto, mensagem vazia = cliente mandou o comprovante → acolhe ("Recebido!") em vez
+      // de reenviar o bloco "pedido em aberto" com o link.
+      const ehFotoVazia = !mensagem || !String(mensagem).trim();
+      const dizQuePagou = ehMidiaBC || ehUrlImagem || ehFotoVazia || palavrasPag.some(p => n.includes(p));
 
       const carrinhoPend = session.carrinho || [];
       const totalPend = session.total || 0;
