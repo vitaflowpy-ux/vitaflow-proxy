@@ -29,6 +29,7 @@ const COLECOES = [
   'saude-qualidade-de-vida',
   'energia',
   'recuperacao',
+  'vitabeauty-cosmeticos', 'vitabeauty-linha-capilar', 'vitabeauty-miniaturas',   // 05/11/2026: submenu VitaBeauty da Athena
   'vitabeauty',   // 05/11/2026: perfumes/cosmeticos (Athena vende VitaBeauty)
   // Coleção AUTOMÁTICA (Tipo de produto = Importado). Marca os produtos que vêm do Paraguai
   // e têm prazo próprio (até 10 dias úteis). A Athena lê este nó pra saber se o carrinho tem
