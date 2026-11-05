@@ -1,6 +1,13 @@
 'use strict';
 /* =============================================================================
-   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v24  ·  02/11/2026
+   logistica-painel.js — DADOS DO PAINEL DA LOGÍSTICA (VitaFlow)  ·  v25  ·  04/11/2026
+   v25 (04/11, Thiago: bot próprio para a rodada de códigos no lugar da extensão, "não quero ficar de babá dela"):
+     CHAVE DO BOT — quem manda o cabeçalho x-rodada-chave igual à variável de ambiente RODADA_BOT_CHAVE (Netlify do
+     vitaflow-proxy) pode fazer SÓ duas coisas sem login de admin: 'codigos_ticket' (a senha de rodada de 45 min, a mesma
+     que o painel dá para a extensão) e 'codigos_casar' (casar e gravar, simulação ou aplicar:true). Com o ticket, o bot usa
+     os coletores de sempre (?coletor=daniel / onlog → codigos_fila / codigos_entrada), então o formato dos dados é o mesmo.
+     Sem a variável no Netlify, nada muda (a chave não vale). Comparação em tempo constante. ⚠️ O ticket é um só: se o bot e
+     a extensão rodarem ao mesmo tempo, quem pediu por último invalida o do outro. Resto = v24.
    v24 (02/11, bloco 28 — Compras dentro do painel único): email_pacotes aceita também o LOGIN DO PAINEL (tokenPainel = JWT
      do banco novo + apikey, conferido em api.vitaflowoficial.com/auth/v1/user, igual ao GAS v76). Resto = v23.
    v23 (27/10, Thiago: atacado PJC com prefixo P): pedido P também é atacado (origem PY, prazo de atacado) e a linha D
@@ -2389,6 +2396,16 @@ async function conferirAdmin(token) {
   } catch (e) { return null; }
 }
 
+/* v25: chave do bot da rodada de códigos (cabeçalho x-rodada-chave = env RODADA_BOT_CHAVE). Sem a env = sempre falso. */
+function chaveBotOk(event) {
+  var env = String(process.env.RODADA_BOT_CHAVE || '');
+  if (env.length < 24) return false;   /* chave curta demais (ou ausente) não vale */
+  var h = (event && event.headers) || {}, veio = '';
+  Object.keys(h).forEach(function (k) { if (String(k).toLowerCase() === 'x-rodada-chave') veio = String(h[k] || ''); });
+  var a = Buffer.from(sha(veio)), b = Buffer.from(sha(env));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 /* cache da instância quente (5 min) — os números não mudam a cada clique */
 var _cache = {};
 
@@ -2407,6 +2424,11 @@ exports.handler = async function (event) {
   try {
     /* v3: ações que NÃO usam o login de admin */
     if (acao === 'codigos_fila' || acao === 'codigos_entrada') return await acaoComTicket(acao, d, agora);
+    /* v25: bot da rodada de códigos (chave própria) — só o ticket e o casar/gravar */
+    if ((acao === 'codigos_ticket' || acao === 'codigos_casar') && chaveBotOk(event)) {
+      if (acao === 'codigos_ticket') return resp({ ok: true, ticket: await novoTicket('bot_rodada', agora), vale_min: TICKET_VALE_MS / 60000 });
+      return resp(await rodadaCodigos({ agora: agora, aplicar: d.aplicar === true }));
+    }
     if (acao === 'email_pacotes') {
       var chaveOk = !!process.env.COMPRAS_KEY && String(d.chave || '') === process.env.COMPRAS_KEY;
       var painelOk = !!d.tokenPainel && !!(await conferirPainel(d.tokenPainel, d.apikey));   /* v24: Compras dentro do painel */
