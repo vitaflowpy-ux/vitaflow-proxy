@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   cashback.js — CASHBACK VITAFLOW  ·  v2  ·  04/11/2026
+   cashback.js — CASHBACK VITAFLOW  ·  v3  ·  06/11/2026
+   v3 (06/11, bloco 31 do painel único): as ações de ADMIN também aceitam o LOGIN DO PAINEL ÚNICO — {tokenPainel, apikey} no lugar do
+       idToken (JWT do banco novo, role authenticated, conferido em api.vitaflowoficial.com/auth/v1/user, igual à função painel-firebase;
+       "sim" guardado 10 min). O Orçamento dentro do painel usa isso para consultar e usar o cashback na venda. admin = 'painel:' + e-mail.
    v2 (04/11, Thiago: "pode fazer A, B e C" — consultar o cashback do cliente e usar o saldo na venda do ORÇAMENTO): ações de ADMIN
        (idToken do Firebase Auth + admins/<uid> = true, igual à conta-cliente): adm_consultar {idToken, cpf} → saldo, vencimentos,
        histórico e nome · adm_reservar {idToken, cpf, pedido, valor} → reserva sem conferir e-mail/telefone (canal 'orcamento') ·
@@ -28,6 +31,8 @@
    O Apps Script troca 'reservado' por 'usado' quando o pedido é pago, ou por 'liberado' se não for pago em 73 h ou for cancelado.
    Variáveis de ambiente (já existem no vitaflow-proxy): FIREBASE_SECRET.
    ============================================================================= */
+var crypto = require('crypto');
+var VFDB = 'https://api.vitaflowoficial.com';   /* v3: banco novo (login do painel) */
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_cashback';
 var DIA = 86400000;
@@ -218,6 +223,31 @@ async function acaoLiberar(b, agora) {
 }
 
 /* ---------- admin (Orçamento) ---------- */
+/* v3: login do painel único = JWT do banco novo (role authenticated), conferido no próprio banco; guarda o "sim" por 10 min (= painel-firebase) */
+var _painelVistos = {};
+async function conferirPainel(token, apikey) {
+  token = String(token || ''); apikey = String(apikey || '');
+  if (token.split('.').length !== 3 || apikey.split('.').length !== 3) return '';
+  var pl;
+  try { pl = JSON.parse(Buffer.from(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); } catch (e) { return ''; }
+  if (String(pl.role || '') !== 'authenticated' || !pl.sub) return '';
+  var exp = Number(pl.exp || 0) * 1000;
+  if (exp && exp <= Date.now()) return '';
+  var k = crypto.createHash('sha256').update(token).digest('hex');
+  var c = _painelVistos[k];
+  if (c && c.ate > Date.now()) return c.email;
+  try {
+    var ctrl = new AbortController(); var t = setTimeout(function () { ctrl.abort(); }, 8000);
+    var r = await fetch(VFDB + '/auth/v1/user', { headers: { apikey: apikey, Authorization: 'Bearer ' + token }, signal: ctrl.signal });
+    clearTimeout(t);
+    if (!r.ok) return '';
+    var u = await r.json();
+    var email = String(u && u.email || '');
+    if (!email) return '';
+    _painelVistos[k] = { email: email, ate: Math.min(Date.now() + 10 * 60 * 1000, exp || (Date.now() + 10 * 60 * 1000)) };
+    return email;
+  } catch (e) { return ''; }
+}
 async function conferirAdmin(token) {
   token = String(token || '');
   var partes = token.split('.');
@@ -315,7 +345,7 @@ exports.handler = async function (event) {
     if (b.acao === 'reservar') return resp(200, await acaoReservar(b, agora));
     if (b.acao === 'liberar') return resp(200, await acaoLiberar(b, agora));
     if (b.acao === 'adm_consultar' || b.acao === 'adm_reservar' || b.acao === 'adm_liberar') {
-      var uid = await conferirAdmin(b.idToken);
+      var uid = b.tokenPainel ? (function (e) { return e ? 'painel:' + e : null; })(await conferirPainel(b.tokenPainel, b.apikey)) : await conferirAdmin(b.idToken);   /* v3: painel único ou Firebase Auth */
       if (!uid) return resp(200, { ok: false, erro: 'nao_admin' });
       if (b.acao === 'adm_consultar') return resp(200, await acaoAdmConsultar(b, agora));
       if (b.acao === 'adm_reservar') return resp(200, await acaoAdmReservar(b, agora, uid));
