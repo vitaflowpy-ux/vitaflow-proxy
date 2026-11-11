@@ -1,5 +1,7 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v118c (11/11/2026): a lista "Produtos sem desconto" passou de 1.700 documentos (Thiago pôs as coleções VitaBeauty e Estética);
+//   _lerConfigsVfTipo lia só 1.000 → limite 10.000. Sem isso, parte dos produtos sem desconto voltava a aceitar cupom/3%.
 // v118b (10/11/2026 — Thiago: "A promoção do mounjaro acabou, pode tirar da Athena"): PROMO_RELAMPAGO.ativa = false (some da opção 8 /
 //   "promo", do menu, da saudação e do contexto da IA; "mounjaro" volta a abrir a lista normal). A opção 8 passa a mostrar só a DUPLO11.
 // v118 (10/11/2026 — Thiago: "promoção de amanha, dia 11/11, 15% de desconto em todo os produtos do varejo vitaflow (a linha
@@ -4538,7 +4540,7 @@ async function _lerConfigsVfTipo(tipo) {
   const r = await fetch(`https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents:runQuery?key=${FIRESTORE_KEY}`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ structuredQuery: { from:[{ collectionId:'cupons_vitaflow' }],
-      where:{ fieldFilter:{ field:{ fieldPath:'_vfTipo' }, op:'EQUAL', value:{ stringValue: tipo } } }, limit: 1000 } })
+      where:{ fieldFilter:{ field:{ fieldPath:'_vfTipo' }, op:'EQUAL', value:{ stringValue: tipo } } }, limit: 10000 } })   // v118c: era 1000 — a lista sem desconto passou de 1.700 produtos (coleções inteiras)
   });
   if (!r.ok) return { ok:false, status: r.status };
   const arr = await r.json();
@@ -8407,4 +8409,3 @@ exports.handler = async (event) => {
   return res;
 };
 exports._vigia = { vigiaMotivo };
-
