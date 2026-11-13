@@ -1,6 +1,15 @@
 'use strict';
 /* =============================================================================
-   numero-pedido.js — NÚMERO DO PEDIDO SEM APPS SCRIPT (VitaFlow)  ·  v3  ·  27/10/2026  (v2 = 15/10, v1 = 30/09/2026)
+   numero-pedido.js — NÚMERO DO PEDIDO SEM APPS SCRIPT (VitaFlow)  ·  v4  ·  12/11/2026  (v3 = 27/10, v2 = 15/10, v1 = 30/09/2026)
+
+   v4 (12/11/2026 — Thiago: "quero, pode fazer"; caso VF-1011-R003: o Orçamento mostrou "Venda registrada", o recibo foi
+     para o cliente e a linha nunca entrou na planilha): action 'conferir' = SÓ LEITURA, diz se o número já está no
+     espelho da planilha. Não mexe em contador nenhum (o 'reservar' mexe). Com avisar:true e o número AINDA fora da
+     planilha, manda 1 aviso no Telegram (1 vez por número: marca em vitaflow_sync/pedido_nao_gravou/<número>).
+     Só avisa número de hoje ou de ontem. Se não conseguir ler o espelho, responde erro (nunca "não gravou" por engano).
+     { action:'conferir', numero:'VF-1011-R003' [, avisar:true, nome:'Fulano', valor:689] }
+          → { success:true, numero, existe:true|false [, avisado:true|false, ja_avisado:true] } ou { success:false, erro }
+     Variável de ambiente a mais (já existe neste site): TELEGRAM_TOKEN. Sem ela, não avisa (e diz avisado:false).
 
    v3 (27/10/2026 — Thiago: "os pedidos do atacado de PJC tenham outro prefixo diferente do W"): tipo P = ATACADO DO
      ESTOQUE PEDRO JUAN CABALLERO (VF-DDMM-P001). Contador próprio no Firebase vitaflow_seq/<ddMM>/atacado_pjc, começa do 0,
@@ -260,6 +269,73 @@ async function reservarFirebase(numeroBruto) {
     ja_gerado_hoje: jaPassou, atual: r.atual };
 }
 
+/* ===== v4: conferir se o pedido chegou à planilha (só leitura) + aviso no Telegram ===== */
+/* Igual ao linhaNoEspelho, mas separa "não está" de "não consegui ler". */
+async function espelhoEstrito(numero) {
+  try {
+    var r = await fetchT(fbUrl('vitaflow_pedidos/' + chavePed(numero)), {}, 5000);
+    if (!r.ok) return { ok: false };
+    var v = await r.json();
+    if (v && v.error) return { ok: false };
+    return { ok: true, linha: (v && v.length) ? v : null };
+  } catch (e) { return { ok: false }; }
+}
+
+/* ddMM de ONTEM no horário de Brasília */
+function ontemDDMM() {
+  var p = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
+    .formatToParts(new Date(Date.now() - 24 * 3600 * 1000));
+  var dd = '', mm = '';
+  for (var i = 0; i < p.length; i++) { if (p[i].type === 'day') dd = p[i].value; if (p[i].type === 'month') mm = p[i].value; }
+  return dd + mm;
+}
+
+async function enviarTelegram(texto) {
+  var tk = process.env.TELEGRAM_TOKEN || '';
+  if (!tk) return false;                 /* env vazia: não avisa, mas não quebra */
+  try {
+    var r = await fetchT('https://api.telegram.org/bot' + tk + '/sendMessage', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: '8660563352', text: texto })
+    }, 5000);
+    return !!(r && r.ok);
+  } catch (e) { return false; }
+}
+
+async function conferir(d) {
+  var numero = String(d.numero || '').trim().toUpperCase().replace(/\s+/g, '');
+  var m = numero.match(/^VF-(\d{4})-([A-Z])X?(\d{1,4})$/);
+  if (!m) return { success: false, erro: 'formato', msg: 'Use o formato VF-DDMM-M123.' };
+  var e = await espelhoEstrito(numero);
+  if (!e.ok) return { success: false, erro: 'espelho', msg: 'Não consegui ler o espelho da planilha agora.' };
+  if (e.linha) return { success: true, numero: numero, existe: true };
+  var saida = { success: true, numero: numero, existe: false, avisado: false };
+  var querAvisar = (d.avisar === true || d.avisar === 'true' || d.avisar === 1 || d.avisar === '1');
+  if (!querAvisar) return saida;
+  if (m[1] !== hojeDDMM() && m[1] !== ontemDDMM()) return saida;      /* só hoje/ontem: ninguém dispara aviso de número antigo */
+  var marca = 'vitaflow_sync/pedido_nao_gravou/' + chavePed(numero);
+  try {
+    var rm = await fetchT(fbUrl(marca), {}, 5000);
+    if (rm.ok) { var vm = await rm.json(); if (vm && vm.ts) { saida.ja_avisado = true; return saida; } }
+  } catch (e1) {}
+  var nome = String(d.nome || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 60);
+  var valor = Number(d.valor);
+  var txt = '⛔ PEDIDO NÃO GRAVOU NA PLANILHA\n\n' +
+    '📦 ' + numero + '\n' +
+    (nome ? '👤 ' + nome + '\n' : '') +
+    (valor > 0 ? '💰 R$ ' + valor.toFixed(2).replace('.', ',') + '\n' : '') +
+    '\nO Orçamento registrou a venda, mas o número não apareceu na planilha.\n' +
+    'Registre de novo (pode usar o mesmo número).';
+  saida.avisado = await enviarTelegram(txt);
+  if (saida.avisado) {
+    try {
+      await fetchT(fbUrl(marca), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ts: Date.now(), numero: numero, nome: nome, valor: (valor > 0 ? valor : 0) }) }, 5000);
+    } catch (e2) {}
+  }
+  return saida;
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
   var d = {};
@@ -271,6 +347,7 @@ exports.handler = async function (event) {
   if (!FB_SECRET) return resp({ success: false, erro: 'FIREBASE_SECRET nao configurada' });
   try {
     if (d.action === 'reservar') return resp(await reservar(d.numero));
+    if (d.action === 'conferir') return resp(await conferir(d));   /* v4: só leitura (+ aviso) */
     if (d.action === 'ping') return resp({ success: true, hoje: hojeDDMM(), banco: !!DB_KEY });
     return resp(await gerar(d.tipo));
   } catch (e) {
@@ -280,4 +357,5 @@ exports.handler = async function (event) {
 
 /* só para teste local (node) */
 exports._t = { hojeDDMM: hojeDDMM, pad3: pad3, reservar: reservar, gerar: gerar, atualizarContador: atualizarContador,
-  gerarFirebase: gerarFirebase, gerarBanco: gerarBanco, reservarFirebase: reservarFirebase };
+  gerarFirebase: gerarFirebase, gerarBanco: gerarBanco, reservarFirebase: reservarFirebase,
+  conferir: conferir, ontemDDMM: ontemDDMM };
