@@ -1,5 +1,12 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v119 (13/11/2026 — Thiago: "não quero utilizar mais a infinitepay… crie esse botão para eu desligar a infinitepay e deixar
+//   'adormecida'" + "preciso de um aviso em todos os locais que as vendas por cartão estão temporariamente indisponíveis"):
+//   INTERRUPTOR DA INFINITEPAY (Painel de Lucros → vitaflow_sync/pagamento_infinitepay, lido pela função braspay ?modo=1 →
+//   infinitepay:'ligada'|'desligada'). Desligada: gerarLinkInfinitePay não gera link; o link guardado na sessão/pendente não é
+//   reenviado (_linkVivo); o bloco de pagamento sai só com o Pix da Bras Pay + AVISO_CARTAO_OFF; "parcelar" responde o aviso em
+//   vez da simulação; some a dica "Quer parcelar?". Função sem resposta = desligada; função antiga (sem o campo) = ligada.
+//   Religar no painel volta tudo como era, sem publicar. Resto = v118c.
 // v118c (11/11/2026): a lista "Produtos sem desconto" passou de 1.700 documentos (Thiago pôs as coleções VitaBeauty e Estética);
 //   _lerConfigsVfTipo lia só 1.000 → limite 10.000. Sem isso, parte dos produtos sem desconto voltava a aceitar cupom/3%.
 // v118b (10/11/2026 — Thiago: "A promoção do mounjaro acabou, pode tirar da Athena"): PROMO_RELAMPAGO.ativa = false (some da opção 8 /
@@ -794,6 +801,7 @@ function _rBRL(v){ return (Math.round(v*100)/100).toFixed(2).replace('.',','); }
 function simularParcelas(valor){
   const V = Number(valor) || 0;
   if (V <= 0) return null;
+  if (_pixModoCache.inf) return `💳 *Vendas por cartão temporariamente indisponíveis.*\n\nPor enquanto o pagamento é *à vista no Pix*: R$ ${_rBRL(V)} — cai na hora e eu confirmo automaticamente. ⚡`;   // v119
   let txt = `💳 *SIMULAÇÃO DE PAGAMENTO — R$ ${_rBRL(V)}*\n\n✅ *À vista no Pix:* R$ ${_rBRL(V)} _(sem juros!)_\n\n*No cartão* (parcelado, taxas da InfinitePay):\n`;
   for (let nP = 1; nP <= 12; nP++){ txt += `${nP}x de R$ ${_rBRL(V * FATOR_PARCELAS[nP] / nP)}\n`; }
   txt += `\n_No próprio *link de pagamento* você escolhe em quantas vezes quer pagar (até 12x)._`;
@@ -3839,6 +3847,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // Quer PARCELAR → simula na hora (total do pedido/carrinho, ou valor que ele disser).
   if (ehPedidoParcelamento(nMsg)) {
     const base = baseParcelamento(session, nMsg);
+    if (await infDesligada()) return respond(base > 0 ? simularParcelas(base) : `💳 *Vendas por cartão temporariamente indisponíveis.*\n\nPor enquanto o pagamento é *à vista no Pix* — cai na hora e eu confirmo automaticamente. ⚡`);   // v119
     if (base > 0) return respond(simularParcelas(base));
     return respond(`💳 Claro! Você pode pagar *à vista no Pix (sem juros)* ou parcelar em *até 12x no cartão* (taxas da InfinitePay). 😊\n\nMe diz o *valor* que você quer simular (ex.: 1000), ou monte seu carrinho que eu já mostro as parcelas do total.`);
   }
@@ -5070,7 +5079,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     linhaFreteGratis + _notaCupomFrete + linhaBrinde +
     linhasDesc + linhaCashback + linhaCupomInfo +
     `\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*` + linhaCashbackGanha + linhaCupomNaoPega + linhaSemana + fgLinhaOpcoes +
-    `\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._` +
+    `\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu` + _dicaParcelar() +
     linhaConviteCupom;
   const freteParaSalvar = { ...frete, valor: freteValorFinal, valorCheio: freteCheio };
   await saveSession(sid, {
@@ -5176,6 +5185,7 @@ async function responderDireto(sid, texto, respond, assistente){
   return ok ? respond('') : respond(texto);
 }
 async function gerarLinkInfinitePay(carrinho, valorFrete, orderNsu, descontoReais) {
+  if (await infDesligada()) return null;   // v119: InfinitePay desligada no Painel de Lucros
   try {
     const subtotalBruto = (carrinho || []).reduce((s,i) => s + i.preco * i.qtd, 0);
     const desc = descontoReais || 0;
@@ -5212,18 +5222,25 @@ const BRASPAY_API = 'https://api.braspay.com.py/api/v1/gateway/cobrancas';
 const BRASPAY_FN  = 'https://vitaflow-proxy.netlify.app/.netlify/functions/braspay';
 const PIX_VALIDADE_ATHENA_SEG = 86400;   // 24 h
 // v103: interruptor do Pix (Painel de Lucros → vitaflow_sync/pagamento_pix, lido pela função braspay). Falhou → 'braspay'.
-let _pixModoCache = { v: null, t: 0 };
-async function pixModo() {
-  if (_pixModoCache.v && Date.now() - _pixModoCache.t < 20000) return _pixModoCache.v;
-  let v = 'braspay';
+let _pixModoCache = { v: null, inf: false, t: 0 };
+// v119: a mesma chamada traz o interruptor da InfinitePay. inf = true → InfinitePay DESLIGADA (e o Pix é sempre Bras Pay).
+async function _lerModoPag() {
+  if (_pixModoCache.v && Date.now() - _pixModoCache.t < 20000) return _pixModoCache;
+  let v = 'braspay', inf = true;                               // função sem resposta = InfinitePay desligada
   try {
     const r = await fetchT(BRASPAY_FN + '?modo=1', { method:'GET' }, 3000);
     const d = await r.json();
-    v = (d && d.ok && d.pix === 'infinitepay') ? 'infinitepay' : 'braspay';
-  } catch (e) { v = 'braspay'; }
-  _pixModoCache = { v: v, t: Date.now() };
-  return v;
+    if (d && d.ok) { inf = d.infinitepay === 'desligada'; v = (!inf && d.pix === 'infinitepay') ? 'infinitepay' : 'braspay'; }
+  } catch (e) { v = 'braspay'; inf = true; }
+  _pixModoCache = { v: v, inf: inf, t: Date.now() };
+  return _pixModoCache;
 }
+async function pixModo() { return (await _lerModoPag()).v; }
+async function infDesligada() { return (await _lerModoPag()).inf; }
+// Link da InfinitePay só "vive" com ela ligada (usa a última leitura; quem chama garante a leitura antes).
+function _linkVivo(l) { return _pixModoCache.inf ? '' : (l || ''); }
+const AVISO_CARTAO_OFF = '💳 _*Vendas por cartão temporariamente indisponíveis.* Por enquanto o pagamento é só por Pix._';
+function _dicaParcelar() { return _pixModoCache.inf ? '' : `\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`; }
 async function gerarPixBraspay(orderNsu, totalReais, novaRef) {
   const key = process.env.BRASPAY_API_KEY || '';
   const valor = Math.round((Number(totalReais) || 0) * 100);
@@ -5246,7 +5263,7 @@ async function gerarPixBraspay(orderNsu, totalReais, novaRef) {
       return { code: String(t.d.brCode), id: t.d.id || '', ref: ref, expiraEm: t.d.expiraEm || '' };
     }
     if (t.d && t.d.erro === 'limite_mensal_excedido') {
-      await enviarTelegram(`⚠️ BRAS PAY — limite mensal de Pix atingido. Pedido ${base} foi só com o link da InfinitePay.`);
+      await enviarTelegram(_pixModoCache.inf ? `🚨 BRAS PAY — limite mensal de Pix atingido e a InfinitePay está DESLIGADA. Pedido ${base} ficou SEM forma de pagamento.` : `⚠️ BRAS PAY — limite mensal de Pix atingido. Pedido ${base} foi só com o link da InfinitePay.`);
     }
     return null;
   } catch (e) { return null; }
@@ -5268,11 +5285,13 @@ function camposPixSessao(pix, totalReais) {
 }
 // Texto do bloco de pagamento. `separado` = o código Pix vai numa mensagem só dele (Athena, envio direto).
 function blocoPagamento(pix, link, separado) {
+  link = _linkVivo(link);   // v119
   let t = '';
   if (pix) {
     t += `⚡ *PIX (copia e cola)* — ${separado ? 'o código vai na *próxima mensagem*' : 'o código está *logo abaixo*'}. ` +
          `É só copiar e colar no app do seu banco: *Pix → Pix copia e cola*. No banco, o recebedor aparece como *Bras Serviços* (nossa intermediadora de pagamentos). _(Vale por 24 h.)_\n\n`;
     if (link) t += `💳 *Prefere cartão em até 12x (ou Pix pela InfinitePay)?*\n${link}\n\n${AVISO_RECEBEDOR}\n\n`;
+    else if (_pixModoCache.inf) t += AVISO_CARTAO_OFF + '\n\n';   // v119
   } else if (link) {
     t += `💳 *Link de pagamento:*\n${link}\n\n${AVISO_RECEBEDOR}\n\n`;
   }
@@ -5364,7 +5383,7 @@ async function mostrarResumoPedido(session, sid, respond) {
       `🚚 Frete *${frete.label}* — ${session.estadoCliente}: R$ ${frete.valor.toFixed(2).replace('.',',')}\n` +
       `🔥 *${session.promoTitulo||'Promoção Relâmpago'}* — preços promocionais já aplicados` +
       (descPct ? `\n🏷️ Desconto extra (-${descPct}%): -R$ ${descValor.toFixed(2).replace('.',',')}` : '') + _lnCbPr +
-      `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`;
+      `\n\n💰 *Total: R$ ${totalComDesconto.toFixed(2).replace('.',',')}*\n\n*Confirma?*\n1️⃣ Sim, quero comprar!\n2️⃣ Não, voltar ao menu` + _dicaParcelar();
     await saveSession(sid, { ...session, state:'CONFIRMAR', simulouParcela: null, freteSelecionado: frete, totalProd, descontoReais: descValor, total: totalComDesconto, descontoTipo:'promo', cashbackReais: _cbPr });   // v116: cashback só se o cliente escolheu usar
     return respond(resumo);
   }
@@ -6678,6 +6697,7 @@ exports.handler = async (event) => {
           gerarLinkInfinitePay(carrinho, frete.valor || 0, pend.order_nsu, desc + descPromo),
           gerarPixBraspay(pend.order_nsu, totalPend, true)
         ]);
+        if (_pixModoCache.inf && !novoPix) return respond(`Poxa, não consegui gerar o seu *Pix* agora. 😕 *Seu pedido continua guardado* — me manda um *oi* daqui a alguns minutos que eu tento de novo, ou fale com o nosso atendimento.`);   // v119: sem InfinitePay para cair
         await salvarPendingMerge(pend.pKey, { link: novoLink || pend.link || '', pix: novoPix ? novoPix.code : '', pix_ref: novoPix ? novoPix.ref : '' });
         await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', carrinho, freteSelecionado: frete,
           estadoCliente: estadoPend, total: totalPend, descontoReais: desc, descontoPromo: descPromo,
@@ -6844,6 +6864,7 @@ exports.handler = async (event) => {
             gerarLinkInfinitePay(carrinho, frete.valor, pend.order_nsu, novoDesc),
             gerarPixBraspay(pend.order_nsu, novoTotal, true)
           ]);
+          if (_pixModoCache.inf && !novoPix) return respond(`Poxa, não consegui gerar o seu *Pix* agora. 😕 *Seu pedido continua guardado* — me manda um *oi* daqui a alguns minutos que eu tento de novo, ou fale com o nosso atendimento.`);   // v119
           const lbl = `Desconto especial (-${NEGOCIACAO_PCT_TOTAL}%)`;
           await salvarPendingMerge(pend.pKey, { negociado:true, descontoReais:novoDesc, descontoLabel:lbl, total:novoTotal, link: novoLink || pend.link || '', pix: novoPix ? novoPix.code : '', pix_ref: novoPix ? novoPix.ref : '' });
           await saveSession(sid, { ...session, state:'AGUARDAR_COMPROVANTE', carrinho, freteSelecionado:frete, estadoCliente: pend.estado || session.estadoCliente, total:novoTotal, descontoReais:novoDesc, descontoLabel:lbl, descontoTipo:'athena', orderNsu:pend.order_nsu, link: novoLink || pend.link || '', ...camposPixSessao(novoPix, novoTotal), cupomDocId:null, cupomCodigo:null });
@@ -7949,6 +7970,7 @@ exports.handler = async (event) => {
       }
       // Quer simular PARCELAMENTO na hora de fechar → mostra e mantém o pedido pronto.
       if (ehPedidoParcelamento(mensagem)) {
+        if (await infDesligada()) return respond(simularParcelas(session.total || totalCarrinho(session.carrinho || [])) + `\n\nQuando quiser, digite *1* para *confirmar a compra* ou *menu* para voltar.`);   // v119
         await saveSession(sid, { ...session, simulouParcela: true });   // v95: o próximo "2"/"3x" é parcela, não "voltar"
         return respond(simularParcelas(session.total || totalCarrinho(session.carrinho || [])) + `\n\nQuando quiser, digite *1* para *confirmar a compra* (no link você escolhe em quantas vezes) ou *menu* para voltar.`);
       }
@@ -8025,6 +8047,7 @@ exports.handler = async (event) => {
     if (state === 'AGUARDAR_COMPROVANTE') {
       // Cliente perguntou sobre PARCELAR enquanto o link está aberto → simula (não confirma nada).
       if (ehPedidoParcelamento(mensagem)) {
+        if (await infDesligada()) return respond(simularParcelas(session.total || 0) + `\n\nÉ só pagar o *Pix* que te mandei. Se ele venceu, me manda um *oi* que eu gero outro.`);   // v119
         return respond(simularParcelas(session.total || 0) + (session.link
           ? `\n\n💳 *Seu link de pagamento:*\n${session.link}\n\n${AVISO_RECEBEDOR}\n\n_No próprio link você escolhe as parcelas (até 12x)._ 😉`
           : `\n\n💳 É só abrir o *link de pagamento* que te mandei e escolher lá as parcelas (até 12x). 😉`));
@@ -8052,6 +8075,7 @@ exports.handler = async (event) => {
       // A EQUIPE no Telegram pra alguém mandar Pix/link manual. O pedido continua guardado.
       const _linkNaoAbre = /(link|pagamento|pagina|página)[^a-z]{0,20}(nao|não|n)\s*(abre|abriu|abriu?|funciona|funcionou|carrega|carregou|vai|foi|da certo|deu certo)|(nao|não) (consigo|consegui|to conseguindo|estou conseguindo|da pra|dá pra) (abrir|pagar|acessar|entrar)|deu erro|(esta|está|ta|tá) dando erro|erro no (link|pagamento)|link (quebrado|invalido|inválido|expirou|expirado|vencido|com erro)/.test(n);
       if (_linkNaoAbre) {
+        await infDesligada();   // v119: garante a leitura do interruptor antes do _linkVivo
         const _jaAvisou = session.linkNaoAbreAvisado ? true : false;
         if (!_jaAvisou) {
           try {
@@ -8065,8 +8089,8 @@ exports.handler = async (event) => {
         await saveSession(sid, { ...session, linkNaoAbreAvisado: true });
         return respond(
           `Poxa, que chato! 😕 Vamos resolver: *seu pedido está guardado* (R$ ${totalPend.toFixed(2).replace('.',',')}).\n\n` +
-          (session.link ? `Tenta por este link aqui, sozinho — toca nele ou *copia e cola no navegador*:\n\n${session.link}\n\n${AVISO_RECEBEDOR}\n\n` : '') +
-          `Se ainda assim não abrir, *já avisei nossa equipe* — em instantes alguém te manda o *Pix* ou um link novo por aqui mesmo. 🧡`
+          (_linkVivo(session.link) ? `Tenta por este link aqui, sozinho — toca nele ou *copia e cola no navegador*:\n\n${session.link}\n\n${AVISO_RECEBEDOR}\n\n` : '') +
+          (_pixModoCache.inf ? `*Já avisei nossa equipe* — em instantes alguém te manda um *Pix* novo por aqui mesmo. 🧡` : `Se ainda assim não abrir, *já avisei nossa equipe* — em instantes alguém te manda o *Pix* ou um link novo por aqui mesmo. 🧡`)
         );
       }
 
@@ -8096,7 +8120,7 @@ exports.handler = async (event) => {
           await enviarTelegram(
             `🔔 *CLIENTE DIZ QUE PAGOU — sem confirmação do webhook*\n` +
             `📦 ${session.orderNsu || '—'}\n📱 ${sid}\n💰 R$ ${totalPend.toFixed(2).replace('.',',')}\n` +
-            `O cliente afirma ter pago ${insist}x e a InfinitePay ainda não confirmou. Verificar manualmente.`
+            `O cliente afirma ter pago ${insist}x e o pagamento ainda não foi confirmado. Verificar manualmente.`
           );
           await saveSession(sid, { ...session, insistPagou: insist });
           return respond(
@@ -8128,6 +8152,7 @@ exports.handler = async (event) => {
       // Reenvia o LINK salvo na sessão, pra "cadê o link?" sempre devolver o link.
       const { pix: _pxPend, mudou: _mudPend } = await pixDaSessao(session);
       if (_mudPend) await saveSession(sid, { ...session, ...camposPixSessao(_pxPend, totalPend) });
+      if (_pixModoCache.inf && !_pxPend) return respond(`Poxa, não consegui gerar o seu *Pix* agora. 😕 *Seu pedido continua guardado* — me manda um *oi* daqui a alguns minutos que eu tento de novo, ou fale com o nosso atendimento.`);   // v119
       return await responderDiretoMulti(sid, [
         `⏳ Você tem um pedido em aberto aguardando pagamento:\n\n` +
         `${resumoCarrinho(carrinhoPend)}\n` +
@@ -8409,3 +8434,4 @@ exports.handler = async (event) => {
   return res;
 };
 exports._vigia = { vigiaMotivo };
+

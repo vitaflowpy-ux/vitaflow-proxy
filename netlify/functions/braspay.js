@@ -1,5 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// BRAS PAY — Pix da VitaFlow (09/10/2026) · v2 (13/10/2026): INTERRUPTOR DO PIX
+// BRAS PAY — Pix da VitaFlow (09/10/2026) · v2 (13/10/2026): INTERRUPTOR DO PIX · v3 (13/11/2026): INTERRUPTOR DA INFINITEPAY
+// v3 (Thiago, 13/11/2026: "não quero utilizar mais a infinitepay… crie esse botão para eu desligar a infinitepay e deixar
+//   'adormecida' pois se no futuro eu quiser usar, já estará pronta"): segundo interruptor, no Painel de Lucros, em
+//   vitaflow_sync/pagamento_infinitepay = {ativo:true|false, em, por}.
+//     • GET ?modo=1 passa a devolver também infinitepay:'ligada'|'desligada' (+ infEm). Quem lê: carrinho, Athena/Stella,
+//       portal do revendedor, página de atacado e Orçamento — com 'desligada' eles escondem cartão/link/chave da InfinitePay.
+//     • Nunca gravado = 'ligada' (nada muda até o Thiago desligar). Leitura do Firebase falhou = 'desligada' (o desejo dele).
+//     • Com a InfinitePay desligada o Pix é SEMPRE Bras Pay: o ?modo=1 responde pix:'braspay' e a criação nunca recusa
+//       com 'pix_na_infinitepay', mesmo que o interruptor do Pix tenha ficado em InfinitePay.
 // v2: o Thiago troca no Painel de Lucros por onde o Pix do SITE, da ATHENA/STELLA e do PORTAL DO REVENDEDOR
 //   é recebido: 'braspay' (padrão) ou 'infinitepay'. A posição fica no Firebase em vitaflow_sync/pagamento_pix
 //   ({provedor, em, por}). Esta função:
@@ -88,6 +96,19 @@ async function lerModo() {
     return { pix: 'braspay', em: null, falhou: true };
   }
 }
+// ── INTERRUPTOR DA INFINITEPAY (v3) ────────────────────────────────────────────────
+const INF_PATH = '/vitaflow_sync/pagamento_infinitepay.json';
+async function lerInfinitePay() {
+  try {
+    const r = await fetchT(fbUrl(INF_PATH), { method: 'GET' }, 3000);
+    if (!r.ok) return { ligada: false, em: null, falhou: true };
+    const d = await r.json();
+    if (d === null || d === undefined) return { ligada: true, em: null };          // nunca gravado: como era antes
+    return { ligada: !(d && d.ativo === false), em: (d && d.em) || null };
+  } catch (e) {
+    return { ligada: false, em: null, falhou: true };
+  }
+}
 
 function reais(cent) { return 'R$ ' + (Number(cent || 0) / 100).toFixed(2).replace('.', ','); }
 
@@ -107,7 +128,10 @@ async function criarCobranca(corpo) {
   // v2: interruptor do Pix (o Orçamento, L-…, fica de fora)
   if (!/^L-/i.test(base)) {
     const m = await lerModo();
-    if (m.pix === 'infinitepay') return resposta(200, { ok: false, erro: 'pix_na_infinitepay' });
+    if (m.pix === 'infinitepay') {
+      const inf = await lerInfinitePay();                                           // v3: InfinitePay desligada → o Pix é Bras Pay
+      if (inf.ligada) return resposta(200, { ok: false, erro: 'pix_na_infinitepay' });
+    }
   }
   let exp = Math.round(Number(corpo.expiraEmSegundos || 1800));
   if (!(exp > 0)) exp = 1800;
@@ -283,10 +307,11 @@ exports.handler = async function (event) {
     const q = event.queryStringParameters || {};
     if (q.ref) return await status(String(q.ref));
     if (q.modo) {
-      const m = await lerModo();
-      return { statusCode: 200, headers: Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, CORS), body: JSON.stringify({ ok: true, pix: m.pix, em: m.em }) };
+      const par = await Promise.all([lerModo(), lerInfinitePay()]);
+      const m = par[0], inf = par[1];
+      return { statusCode: 200, headers: Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, CORS), body: JSON.stringify({ ok: true, pix: inf.ligada ? m.pix : 'braspay', em: m.em, infinitepay: inf.ligada ? 'ligada' : 'desligada', infEm: inf.em }) };
     }
-    return resposta(200, { ok: true, servico: 'braspay', versao: 'v2', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET });
+    return resposta(200, { ok: true, servico: 'braspay', versao: 'v3', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET });
   }
   if (event.httpMethod !== 'POST') return resposta(405, { ok: false, erro: 'metodo' });
 
