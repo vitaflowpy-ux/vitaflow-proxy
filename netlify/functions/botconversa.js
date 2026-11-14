@@ -1,5 +1,10 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v120 (14/11/2026 — Thiago: promoção relâmpago do COMBO 5 caixas de TG 10mg por R$ 1.999, "já alterei no site… faça a alteração
+//   necessária na athena"): PROMO_RELAMPAGO volta a ser usada (opção 8 / "promo", menu, saudação, contexto da IA), agora com o
+//   COMBO 5 caixas de TG 10mg (Total 200mg) de R$ 3.145 (5 × R$ 629 avulsa) por R$ 1.999 — R$ 399,80 por caixa, economia de
+//   R$ 1.146. Sem hora de fim (fim: ''); pra desligar: ativa:false. O "não acumula" (cupom, 3%, negociação) depende de o combo
+//   estar na lista "Produtos sem desconto" (painel › Marketing › Cupons), como no Mounjaro. Resto = v119.
 // v119 (13/11/2026 — Thiago: "não quero utilizar mais a infinitepay… crie esse botão para eu desligar a infinitepay e deixar
 //   'adormecida'" + "preciso de um aviso em todos os locais que as vendas por cartão estão temporariamente indisponíveis"):
 //   INTERRUPTOR DA INFINITEPAY (Painel de Lucros → vitaflow_sync/pagamento_infinitepay, lido pela função braspay ?modo=1 →
@@ -974,15 +979,17 @@ const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
 // NÃO acumula: o produto está na lista "sem desconto" (cupom, 3% e negociação ficam fora — Athena e site). Pra desligar: ativa:false.
 // `fim`: se preenchido, depois dessa hora a promoção some sozinha de todos os lugares.
 // (Anteriores: Primobolan 100mg Cooper de R$ 1.499 por R$ 899 só em 08/10; MyoMax Inibition™ de R$ 1.598 por R$ 999 — encerradas.)
+// v120 (14/11/2026): PROMOÇÃO RELÂMPAGO — COMBO 5 caixas de TG 10mg (Total 200mg) de R$ 3.145 por R$ 1.999, por tempo limitado.
+// (v114–v118b: Mounjaro KwikPen 15mg de R$ 1.999 por R$ 1.499 — encerrada em 10/11.)
 const PROMO_RELAMPAGO = {
-  ativa: false,   // v118b (10/11/2026): promoção do Mounjaro encerrada (Thiago)
+  ativa: true,    // v120 (14/11/2026): combo 5 caixas de TG 10mg. Pra desligar: false
   fim: '',
-  validade: 'ESTOQUE REDUZIDO — só enquanto durar o estoque',
-  obs: 'Lote com validade até 02/2028. O preço da promoção já é o final: não acumula com cupom, outras promoções nem com os 3% da Athena.',
-  titulo: 'MOUNJARO KwikPen 15mg — a caneta original, de R$ 1.999 por R$ 1.499',
-  link: 'https://vitaflowoficial.com/products/mounjaro-kwikpen-15mg-total-60mg',
+  validade: 'por tempo limitado',
+  obs: '5 caixas · 4 ampolas de 10mg/0,5ml em cada · 20 ampolas · total 200mg (Tirzepatida TG, Indufar — a mesma molécula do Mounjaro). Sai a R$ 399,80 por caixa (avulsa: R$ 629) — economia de R$ 1.146. Frete grátis automático a partir de R$ 1.000 vale neste combo. O preço da promoção já é o final: não acumula com cupom, outras promoções nem com os 3% da Athena.',
+  titulo: 'PROMOÇÃO RELÂMPAGO — COMBO 5 caixas de TG 10mg por R$ 1.999',
+  link: 'https://vitaflowoficial.com/products/combo-5-caixas-de-tg-10mg',
   produtos: [
-    { nome: 'Mounjaro KwikPen 15mg (Caneta - 4 doses - Total 60mg) - Eli Lilly', de: 1999, por: 1499 },
+    { nome: 'COMBO 5 caixas de TG 10mg (Total 200mg)', de: 3145, por: 1999 },
   ],
 };
 function promoAtiva() {
