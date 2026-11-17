@@ -9,6 +9,10 @@
 //   4) ÚLTIMA MENSAGEM por cliente (vitaflow_sync/athena_ultima/<dia>/<telefone>): se a conversa andou enquanto a Ronda pensava, ela não envia.
 //   5) Casos de socorro por dia (vitaflow_sync/athena_socorro/<dia>/…) e limpeza diária (socorro/humano/última: 3 dias; registro: 14 dias).
 //   Nada muda no que a Athena responde. Resto = v123.
+// v124.1 (17/11/2026 — 2ª revisão do GPT-6): o MARCADOR da mensagem é gravado na CHEGADA (antes de responder, em paralelo — não atrasa
+//   a resposta): athena_ultima/<dia>/<telefone> = { id único da mensagem }. O caso de socorro só é criado se esse marcador foi gravado
+//   (confirmado) e leva o mesmo id em "marca"; a Ronda só envia se o marcador atual ainda for ESTE (comparação por id, sem tolerância de
+//   horário — mensagens rápidas ou respostas fora de ordem não passam). Pedido de pessoa no texto também grava athena_humano na chegada.
 // v123 (17/11/2026 — Thiago: "hoje tem aquele aviso que recebo quando a athena não sabe responder… nesse caso o robô tem que entrar em ação
 //   e ajudar a athena pelo botconversa, ele já tem autorização" · "quero o sistema acumulando as informações e aprendendo"):
 //   1) SOCORRO: quando o vigia dispara (resposta "não achei/não entendi", reclamação, mensagem repetida — não quando pede atendente), além do
@@ -8555,8 +8559,6 @@ async function registrarConversa(event, res) {
     const tarefas = [fetchT(fbUrl('/vitaflow_sync/athena_log/' + dia + '.json'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ f: fone || ('sub:' + sub), s: sub, m: msg.slice(0, 1500), r: resp.slice(0, 1500), ts: agora, q: quem }) }, 2500)];
     if (fone) {
-      tarefas.push(fetchT(fbUrl('/vitaflow_sync/athena_ultima/' + dia + '/' + fone + '.json'), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ts: agora }) }, 2500));
       if (_ehTransferencia(out, resp) || vigiaMotivo(msg, resp) === 'cliente pediu atendente') {
         tarefas.push(fetchT(fbUrl('/vitaflow_sync/athena_humano/' + dia + '/' + fone + '.json'), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ts: agora }) }, 2500));
@@ -8581,7 +8583,7 @@ function vigiaMotivo(msgCli, resp) {
   if (/\b(porra|caralho|merda|lixo|absurdo|palhacada|ridiculo|golpe|nao responde|ninguem responde|nao chegou|reclamacao|veio errado)\b/.test(nm)) return 'cliente reclamando';
   return '';
 }
-async function vigiaAthena(event, res) {
+async function vigiaAthena(event, res, marca) {
   if (!VIGIA.ativo || !res || res.statusCode !== 200) return;
   let b = {}, out = {};
   try { b = JSON.parse(event.body || '{}'); } catch (e) { return; }
@@ -8600,12 +8602,13 @@ async function vigiaAthena(event, res) {
   const quem0 = String(b.assistente || b.nome_assistente || 'Athena');
   let socorro = false;
   // v124: socorro só com TELEFONE (o identificador vai separado), nunca quando pede pessoa ou quando a Athena acabou de transferir
-  if (/^athena$/i.test(quem0) && fone && motivo !== 'cliente pediu atendente' && !_ehTransferencia(out, resp) &&
+  // v124.1: só com o marcador da mensagem confirmado (sem ele a Ronda não conseguiria conferir se a conversa andou)
+  if (/^athena$/i.test(quem0) && fone && marca && motivo !== 'cliente pediu atendente' && !_ehTransferencia(out, resp) &&
       !(_vigiaUltSocorro[fone] && (agora - _vigiaUltSocorro[fone]) < 2 * 60 * 1000)) {
     _vigiaUltSocorro[fone] = agora;      // v123: a Ronda do servidor responde por ela (no máximo 1 caso a cada 2 min por cliente)
     try {
       const r = await fetchT(fbUrl('/vitaflow_sync/athena_socorro/' + _diaBRT(agora) + '.json'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fone: fone, sub: sub, msg: msg.slice(0, 1500), resp: resp.slice(0, 1500), motivo: motivo, ts: agora }) }, 2500);
+        body: JSON.stringify({ fone: fone, sub: sub, marca: marca, msg: msg.slice(0, 1500), resp: resp.slice(0, 1500), motivo: motivo, ts: agora }) }, 2500);
       socorro = !!(r && r.ok);
     } catch (e) {}
   }
@@ -8615,12 +8618,28 @@ async function vigiaAthena(event, res) {
   await enviarTelegram('👁️ VIGIA ' + quem.toUpperCase() + ' — ' + motivo + '\n📱 ' + (fone || ('sub ' + sub)) + '\n💬 Cliente: ' + msg.slice(0, 200) + '\n🤖 Resposta: ' + resp.replace(/\s+/g, ' ').slice(0, 250) +
     (socorro ? '\n🛟 A Ronda vai tentar responder por ela.' : ''));
 }
+// v124.1: marcador gravado na CHEGADA da mensagem (antes de responder). Devolve o id gravado ou null (falhou = sem socorro para ela).
+function _marcarChegada(event) {
+  let b = {};
+  try { b = JSON.parse(event.body || '{}'); } catch (e) { return Promise.resolve(null); }
+  const quem = String(b.assistente || b.nome_assistente || 'Athena'), fone = _foneDe(b);
+  if (!/^athena$/i.test(quem) || !fone) return Promise.resolve(null);
+  const id = require('crypto').randomUUID(), agora = Date.now(), dia = _diaBRT(agora);
+  const msg = String(b.mensagem || b.message || b.texto || '').trim();
+  const put = (no) => fetchT(fbUrl('/vitaflow_sync/' + no + '/' + dia + '/' + fone + '.json'), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(no === 'athena_ultima' ? { id: id, ts: agora } : { ts: agora }) }, 2500).then(function (r) { return !!(r && r.ok); }).catch(function () { return false; });
+  const tarefas = [put('athena_ultima')];
+  if (vigiaMotivo(msg, '') === 'cliente pediu atendente') tarefas.push(put('athena_humano'));
+  return Promise.all(tarefas).then(function (oks) { return oks[0] ? id : null; });
+}
 const _handlerSemVigia = exports.handler;
 exports.handler = async (event) => {
+  const pMarca = _marcarChegada(event);                // v124.1: começa junto com a resposta (não atrasa)
   const res = await _handlerSemVigia(event);
   // v109: o aviso do vigia (Telegram) não pode atrasar a resposta além do prazo do BotConversa
-  try { await Promise.race([Promise.all([vigiaAthena(event, res), registrarConversa(event, res)]), new Promise(function (ok) { setTimeout(ok, Math.max(200, Math.min(1500, msRestantes()))); })]); } catch (e) {}   // v123: + registro
+  try { await Promise.race([(async function () { const marca = await pMarca; await Promise.all([vigiaAthena(event, res, marca), registrarConversa(event, res)]); })(),
+                            new Promise(function (ok) { setTimeout(ok, Math.max(200, Math.min(1500, msRestantes()))); })]); } catch (e) {}   // v123: + registro
   return res;
 };
-exports._vigia = { vigiaMotivo, _ehTransferencia, registrarConversa, vigiaAthena };
+exports._vigia = { vigiaMotivo, _ehTransferencia, registrarConversa, vigiaAthena, _marcarChegada };
 
