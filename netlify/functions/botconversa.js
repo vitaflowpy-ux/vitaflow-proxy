@@ -1,5 +1,16 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v123 (17/11/2026 — Thiago: "hoje tem aquele aviso que recebo quando a athena não sabe responder… nesse caso o robô tem que entrar em ação
+//   e ajudar a athena pelo botconversa, ele já tem autorização" · "quero o sistema acumulando as informações e aprendendo"):
+//   1) SOCORRO: quando o vigia dispara (resposta "não achei/não entendi", reclamação, mensagem repetida — não quando pede atendente), além do
+//      Telegram grava o caso em vitaflow_sync/athena_socorro; a RONDA do servidor (script 85) responde ao cliente pelo BotConversa, como a
+//      Athena, com os dados reais (e só avisa o dono quando não tem certeza). Só na Athena (a Stella é de outra conta).
+//   2) REGISTRO das conversas da Athena (pergunta + resposta) em vitaflow_sync/athena_log/<dia>, 14 dias — a Ronda estuda as dúvidas
+//      e propõe respostas novas; o dono aprova no Telegram e a athena-ia passa a usar (vitaflow_sync/athena_aprendizado).
+//   3) A chave do BotConversa passa a vir da variável de ambiente BOTCONVERSA_API_KEY (a escrita no código fica só de reserva até a
+//      variável ser criada no Netlify; depois sai do código).
+//   Nada muda no que a Athena responde. Resto = v122.
+
 // v122 (17/11/2026 — auditoria das conversas pelo GPT-6 + Thiago: "faça tudo e publique"):
 //   1) 🔕 PARAR DE RECEBER: "pare de me mandar mensagem", "não quero receber mais", "me tira da lista", "descadastrar", "stop"…
 //      grava session.optout + vitaflow_optout/<fone> (com a frase), avisa no Telegram e confirma ao cliente; com optout o convite de
@@ -5185,7 +5196,7 @@ async function enviarTelegram(texto) {
 // antes, o recibo ia na resposta do webhook e, como o COLETA fazia trabalho pesado (GAS +
 // Telegram) ANTES de responder, o webhook estourava timeout e o BotConversa descartava o
 // recibo. Enviando por aqui, o recibo chega SEMPRE — independe do timeout.
-const BOTCONVERSA_API_KEY = '8c9e69c3-3c9f-4f23-b480-be4a0de29640';
+const BOTCONVERSA_API_KEY = process.env.BOTCONVERSA_API_KEY || '8c9e69c3-3c9f-4f23-b480-be4a0de29640';   // v123: variável de ambiente primeiro
 async function botconversaSubId(sid){
   try {
     const fone = String(sid).replace(/\D/g,'');
@@ -8511,6 +8522,30 @@ exports.handler = async (event) => {
 const VIGIA = { ativo: true, intervaloMs: 20 * 60 * 1000 };
 const _vigiaUltAlerta = {};   // fone -> ts do último alerta (memória do container)
 const _vigiaUltMsg = {};      // fone -> { m, ts } última mensagem do cliente
+const _vigiaUltSocorro = {};  // v123: fone -> ts do último socorro pedido à Ronda
+// v123: registro da conversa (pergunta + resposta) para a Ronda estudar — vitaflow_sync/athena_log/<dia BRT>, guardado 14 dias
+let _logLimpoDia = '';
+function _diaBRT(ms) { return new Date((ms || Date.now()) - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+async function registrarConversa(event, res) {
+  if (!res || res.statusCode !== 200) return;
+  let b = {}, out = {};
+  try { b = JSON.parse(event.body || '{}'); out = JSON.parse(res.body || '{}'); } catch (e) { return; }
+  const quem = String(b.assistente || b.nome_assistente || 'Athena');
+  if (!/^athena$/i.test(quem)) return;
+  const fone = String(b.phone || b.subscriber_id || '').replace(/\D/g, '');
+  const msg = String(b.mensagem || b.message || b.texto || '').trim();
+  const resp = [out.resposta, out.resposta2, out.resposta3].filter(Boolean).join('\n');
+  if (!fone || !msg) return;
+  const agora = Date.now(), dia = _diaBRT(agora);
+  try {
+    await fetchT(fbUrl('/vitaflow_sync/athena_log/' + dia + '.json'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ f: fone, m: msg.slice(0, 1500), r: resp.slice(0, 1500), ts: agora, q: quem }) }, 2500);
+    if (_logLimpoDia !== dia) {
+      _logLimpoDia = dia;
+      for (const d of [15, 16]) await fetchT(fbUrl('/vitaflow_sync/athena_log/' + _diaBRT(agora - d * 86400000) + '.json'), { method: 'DELETE' }, 2500);
+    }
+  } catch (e) {}
+}
 function vigiaMotivo(msgCli, resp) {
   const m = String(msgCli || ''), r = String(resp || '');
   const nm = m.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -8534,16 +8569,27 @@ async function vigiaAthena(event, res) {
   if (!motivo && ant && ant.m === msg.toLowerCase() && (agora - ant.ts) < 30 * 60 * 1000 && !/^\d{1,2}$/.test(msg)) motivo = 'cliente repetiu a mesma mensagem';
   _vigiaUltMsg[fone] = { m: msg.toLowerCase(), ts: agora };
   if (!motivo) return;
+  const quem0 = String(b.assistente || b.nome_assistente || 'Athena');
+  let socorro = false;
+  if (/^athena$/i.test(quem0) && motivo !== 'cliente pediu atendente' && !(_vigiaUltSocorro[fone] && (agora - _vigiaUltSocorro[fone]) < 2 * 60 * 1000)) {
+    _vigiaUltSocorro[fone] = agora;      // v123: a Ronda do servidor responde por ela (no máximo 1 caso a cada 2 min por cliente)
+    try {
+      const r = await fetchT(fbUrl('/vitaflow_sync/athena_socorro.json'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fone: fone, sub: String(b.subscriber_id || ''), msg: msg.slice(0, 1500), resp: resp.slice(0, 1500), motivo: motivo, ts: agora }) }, 2500);
+      socorro = !!(r && r.ok);
+    } catch (e) {}
+  }
   if (_vigiaUltAlerta[fone] && (agora - _vigiaUltAlerta[fone]) < VIGIA.intervaloMs) return;
   _vigiaUltAlerta[fone] = agora;
   const quem = String(b.assistente || b.nome_assistente || 'Athena');
-  await enviarTelegram('👁️ VIGIA ' + quem.toUpperCase() + ' — ' + motivo + '\n📱 ' + fone + '\n💬 Cliente: ' + msg.slice(0, 200) + '\n🤖 Resposta: ' + resp.replace(/\s+/g, ' ').slice(0, 250));
+  await enviarTelegram('👁️ VIGIA ' + quem.toUpperCase() + ' — ' + motivo + '\n📱 ' + fone + '\n💬 Cliente: ' + msg.slice(0, 200) + '\n🤖 Resposta: ' + resp.replace(/\s+/g, ' ').slice(0, 250) +
+    (socorro ? '\n🛟 A Ronda vai tentar responder por ela.' : ''));
 }
 const _handlerSemVigia = exports.handler;
 exports.handler = async (event) => {
   const res = await _handlerSemVigia(event);
   // v109: o aviso do vigia (Telegram) não pode atrasar a resposta além do prazo do BotConversa
-  try { await Promise.race([vigiaAthena(event, res), new Promise(function (ok) { setTimeout(ok, Math.max(200, Math.min(1500, msRestantes()))); })]); } catch (e) {}
+  try { await Promise.race([Promise.all([vigiaAthena(event, res), registrarConversa(event, res)]), new Promise(function (ok) { setTimeout(ok, Math.max(200, Math.min(1500, msRestantes()))); })]); } catch (e) {}   // v123: + registro
   return res;
 };
 exports._vigia = { vigiaMotivo };

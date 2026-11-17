@@ -1,3 +1,4 @@
+// v123 (17/11/2026): lê as respostas aprovadas pelo dono (vitaflow_sync/athena_aprendizado, Ronda) e junta ao prompt (igual à athena-ia-background v123). Resto = v122.
 // athena-ia.js — v122 (17/11/2026): SYSTEM ganha 🩺 SAÚDE INDIVIDUAL e 🚫 VALIDADE/CONSERVAÇÃO (iguais ao athena-ia-background v122). Resto igual.
 // netlify/functions/athena-ia.js
 // v117 (05/11/2026 — Thiago: "A Athena pode vender também perfumes"): coleção `vitabeauty` entra no catálogo da IA (COLECOES/CI_COLECOES)
@@ -1143,6 +1144,32 @@ async function blocoBasePreVenda(mensagem, contexto){
     achados.slice(0, 8).map(_linhaBase).join('\n');
 }
 
+// v123 (17/11/2026 — Thiago: "quero o sistema acumulando as informações e aprendendo… mais inteligente TODOS OS DIAS"): respostas que a Ronda
+//   propôs (socorro, auditoria do atendimento, dúvidas dos grupos) e o dono APROVOU no Telegram (/ok) — vitaflow_sync/athena_aprendizado,
+//   gravado pelo robô firebase_acoes v5.3. Lido no máximo a cada 5 min; sem nada aprovado = nada muda.
+let _aprendCache = { ts: 0, txt: '' };
+async function blocoAprendido() {
+  if (Date.now() - _aprendCache.ts < 5 * 60 * 1000) return _aprendCache.txt;
+  let txt = '';
+  try {
+    const ctrl = new AbortController(); const tm = setTimeout(function () { ctrl.abort(); }, 3000);
+    const r = await fetch(fbUrl('/vitaflow_sync/athena_aprendizado/itens.json'), { signal: ctrl.signal }); clearTimeout(tm);
+    const itens = r.ok ? await r.json() : null;
+    if (Array.isArray(itens) && itens.length) {
+      const linhas = []; let tam = 0;
+      for (const x of itens) {
+        if (!x || !x.gatilho || !x.resposta) continue;
+        const l = '- Pergunta: ' + String(x.gatilho).slice(0, 300) + '\n  Resposta aprovada: ' + String(x.resposta).slice(0, 900);
+        if ((tam += l.length) > 9000) break;
+        linhas.push(l);
+      }
+      if (linhas.length) txt = '\n\n=== RESPOSTAS APROVADAS PELO DONO (quando a pergunta for a mesma, responda com isto, adaptando ao cliente; não invente dado novo) ===\n' + linhas.join('\n');
+    }
+  } catch (e) { return _aprendCache.txt; }
+  _aprendCache = { ts: Date.now(), txt: txt };
+  return txt;
+}
+
 exports.handler = async (event) => {
   const headers = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json' };
   if (event.httpMethod === 'OPTIONS') return { statusCode:200, headers, body:'' };
@@ -1180,6 +1207,7 @@ exports.handler = async (event) => {
     try {
       sys += await Promise.race([ blocoBasePreVenda(mensagem, contexto), new Promise(function(r){ setTimeout(function(){ r(''); }, 1500); }) ]);
     } catch (e) { console.log('[IA-SYNC] base do gerador na pré-venda falhou (segue sem ela):', e.message); }
+    try { sys += await Promise.race([ blocoAprendido(), new Promise(function(r){ setTimeout(function(){ r(''); }, 1200); }) ]); } catch (e) {}   // v123: respostas aprovadas pelo dono (Ronda)
 
     // ── DESCRIÇÃO SOB DEMANDA: só quando o cliente PERGUNTA um detalhe do produto ──
     // Lê a descrição da página do produto na hora. Se não tiver descrição, a IA responde

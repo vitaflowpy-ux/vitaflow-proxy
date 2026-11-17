@@ -1,3 +1,4 @@
+// v123 (17/11/2026): lê as respostas aprovadas pelo dono (vitaflow_sync/athena_aprendizado, Ronda) e junta ao prompt. Resto = v122.
 // netlify/functions/athena-ia-background.js
 // v122 (17/11/2026 — revisão das conversas pelo GPT-6, aprovada pelo Thiago "faça tudo e publique"): SYSTEM ganha 🩺 SAÚDE INDIVIDUAL (não garante
 //   segurança, não sugere aumentar dose/somar hormônio por condição de saúde; manda ao médico) e 🚫 VALIDADE/CONSERVAÇÃO (Regra nº 5);
@@ -1369,6 +1370,32 @@ async function verImagem(body){
   }
 }
 
+// v123 (17/11/2026 — Thiago: "quero o sistema acumulando as informações e aprendendo… mais inteligente TODOS OS DIAS"): respostas que a Ronda
+//   propôs (socorro, auditoria do atendimento, dúvidas dos grupos) e o dono APROVOU no Telegram (/ok) — vitaflow_sync/athena_aprendizado,
+//   gravado pelo robô firebase_acoes v5.3. Lido no máximo a cada 5 min; sem nada aprovado = nada muda.
+let _aprendCache = { ts: 0, txt: '' };
+async function blocoAprendido() {
+  if (Date.now() - _aprendCache.ts < 5 * 60 * 1000) return _aprendCache.txt;
+  let txt = '';
+  try {
+    const ctrl = new AbortController(); const tm = setTimeout(function () { ctrl.abort(); }, 3000);
+    const r = await fetch(fbUrl('/vitaflow_sync/athena_aprendizado/itens.json'), { signal: ctrl.signal }); clearTimeout(tm);
+    const itens = r.ok ? await r.json() : null;
+    if (Array.isArray(itens) && itens.length) {
+      const linhas = []; let tam = 0;
+      for (const x of itens) {
+        if (!x || !x.gatilho || !x.resposta) continue;
+        const l = '- Pergunta: ' + String(x.gatilho).slice(0, 300) + '\n  Resposta aprovada: ' + String(x.resposta).slice(0, 900);
+        if ((tam += l.length) > 9000) break;
+        linhas.push(l);
+      }
+      if (linhas.length) txt = '\n\n=== RESPOSTAS APROVADAS PELO DONO (quando a pergunta for a mesma, responda com isto, adaptando ao cliente; não invente dado novo) ===\n' + linhas.join('\n');
+    }
+  } catch (e) { return _aprendCache.txt; }
+  _aprendCache = { ts: Date.now(), txt: txt };
+  return txt;
+}
+
 exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || '{}');
@@ -1401,6 +1428,7 @@ exports.handler = async (event) => {
     // 23/09: pré-venda com a MESMA base do Gerador que o protocolo pós-venda usa.
     try { sys += await blocoBasePreVenda(mensagem, contexto); }
     catch (e) { console.log('[IA] base do gerador na pré-venda falhou (segue sem ela):', e.message); }
+    try { sys += await blocoAprendido(); } catch (e) {}   // v123: respostas aprovadas pelo dono (Ronda)
 
     // ── DESCRIÇÃO SOB DEMANDA: só quando o cliente PERGUNTA um detalhe do produto ──
     // Lê a descrição da página do produto na hora. Se o produto não tiver descrição,

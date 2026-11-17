@@ -1,6 +1,10 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v11  ·  17/11/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v12  ·  17/11/2026
+   v12 (17/11/2026, Thiago: "quero uma forma de que os robôs leiam os 3 grupos… vejam as principais dúvidas, vejam formas de melhorar
+       o bot dos grupos, vejam oportunidades de venda!"): guarda o TEXTO de cada mensagem dos 2 grupos (VIP #1 e #2) em
+       vitaflow_sync/grupo_vip/mensagens/<dia>/<messageId> = {g, a, n, t, ts}, por 14 dias. A Ronda do servidor (script 85) lê,
+       estuda e propõe no resumo das 22h. Nada muda no que o bot responde ou modera.
    v11 (17/11/2026, Thiago: "faça alteração em todos os sistemas que mencionam o sorteio… essa etapa
        acabou na vitaflow"): quem pergunta de sorteio / número da sorte recebe o aviso de que o sorteio
        foi ENCERRADO (e que no lugar dele tem cashback de 3%); sem ciclo/datas; "cotas" + atacado não
@@ -145,6 +149,22 @@ async function fbGet(caminho) {
     if (!r.ok) return null;
     return await r.json();
   } catch (e) { return null; }
+}
+
+/* v12: guarda a mensagem do grupo (14 dias). Mesma mensagem 2x (webhook repetido) = mesma chave, não duplica. */
+var _limpoDia = '';
+function _diaBRT(ms) { return new Date((ms || Date.now()) - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+async function guardarMensagem(grupo, body, autor, texto) {
+  try {
+    var agora = Date.now(), dia = _diaBRT(agora);
+    var k = String(body.messageId || ('t' + agora)).replace(/[.#$/\[\]]/g, '_').slice(0, 120);
+    await fbPut(RAIZ + '/mensagens/' + dia + '/' + k, { g: 'vip' + grupo, a: autor, n: String(body.senderName || body.chatName || '').slice(0, 80),
+                                                        t: String(texto || '').slice(0, 2000), ts: agora });
+    if (_limpoDia !== dia) {
+      _limpoDia = dia;
+      for (var d = 15; d <= 16; d++) await fetch(fbUrl(RAIZ + '/mensagens/' + _diaBRT(agora - d * 86400000)), { method: 'DELETE' });
+    }
+  } catch (e) {}
 }
 
 async function fbPut(caminho, valor) {
@@ -1034,6 +1054,8 @@ exports.handler = async function (event) {
   var sfx = grupo === 2 ? '_g2' : '';          /* travas e contador do #2 separados; o #1 fica com as chaves de sempre */
   var rotulo = 'GRUPO VIP #' + grupo;
   if (!paraModerar) return { statusCode: 200, body: 'sem texto' };
+
+  await guardarMensagem(grupo, body, autor, paraModerar);   /* v12: para a Ronda estudar dúvidas e oportunidades */
 
   await carregarTextos();
 
