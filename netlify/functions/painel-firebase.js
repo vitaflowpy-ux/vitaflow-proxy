@@ -1,6 +1,7 @@
 'use strict';
 /* =============================================================================
-   painel-firebase.js — O FIREBASE PARA O PAINEL ÚNICO (VitaFlow)  ·  v1  ·  02/11/2026
+   painel-firebase.js — O FIREBASE PARA O PAINEL ÚNICO (VitaFlow)  ·  v2  ·  17/11/2026 (v1 02/11/2026)
+   v2: + gravar atacado_pjc_ajustes, vinculos_pjc, atacado_cde_pjc e precos_override (aba 🏭 Estoque PJC do Publicar dentro do painel)
    Netlify Function no repo vitaflow-proxy → netlify/functions/painel-firebase.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/painel-firebase
 
@@ -39,7 +40,9 @@ var LER = ['vitaflow_compras', 'vitaflow_compras_snapshots', 'vitaflow_compras_n
 var GRAVAR = ['vitaflow_compras', 'vitaflow_compras_snapshots', 'vitaflow_compras_notas', 'vitaflow_compras_backup',
   'vitaflow_diario_compras', 'vitaflow_diario', 'vitaflow_diario_texto', 'vitaflow_diario_texto_em', 'vitaflow_lucro_diario',
   'vitaflow_cache_daniel_fretes_feitos', 'vitaflow_atacado/tabela_fornecedor',
-  'vitaflow_sync/preferencia_fornecedor', 'vitaflow_sync/pjc_lotes', 'vitaflow_sync/fornecedores_pausa', 'vitaflow_sync/fornecedores_custom', 'vitaflow_sync/lucro_pedidos'];
+  'vitaflow_sync/preferencia_fornecedor', 'vitaflow_sync/pjc_lotes', 'vitaflow_sync/fornecedores_pausa', 'vitaflow_sync/fornecedores_custom', 'vitaflow_sync/lucro_pedidos',
+  /* v2 (17/11/2026): aba 🏭 Estoque PJC e ⚖️ CDE × PJC do Publicar Atacado dentro do painel (v40) — os mesmos nós que o conversor_publicar v-atk19 grava */
+  'vitaflow_sync/atacado_pjc_ajustes', 'vitaflow_sync/vinculos_pjc', 'vitaflow_sync/atacado_cde_pjc', 'vitaflow_sync/precos_override'];
 var QUERY_OK = ['shallow', 'orderBy', 'startAt', 'endAt', 'equalTo', 'limitToFirst', 'limitToLast', 'print'];
 
 var CORS = {
