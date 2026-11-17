@@ -1,5 +1,12 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v121 (17/11/2026 — Thiago: "faça alteração em todos os sistemas que mencionam o sorteio… essa etapa acabou na vitaflow" +
+//   aviso de cartão só pelo WhatsApp (print do carrinho para +44 7537 155723) + "deixe essa opção [simular parcelamento] ativada
+//   na athena também"): SORTEIO.ativa = false + SORTEIO.encerrado = true — some do menu, promo, IA e pós-venda; quem pergunta de
+//   sorteio / números da sorte (ou estava no estado SORTEIO) recebe MSG_SORTEIO_ENCERRADO e volta ao menu; a IA sabe que acabou.
+//   ADM: "promo" sem "/sorteio". CARTÃO com a InfinitePay desligada: "parcelar" volta a SIMULAR (tabela 1x–12x com juros, mesmos
+//   FATOR_PARCELAS) + como pagar no cartão pelo WhatsApp (MSG_CARTAO_WHATS); AVISO_CARTAO_OFF vira o aviso do WhatsApp; a dica
+//   "Quer parcelar?" volta a aparecer. Nada de link de cartão é gerado (continua só o Pix da Bras Pay). Resto = v120b.
 // v120b (14/11/2026 — Thiago: "acabou a tg de 10mg no ali e no daniel. vou ter que retirar a promoção do ar"): PROMO_RELAMPAGO.ativa =
 //   false — o combo de TG 10mg some da opção 8 / "promo", do menu, da saudação e do contexto da IA. Resto = v120.
 // v120 (14/11/2026 — Thiago: promoção relâmpago do COMBO 5 caixas de TG 10mg por R$ 1.999, "já alterei no site… faça a alteração
@@ -808,10 +815,10 @@ function _rBRL(v){ return (Math.round(v*100)/100).toFixed(2).replace('.',','); }
 function simularParcelas(valor){
   const V = Number(valor) || 0;
   if (V <= 0) return null;
-  if (_pixModoCache.inf) return `💳 *Vendas por cartão temporariamente indisponíveis.*\n\nPor enquanto o pagamento é *à vista no Pix*: R$ ${_rBRL(V)} — cai na hora e eu confirmo automaticamente. ⚡`;   // v119
-  let txt = `💳 *SIMULAÇÃO DE PAGAMENTO — R$ ${_rBRL(V)}*\n\n✅ *À vista no Pix:* R$ ${_rBRL(V)} _(sem juros!)_\n\n*No cartão* (parcelado, taxas da InfinitePay):\n`;
+  const _off = !!_pixModoCache.inf;   // v121: InfinitePay desligada → simula igual e o cartão é pelo WhatsApp (sem link)
+  let txt = `💳 *SIMULAÇÃO DE PAGAMENTO — R$ ${_rBRL(V)}*\n\n✅ *À vista no Pix:* R$ ${_rBRL(V)} _(sem juros!)_\n\n*No cartão* (parcelado, ${_off ? 'com juros' : 'taxas da InfinitePay'}):\n`;
   for (let nP = 1; nP <= 12; nP++){ txt += `${nP}x de R$ ${_rBRL(V * FATOR_PARCELAS[nP] / nP)}\n`; }
-  txt += `\n_No próprio *link de pagamento* você escolhe em quantas vezes quer pagar (até 12x)._`;
+  txt += _off ? `\n${MSG_CARTAO_WHATS}` : `\n_No próprio *link de pagamento* você escolhe em quantas vezes quer pagar (até 12x)._`;
   return txt;
 }
 // Detecta interesse em PARCELAR. (não confunde com rastreio/cupom)
@@ -1053,7 +1060,7 @@ function msgAdmMenu(){
     `*protocolo <produto>* — protocolo completo, sem precisar de CPF\n` +
     `   _ex: protocolo tirzepatida 15mg_\n\n` +
     `*tabelas* — lista todas as tabelas que eu tenho\n\n` +
-    `*promo* — mostra o que eu sei de promoção/sorteio agora\n\n` +
+    `*promo* — mostra o que eu sei de promoção agora\n\n` +
     `*sair* — volta ao atendimento normal\n\n` +
     `_Você está no modo ADM. Os clientes não têm acesso a isto._`;
 }
@@ -1112,7 +1119,8 @@ function ehCupomVale(tipo){ return String(tipo || '') === 'vale'; }
 // Ligado em 22/08/2026. Pra desligar: ativa:false (some de tudo: menu, IA e texto).
 // ══════════════════════════════════════════════════════════════════════════════
 const SORTEIO = {
-  ativa: true,
+  ativa: false,       // v121 (16/11/2026): sorteio encerrado na VitaFlow
+  encerrado: true,    // v121: quem perguntar recebe MSG_SORTEIO_ENCERRADO
   link: 'https://vitaflowoficial.com/pages/sorteio',
   premio: 'R$ 1.000',
   porNumero: 100
@@ -1367,8 +1375,14 @@ function msgMeusNumeros(d){
 }
 
 // Reconhece a intenção. Evita roubar "número do pedido" (isso é rastreio).
+// v121: texto para quem pergunta do sorteio depois do fim (16/11/2026).
+const MSG_SORTEIO_ENCERRADO = `🎲 O *Sorteio Quinzenal* foi *encerrado*. 🙏\n\nNo lugar dele, toda compra na VitaFlow agora te devolve *${CASHBACK.pct}% de cashback* para usar na próxima compra. 😉\n\n_Digite *menu* para ver as opções._`;
 function ehIntencaoSorteio(n){
-  if (!SORTEIO.ativa) return false;
+  if (!SORTEIO.ativa) {   // v121: encerrado — só os pedidos claros de sorteio (não pega "vale-compras", "bilhete", "quantos números")
+    if (!SORTEIO.encerrado) return false;
+    if (n.includes('numero do pedido') || n.includes('numero de pedido')) return false;
+    return n.includes('sorteio') || n.includes('numero da sorte') || n.includes('numeros da sorte') || n.includes('meu numero da sorte');
+  }
   if (n.includes('numero do pedido') || n.includes('numero de pedido')) return false;
   if (n.includes('sorteio') || n.includes('sortear') || n.includes('sorteado')) return true;
   if (n.includes('numero da sorte') || n.includes('numeros da sorte')) return true;
@@ -1440,6 +1454,7 @@ async function contextoPromo(){
     const _d = sorteioDiasRestantes();
     linhas.push(`SORTEIO QUINZENAL ATIVO AGORA: a cada R$ ${SORTEIO.porNumero} pagos EM PRODUTOS dentro do ciclo, o cliente ganha 1 NÚMERO DA SORTE e concorre a um VALE-COMPRAS DE ${SORTEIO.premio} na VitaFlow. Ciclo atual: ${sorteioDDMM(_c.ini)} a ${sorteioDDMM(_c.fim)}${_d > 0 ? ' (fecha em ' + _d + ' dia(s))' : ''}. O sorteio é no ${sorteioDiaSemana(_c)} ${sorteioDDMM(_c.sorteio)} às ${sorteioHoraTxt(_c)}, pela LOTERIA FEDERAL — a VitaFlow não escolhe o ganhador. Vale a SOMA de todas as compras do cliente no período (não precisa ser num pedido só) e conta o valor PAGO em produtos, já com desconto; FRETE NÃO CONTA para gerar número. Só pedidos com pagamento confirmado. Os números ZERAM a cada ciclo. O prêmio é vale-compras (NÃO é dinheiro) e vale para produtos e frete. O cliente consulta os próprios números pelo CPF — aqui comigo ou em ${SORTEIO.link}. SEMPRE que o cliente perguntar de promoção/desconto/sorteio, DIVULGUE o sorteio. Se ele perguntar quantos números tem, peça o CPF.`);
   }
+  if (!SORTEIO.ativa && SORTEIO.encerrado) linhas.push('O SORTEIO QUINZENAL (números da sorte, vale-compras de R$ 1.000) FOI ENCERRADO em 16/11/2026 e NÃO EXISTE MAIS. Se o cliente perguntar, diga que foi encerrado e que no lugar dele existe o cashback. NUNCA ofereça número da sorte nem fale de ciclo ou data de sorteio.');   // v121
   if (CASHBACK.ativa) {
     linhas.push(`CASHBACK ATIVO (programa permanente): ${CASHBACK.pct}% do valor PAGO em produtos (frete não entra; cupom/desconto já descontados) volta como saldo, liberado logo depois da confirmação do pagamento e válido por ${CASHBACK.dias} dias. Pedido cancelado/estornado perde o cashback. Revendedor não participa; atacado participa. O CLIENTE ESCOLHE usar ou acumular: no resumo do pedido aqui na Athena aparece o saldo (achado pelo WhatsApp das compras) e ele digita *usar cashback* para descontar (ou *acumular* para guardar); no carrinho do site aparece um quadro "Usar meu cashback" (mesmo CPF e e-mail das compras) que ele marca se quiser. Cada crédito vence 45 dias depois da compra que o gerou. Vale JUNTO com cupons e promoções (é a exceção ao "não acumula"). Abate só dos produtos, nunca do frete. O cliente vê o saldo digitando *cashback* aqui ou na Minha Conta do site (vitaflowoficial.com/pages/minha-conta). Lembrete por e-mail 5 dias antes de vencer. NÃO invente valores de saldo.`);
   }
@@ -3856,7 +3871,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
   // Quer PARCELAR → simula na hora (total do pedido/carrinho, ou valor que ele disser).
   if (ehPedidoParcelamento(nMsg)) {
     const base = baseParcelamento(session, nMsg);
-    if (await infDesligada()) return respond(base > 0 ? simularParcelas(base) : `💳 *Vendas por cartão temporariamente indisponíveis.*\n\nPor enquanto o pagamento é *à vista no Pix* — cai na hora e eu confirmo automaticamente. ⚡`);   // v119
+    if (await infDesligada()) return respond(base > 0 ? simularParcelas(base) : `💳 Claro! No *Pix* é à vista, *sem juros*. No *cartão* você parcela em *até 12x* (com juros).\n\nMe diz o *valor* que você quer simular (ex.: 1000), ou monte seu carrinho que eu simulo o total. 😊\n\n${MSG_CARTAO_WHATS}`);   // v121
     if (base > 0) return respond(simularParcelas(base));
     return respond(`💳 Claro! Você pode pagar *à vista no Pix (sem juros)* ou parcelar em *até 12x no cartão* (taxas da InfinitePay). 😊\n\nMe diz o *valor* que você quer simular (ex.: 1000), ou monte seu carrinho que eu já mostro as parcelas do total.`);
   }
@@ -5248,8 +5263,11 @@ async function pixModo() { return (await _lerModoPag()).v; }
 async function infDesligada() { return (await _lerModoPag()).inf; }
 // Link da InfinitePay só "vive" com ela ligada (usa a última leitura; quem chama garante a leitura antes).
 function _linkVivo(l) { return _pixModoCache.inf ? '' : (l || ''); }
-const AVISO_CARTAO_OFF = '💳 _*Vendas por cartão temporariamente indisponíveis.* Por enquanto o pagamento é só por Pix._';
-function _dicaParcelar() { return _pixModoCache.inf ? '' : `\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`; }
+// v121 (16/11/2026): cartão de crédito só pelo WhatsApp — o cliente manda o print do carrinho/pedido para o número abaixo.
+const CARTAO_WHATS = '+44 7537 155723';
+const MSG_CARTAO_WHATS = `💳 *Quer pagar no cartão de crédito?* As compras no cartão são feitas pelo nosso WhatsApp: tire um *print do seu carrinho* (ou deste pedido) e envie para *${CARTAO_WHATS}* — nossa equipe finaliza com você por lá. 😉`;
+const AVISO_CARTAO_OFF = '💳 _*Cartão de crédito:* as compras no cartão são feitas pelo nosso WhatsApp. Tire um print do seu carrinho (ou deste pedido) e envie para *' + CARTAO_WHATS + '*. No Pix é à vista, sem juros._';
+function _dicaParcelar() { return `\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`; }   // v121: ligada também com a InfinitePay desligada
 async function gerarPixBraspay(orderNsu, totalReais, novaRef) {
   const key = process.env.BRASPAY_API_KEY || '';
   const valor = Math.round((Number(totalReais) || 0) * 100);
@@ -6923,6 +6941,7 @@ exports.handler = async (event) => {
 
     // ── SORTEIO ── "quantos números eu tenho", "sorteio", "meus números" ──
     if (!emCheckout && state !== 'ADM' && !['AGUARDAR_COMPROVANTE','COLETA_DADOS','PROTOCOLO'].includes(state) && ehIntencaoSorteio(n)) {
+      if (!SORTEIO.ativa) { await saveSession(sid, { ...session, state:'MENU' }); return respond(MSG_SORTEIO_ENCERRADO); }   // v121
       if (ehCPFsolto(mensagem)) {
         const _cpfS = idCpf(mensagem);
         if (!_cpfS.cpf) { await saveSession(sid, { ...session, state:'SORTEIO' }); return respond(respostaIdIncompleto(mensagem, false)); }
@@ -6936,7 +6955,11 @@ exports.handler = async (event) => {
     }
 
     // ── SORTEIO: cliente já está no estado e mandou o CPF ──
-    if (state === 'SORTEIO') {
+    if (state === 'SORTEIO' && !SORTEIO.ativa) {   // v121: quem ficou no estado do sorteio antes do fim
+      await saveSession(sid, { ...session, state:'MENU' });
+      if (!['menu','voltar','0'].includes(n.trim())) return respond(MSG_SORTEIO_ENCERRADO);
+    }
+    if (state === 'SORTEIO' && SORTEIO.ativa) {
       const _cpfS2 = idCpf(mensagem);                       // v81: no SORTEIO o cliente está mandando o CPF — vale em qualquer formato
       if (!_cpfS2.cpf && _cpfS2.errado) return respond(respostaIdIncompleto(mensagem, false) + `\n\n_Digite *menu* para voltar._`);
       if (_cpfS2.cpf) {

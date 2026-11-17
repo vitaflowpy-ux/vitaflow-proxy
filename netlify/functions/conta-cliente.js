@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v12  ·  04/11/2026
+   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v13  ·  17/11/2026
+   v13 (Thiago, 16/11: o sorteio acabou na VitaFlow): 'minha_conta' não lê mais o vitaflow_sorteio — sorteio: null e kpis.numeros 0
+       (a página v15 não mostra mais a aba nem o quadro); e-mails de criar/confirmar a conta falam de cashback no lugar dos números da sorte.
    v12 (04/11 — cashback no lugar do sorteio, pedido do Thiago): 'minha_conta' devolve `cashback` { ativo, pct, dias, saldo, lotes,
        historico, validade_proxima } dos CPFs da conta (os mesmos do sorteio: CPFs dos pedidos pagos deste e-mail). Lê com a
        função irmã cashback.js (require), que tem o MESMO cálculo do Apps Script. Falha na leitura nunca derruba a conta (vem null).
@@ -886,7 +888,7 @@ async function montarConta(u, agora, soCompra) {
   var cadSaida = cad
     ? { salvo: true, telefone: cad.telefone.length >= 10 ? cad.telefone : telDigitos(telConta), enderecos: cad.enderecos, principal: cad.principal }
     : { salvo: false, telefone: telDigitos(telConta), enderecos: (endPed && endPed.completo) ? [normEndereco(endPed)].filter(Boolean) : [], principal: 0 };
-  var sorteio = await sorteioDoCliente(conta.cpfs, agora);
+  var sorteio = null;   // v13: sorteio encerrado (16/11/2026) — não lê mais vitaflow_sorteio
   var cupons = [];   /* v3: falha na leitura dos cupons nunca derruba a conta */
   try { cupons = await cuponsDoCliente(normais, agora); } catch (eCp) { console.error('[conta] cupons: ' + (eCp && eCp.message || eCp)); }
   var cashback = null;   /* v12 */
@@ -969,7 +971,7 @@ async function mandarLink(email, agora, quem) {
   if (quem === 'confirmar') {   /* v10: conta criada na compra */
     var parsC = [
       'Olá' + (nome ? ', ' + nome : '') + '!',
-      'Sua conta VitaFlow foi criada na hora da compra. Toque no botão abaixo para confirmar que este e-mail é seu e liberar na conta os seus pedidos, rastreios e números da sorte.',
+      'Sua conta VitaFlow foi criada na hora da compra. Toque no botão abaixo para confirmar que este e-mail é seu e liberar na conta os seus pedidos, rastreios e cashback.',
       'O link vale por 24 horas e só pode ser usado uma vez. Se não foi você, ignore este e-mail.',
       'Equipe VitaFlow'
     ];
@@ -984,7 +986,7 @@ async function mandarLink(email, agora, quem) {
     'Equipe VitaFlow'
   ] : [
     'Olá' + (nome ? ', ' + nome : '') + '!',
-    'Recebemos um pedido para criar a sua conta no site da VitaFlow com este e-mail. Toque no botão abaixo para criar a sua senha. Se você já comprou com a gente usando este e-mail, os seus pedidos, pacotes e números da sorte já aparecem na conta.',
+    'Recebemos um pedido para criar a sua conta no site da VitaFlow com este e-mail. Toque no botão abaixo para criar a sua senha. Se você já comprou com a gente usando este e-mail, os seus pedidos, pacotes e cashback já aparecem na conta.',
     'O link vale por 30 minutos e só pode ser usado uma vez. Se não foi você, ignore este e-mail.',
     'Equipe VitaFlow'
   ];

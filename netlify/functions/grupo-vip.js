@@ -1,6 +1,10 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v10  ·  31/10/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v11  ·  17/11/2026
+   v11 (17/11/2026, Thiago: "faça alteração em todos os sistemas que mencionam o sorteio… essa etapa
+       acabou na vitaflow"): quem pergunta de sorteio / número da sorte recebe o aviso de que o sorteio
+       foi ENCERRADO (e que no lugar dele tem cashback de 3%); sem ciclo/datas; "cotas" + atacado não
+       vira mais sorteio; apresentação do bot e texto do Telegram sem "sorteio".
    v10 (31/10/2026, Thiago: "permitir links dos participantes desde que sejam links de notícias ou
        artigos" — opção B): link de fora de participante PASSA (notícia, artigo, vídeo, qualquer site
        comum). O bot só continua APAGANDO (+ strike) link de VENDA: marketplace/loja conhecida, host com
@@ -344,7 +348,7 @@ var T = {
                     a peneira e grossa e pode disparar em cliente de bem.        */
   mod_apresenta:
 '👋 *Oi, gente! Prazer — eu sou o bot do Grupo VIP.*\n⠀\n' +
-'Talvez você nem tenha notado que eu estava aqui, mas eu fico de plantão 24h. Pergunta de frete, prazo, rastreio, atacado ou sorteio — joga aqui que eu respondo na hora.\n⠀\n' +
+'Talvez você nem tenha notado que eu estava aqui, mas eu fico de plantão 24h. Pergunta de frete, prazo, rastreio ou atacado — joga aqui que eu respondo na hora.\n⠀\n' +
 'E aí vem a parte chata do meu trabalho: *acabei de apagar um link que não é da VitaFlow.* Nada pessoal, juro! 😅\n⠀\n' +
 'É que este grupo existe pra falar dos *nossos produtos* e dos assuntos da *VitaFlow*. Se cada um começar a divulgar a sua loja, o seu serviço ou o seu link aqui dentro, em uma semana isso vira grupo de classificados — e quem entrou pra ver promoção, reposição e novidade não acha mais nada no meio da bagunça.\n⠀\n' +
 'Então fica combinado: *link de fora, não.* O resto é livre — dúvida, foto do pedido que chegou, elogio, reclamação, sugestão. É exatamente pra isso que o grupo existe. 💙',
@@ -479,7 +483,7 @@ var T = {
   telegram:
 '✈️ *NOSSO GRUPO NO TELEGRAM*\n⠀\n' +
 '👉 *t.me/referencias_vitaflow*\n⠀\n' +
-'Lá saem os mesmos avisos daqui: promoções, reposições, lançamentos e sorteio.\n⠀\n' +
+'Lá saem os mesmos avisos daqui: promoções, reposições e lançamentos.\n⠀\n' +
 '_Você não precisa sair do grupo do WhatsApp — dá pra ficar nos dois._',
 
   origem:
@@ -491,12 +495,9 @@ var T = {
 'Por isso uma mesma compra pode chegar em *até 3 envios separados*, em dias diferentes. Você recebe *um número para cada envio* e acompanha todos no mesmo lugar:\n🔎 *vitaflowoficial.com/pages/rastrear-pedido*\n⠀\n' +
 '✅ *E você paga UM frete só.* A logística dos envios fica por nossa conta.',
 
-  sorteio:
-'🎲 *SORTEIO QUINZENAL — NÚMERO DA SORTE*\n⠀\n' +
-'A cada *R$ 100* em produtos você ganha *1 número* e concorre a um *vale-compras de R$ 1.000*.\n⠀\n' +
-'🏭 Vale também pras compras de *atacado*.\n⠀\n' +
-'📅 Este ciclo fecha em *{FECHA}*\n🍀 Sorteio pela Loteria Federal em *{APURA}*\n⠀\n' +
-'👉 Veja os seus números: *vitaflowoficial.com/pages/sorteio*',
+  sorteio:   /* v11: o sorteio foi encerrado em 16/11/2026 — este texto só avisa */
+'🎲 *O Sorteio Quinzenal foi encerrado.*\n⠀\n' +
+'No lugar dele, toda compra na VitaFlow agora te devolve *3% de cashback* para usar na próxima compra. 😉',
 
   frete_sem_uf:
 '🚚 Me diz o *estado* que eu te passo o valor do frete!\n⠀\nExemplo: *!frete RJ* ou *quanto é o frete pra Bahia?*\n⠀\n' +
@@ -695,7 +696,7 @@ var RX = {
   transportadora: /\b(qual|quais|que) (a |as |e a |sao as )?(transportadora|transportadoras)\b|\bquem (faz a |que )?entrega\b|\b(envia|enviam|manda|mandam|vem|vai) (por|pelos?|pela) (correios|transportadora|sedex|pac)\b|\b(pac ou sedex|sedex ou pac|transportadora ou (pac|sedex|correios)|(pac|sedex|correios) ou transportadora)\b|\bmelhor (forma de |opcao de )?envio\b/,
   rastreio:     /\b(rastre\w*|codigo de rastreio|meu pedido|minha encomenda|meu pacote|nao chegou|nao recebi|ainda nao chegou|cade (o )?meu|status do (meu )?pedido|foi postado|em separacao|pedido feito|atualizar o pedido)\b/,
   origem:       /\b(de onde sai|de onde vem|onde fica o estoque|sai de onde|vem de onde|sao enviados de onde)\b/,
-  sorteio:      /\b(sorteio|numero da sorte|numeros da sorte|vale-compras|vale compras)\b/,
+  sorteio:      /\b(sorteio|numero da sorte|numeros da sorte)\b/,   // v11: só o pedido claro (sorteio encerrado)
   telegram:     /\btelegram\b/,
   comprar:      /\b(como (eu )?(compro|comprar|faco (o |um )?pedido|faco pra comprar)|onde (eu )?(compro|comprar)|vende direto|vendem direto|como faz pra comprar|qual (e )?o site|link do site|links oficiais)\b/,
   calculadora:  /\b(diluir|diluo|dilua|diluicao|diluiu|dilui em|reconstituir|reconstituo|quantas ui|quantos ui|quantas unidades|quantos tracinhos|quantas marcacoes|quanto de agua|quanta agua|quantos ml|ml de agua)\b/,
@@ -722,7 +723,7 @@ function rotear(texto, soComando) {
   /* ordem importa: o mais específico primeiro */
   if (RX.confianca.test(t) && (RX.seguroCompra.test(t) || !RX.seguro.test(t))) return 'confianca';
   if (RX.seguro.test(t)) return 'seguro';
-  if (RX.sorteio.test(t) || /\bcotas?\b/.test(t) && RX.atacado.test(t)) return 'sorteio';
+  if (RX.sorteio.test(t)) return 'sorteio';   // v11: "cotas" + atacado não é mais sorteio
   if (RX.rastreio.test(t) && /\b(meu|minha|um) pedido\b|\bpedido (feito|na conta)\b/.test(t)) return 'rastreio';
   if (RX.atacado.test(t)) return RX.pagamento.test(t) ? 'atacado_pagamento' : 'atacado';
   if (RX.fretegratis.test(t)) return 'frete_gratis';
@@ -1136,10 +1137,7 @@ exports.handler = async function (event) {
   if (chave === 'frete') {
     msg = await respostaFrete(texto);
   } else if (chave === 'sorteio') {
-    var c = cicloSorteio(new Date());
-    msg = T.sorteio
-      .replace('{FECHA}', ddmm(c.fim))
-      .replace('{APURA}', diaSemana(c.sort) + ', ' + ddmm(c.sort) + ' às 11h');
+    msg = T.sorteio;   // v11: aviso de encerrado (sem ciclo nem datas)
   } else {
     msg = T[chave];
   }
