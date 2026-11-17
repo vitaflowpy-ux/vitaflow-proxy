@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   estoque.js — ESTOQUE PRÓPRIO DO PAINEL DE DADOS (VitaFlow)  ·  v3  ·  15/10/2026
+   estoque.js — ESTOQUE PRÓPRIO DO PAINEL DE DADOS (VitaFlow)  ·  v4  ·  17/11/2026
+   v4 (17/11/2026): aceita também o login do PAINEL ÚNICO ({tokenPainel, apikey}, conferido no banco novo — igual ao cashback v3),
+      para o Compras de dentro do painel e a etiqueta avulsa nativa darem baixa. tokenAdmin (Firebase) e a chave continuam valendo.
    v3 (15/10/2026): aceita o login de admin (tokenAdmin) — a chave saiu das páginas. Ver autorizado().
    v2 (03/10/2026, pedido do Thiago): ação 'desfazer' — desfaz a baixa de UM pedido.
    Netlify Function no repo vitaflow-proxy → netlify/functions/estoque.js
@@ -35,6 +37,8 @@ var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/estoque';
 var FB_SECRET = process.env.FIREBASE_SECRET || '';
 var COMPRAS_KEY = process.env.COMPRAS_KEY || '';
+var crypto = require('crypto');
+var VFDB = 'https://api.vitaflowoficial.com';   /* v4: banco novo (login do painel único) */
 var MAX_ITENS = 2000, MAX_PEDIDOS = 500, MAX_QTD = 99999;
 var CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -63,8 +67,34 @@ async function conferirAdmin(token) {
     return (await r.json()) === true ? uid : null;
   } catch (e) { return null; }
 }
+/* v4: login do painel único = JWT do banco novo (role authenticated), conferido no próprio banco; guarda o "sim" por 10 min (= cashback v3) */
+var _painelVistos = {};
+async function conferirPainel(token, apikey) {
+  token = String(token || ''); apikey = String(apikey || '');
+  if (token.split('.').length !== 3 || apikey.split('.').length !== 3) return '';
+  var pl;
+  try { pl = JSON.parse(Buffer.from(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); } catch (e) { return ''; }
+  if (String(pl.role || '') !== 'authenticated' || !pl.sub) return '';
+  var exp = Number(pl.exp || 0) * 1000;
+  if (exp && exp <= Date.now()) return '';
+  var k = crypto.createHash('sha256').update(token).digest('hex');
+  var c = _painelVistos[k];
+  if (c && c.ate > Date.now()) return c.email;
+  try {
+    var ctrl = new AbortController(); var t = setTimeout(function () { ctrl.abort(); }, 8000);
+    var r = await fetch(VFDB + '/auth/v1/user', { headers: { apikey: apikey, Authorization: 'Bearer ' + token }, signal: ctrl.signal });
+    clearTimeout(t);
+    if (!r.ok) return '';
+    var u = await r.json();
+    var email = String(u && u.email || '');
+    if (!email) return '';
+    _painelVistos[k] = { email: email, ate: Math.min(Date.now() + 10 * 60 * 1000, exp || (Date.now() + 10 * 60 * 1000)) };
+    return email;
+  } catch (e) { return ''; }
+}
 async function autorizado(d) {
   if (COMPRAS_KEY && String(d.chave || '') === COMPRAS_KEY) return true;
+  if (d.tokenPainel) return !!(await conferirPainel(d.tokenPainel, d.apikey));
   return !!(await conferirAdmin(d.tokenAdmin));
 }
 
