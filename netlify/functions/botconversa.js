@@ -1,5 +1,14 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v124 (17/11/2026 — revisão do GPT-6 antes de ligar o socorro da Ronda):
+//   1) "quero atendente" vem ANTES de "não entendi" no vigia: quem pede pessoa nunca vira caso de socorro automático.
+//   2) TRANSFERÊNCIA PARA HUMANO GRAVADA: cliente pediu atendente, ou a Athena transferiu (transferir:true / "vou chamar um atendente")
+//      → vitaflow_sync/athena_humano/<dia>/<telefone>; a Ronda não responde esse cliente por 12 h.
+//   3) Telefone e identificador do BotConversa SEPARADOS no caso de socorro (antes: phone || subscriber_id no mesmo campo); a Ronda
+//      confere que os dois são do mesmo cliente antes de responder.
+//   4) ÚLTIMA MENSAGEM por cliente (vitaflow_sync/athena_ultima/<dia>/<telefone>): se a conversa andou enquanto a Ronda pensava, ela não envia.
+//   5) Casos de socorro por dia (vitaflow_sync/athena_socorro/<dia>/…) e limpeza diária (socorro/humano/última: 3 dias; registro: 14 dias).
+//   Nada muda no que a Athena responde. Resto = v123.
 // v123 (17/11/2026 — Thiago: "hoje tem aquele aviso que recebo quando a athena não sabe responder… nesse caso o robô tem que entrar em ação
 //   e ajudar a athena pelo botconversa, ele já tem autorização" · "quero o sistema acumulando as informações e aprendendo"):
 //   1) SOCORRO: quando o vigia dispara (resposta "não achei/não entendi", reclamação, mensagem repetida — não quando pede atendente), além do
@@ -8526,31 +8535,49 @@ const _vigiaUltSocorro = {};  // v123: fone -> ts do último socorro pedido à R
 // v123: registro da conversa (pergunta + resposta) para a Ronda estudar — vitaflow_sync/athena_log/<dia BRT>, guardado 14 dias
 let _logLimpoDia = '';
 function _diaBRT(ms) { return new Date((ms || Date.now()) - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+function _foneDe(b) { return String(b.phone || '').replace(/\D/g, ''); }                 // v124: telefone SÓ do campo phone
+function _subDe(b) { return String(b.subscriber_id || '').replace(/[^0-9A-Za-z_-]/g, '').slice(0, 40); }
+function _ehTransferencia(out, resp) {
+  return !!(out && out.transferir === true) || /vou (te )?transferir|vou chamar um atendente|chamei um atendente|pedir pra um atendente/i.test(String(resp || ''));
+}
 async function registrarConversa(event, res) {
   if (!res || res.statusCode !== 200) return;
   let b = {}, out = {};
   try { b = JSON.parse(event.body || '{}'); out = JSON.parse(res.body || '{}'); } catch (e) { return; }
   const quem = String(b.assistente || b.nome_assistente || 'Athena');
   if (!/^athena$/i.test(quem)) return;
-  const fone = String(b.phone || b.subscriber_id || '').replace(/\D/g, '');
+  const fone = _foneDe(b), sub = _subDe(b);
   const msg = String(b.mensagem || b.message || b.texto || '').trim();
   const resp = [out.resposta, out.resposta2, out.resposta3].filter(Boolean).join('\n');
-  if (!fone || !msg) return;
+  if ((!fone && !sub) || !msg) return;
   const agora = Date.now(), dia = _diaBRT(agora);
   try {
-    await fetchT(fbUrl('/vitaflow_sync/athena_log/' + dia + '.json'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ f: fone, m: msg.slice(0, 1500), r: resp.slice(0, 1500), ts: agora, q: quem }) }, 2500);
+    const tarefas = [fetchT(fbUrl('/vitaflow_sync/athena_log/' + dia + '.json'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ f: fone || ('sub:' + sub), s: sub, m: msg.slice(0, 1500), r: resp.slice(0, 1500), ts: agora, q: quem }) }, 2500)];
+    if (fone) {
+      tarefas.push(fetchT(fbUrl('/vitaflow_sync/athena_ultima/' + dia + '/' + fone + '.json'), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ts: agora }) }, 2500));
+      if (_ehTransferencia(out, resp) || vigiaMotivo(msg, resp) === 'cliente pediu atendente') {
+        tarefas.push(fetchT(fbUrl('/vitaflow_sync/athena_humano/' + dia + '/' + fone + '.json'), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ts: agora }) }, 2500));
+      }
+    }
+    await Promise.all(tarefas);
     if (_logLimpoDia !== dia) {
       _logLimpoDia = dia;
       for (const d of [15, 16]) await fetchT(fbUrl('/vitaflow_sync/athena_log/' + _diaBRT(agora - d * 86400000) + '.json'), { method: 'DELETE' }, 2500);
+      for (const d of [3, 4]) {
+        for (const no of ['athena_socorro', 'athena_humano', 'athena_ultima']) await fetchT(fbUrl('/vitaflow_sync/' + no + '/' + _diaBRT(agora - d * 86400000) + '.json'), { method: 'DELETE' }, 2500);
+      }
     }
   } catch (e) {}
 }
 function vigiaMotivo(msgCli, resp) {
   const m = String(msgCli || ''), r = String(resp || '');
-  const nm = m.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const nm = m.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // v124: pedir pessoa vem PRIMEIRO (antes, "quero atendente" + resposta "não entendi" virava caso de socorro automático)
+  if (/\b(atendente|atendimento humano|pessoa real|(com|pra|para|um|uma) (um |uma )?(humano|pessoa|alguem))\b/.test(nm)) return 'cliente pediu atendente';   // 'humano' sozinho não: hormônio do crescimento humano
   if (/N[ãa]o encontrei \*|N[ãa]o tenho \*|n[ãa]o reconhecid|isso n[ãa]o parece|Op[çc][ãa]o inv[áa]lida|N[ãa]o entendi/i.test(r)) return 'resposta de "não achei / não entendi"';
-  if (/\b(atendente|humano|falar com (alguem|uma pessoa|pessoa)|pessoa real)\b/.test(nm)) return 'cliente pediu atendente';
   if (/\b(porra|caralho|merda|lixo|absurdo|palhacada|ridiculo|golpe|nao responde|ninguem responde|nao chegou|reclamacao|veio errado)\b/.test(nm)) return 'cliente reclamando';
   return '';
 }
@@ -8559,30 +8586,33 @@ async function vigiaAthena(event, res) {
   let b = {}, out = {};
   try { b = JSON.parse(event.body || '{}'); } catch (e) { return; }
   try { out = JSON.parse(res.body || '{}'); } catch (e) { return; }
-  const fone = String(b.phone || b.subscriber_id || '').replace(/\D/g, '');
+  const fone = _foneDe(b), sub = _subDe(b);
+  const idv = fone || sub;                                   // chave só da memória do vigia (alerta/repetição)
   const msg = String(b.mensagem || b.message || b.texto || '').trim();
   const resp = [out.resposta, out.resposta2, out.resposta3].filter(Boolean).join('\n');
-  if (!fone || !msg || !resp) return;
+  if (!idv || !msg || !resp) return;
   const agora = Date.now();
   let motivo = vigiaMotivo(msg, resp);
-  const ant = _vigiaUltMsg[fone];
+  const ant = _vigiaUltMsg[idv];
   if (!motivo && ant && ant.m === msg.toLowerCase() && (agora - ant.ts) < 30 * 60 * 1000 && !/^\d{1,2}$/.test(msg)) motivo = 'cliente repetiu a mesma mensagem';
-  _vigiaUltMsg[fone] = { m: msg.toLowerCase(), ts: agora };
+  _vigiaUltMsg[idv] = { m: msg.toLowerCase(), ts: agora };
   if (!motivo) return;
   const quem0 = String(b.assistente || b.nome_assistente || 'Athena');
   let socorro = false;
-  if (/^athena$/i.test(quem0) && motivo !== 'cliente pediu atendente' && !(_vigiaUltSocorro[fone] && (agora - _vigiaUltSocorro[fone]) < 2 * 60 * 1000)) {
+  // v124: socorro só com TELEFONE (o identificador vai separado), nunca quando pede pessoa ou quando a Athena acabou de transferir
+  if (/^athena$/i.test(quem0) && fone && motivo !== 'cliente pediu atendente' && !_ehTransferencia(out, resp) &&
+      !(_vigiaUltSocorro[fone] && (agora - _vigiaUltSocorro[fone]) < 2 * 60 * 1000)) {
     _vigiaUltSocorro[fone] = agora;      // v123: a Ronda do servidor responde por ela (no máximo 1 caso a cada 2 min por cliente)
     try {
-      const r = await fetchT(fbUrl('/vitaflow_sync/athena_socorro.json'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fone: fone, sub: String(b.subscriber_id || ''), msg: msg.slice(0, 1500), resp: resp.slice(0, 1500), motivo: motivo, ts: agora }) }, 2500);
+      const r = await fetchT(fbUrl('/vitaflow_sync/athena_socorro/' + _diaBRT(agora) + '.json'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fone: fone, sub: sub, msg: msg.slice(0, 1500), resp: resp.slice(0, 1500), motivo: motivo, ts: agora }) }, 2500);
       socorro = !!(r && r.ok);
     } catch (e) {}
   }
-  if (_vigiaUltAlerta[fone] && (agora - _vigiaUltAlerta[fone]) < VIGIA.intervaloMs) return;
-  _vigiaUltAlerta[fone] = agora;
+  if (_vigiaUltAlerta[idv] && (agora - _vigiaUltAlerta[idv]) < VIGIA.intervaloMs) return;
+  _vigiaUltAlerta[idv] = agora;
   const quem = String(b.assistente || b.nome_assistente || 'Athena');
-  await enviarTelegram('👁️ VIGIA ' + quem.toUpperCase() + ' — ' + motivo + '\n📱 ' + fone + '\n💬 Cliente: ' + msg.slice(0, 200) + '\n🤖 Resposta: ' + resp.replace(/\s+/g, ' ').slice(0, 250) +
+  await enviarTelegram('👁️ VIGIA ' + quem.toUpperCase() + ' — ' + motivo + '\n📱 ' + (fone || ('sub ' + sub)) + '\n💬 Cliente: ' + msg.slice(0, 200) + '\n🤖 Resposta: ' + resp.replace(/\s+/g, ' ').slice(0, 250) +
     (socorro ? '\n🛟 A Ronda vai tentar responder por ela.' : ''));
 }
 const _handlerSemVigia = exports.handler;
@@ -8592,5 +8622,5 @@ exports.handler = async (event) => {
   try { await Promise.race([Promise.all([vigiaAthena(event, res), registrarConversa(event, res)]), new Promise(function (ok) { setTimeout(ok, Math.max(200, Math.min(1500, msRestantes()))); })]); } catch (e) {}   // v123: + registro
   return res;
 };
-exports._vigia = { vigiaMotivo };
+exports._vigia = { vigiaMotivo, _ehTransferencia, registrarConversa, vigiaAthena };
 
