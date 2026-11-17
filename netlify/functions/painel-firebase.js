@@ -42,7 +42,9 @@ var GRAVAR = ['vitaflow_compras', 'vitaflow_compras_snapshots', 'vitaflow_compra
   'vitaflow_cache_daniel_fretes_feitos', 'vitaflow_atacado/tabela_fornecedor',
   'vitaflow_sync/preferencia_fornecedor', 'vitaflow_sync/pjc_lotes', 'vitaflow_sync/fornecedores_pausa', 'vitaflow_sync/fornecedores_custom', 'vitaflow_sync/lucro_pedidos',
   /* v2 (17/11/2026): aba 🏭 Estoque PJC e ⚖️ CDE × PJC do Publicar Atacado dentro do painel (v40) — os mesmos nós que o conversor_publicar v-atk19 grava */
-  'vitaflow_sync/atacado_pjc_ajustes', 'vitaflow_sync/vinculos_pjc', 'vitaflow_sync/atacado_cde_pjc', 'vitaflow_sync/precos_override'];
+  'vitaflow_sync/atacado_pjc_ajustes', 'vitaflow_sync/vinculos_pjc', 'vitaflow_sync/atacado_cde_pjc', 'vitaflow_sync/precos_override',
+  /* v3 (17/11/2026): chave do 🗃️ Aviso de estoque do Compras v76 (painel v41) — vale em todos os aparelhos */
+  'vitaflow_sync/compras_config'];
 var QUERY_OK = ['shallow', 'orderBy', 'startAt', 'endAt', 'equalTo', 'limitToFirst', 'limitToLast', 'print'];
 
 var CORS = {

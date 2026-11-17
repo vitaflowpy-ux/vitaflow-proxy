@@ -9,12 +9,30 @@ const headers = {
   'Content-Type': 'application/json',
 };
 
+// 17/11/2026: a Shopify devolve 429 (limite de chamadas) quando várias telas pedem o catálogo ao
+// mesmo tempo — antes isso derrubava a função inteira (500 "Shopify HTTP 429") e a tela ficava sem
+// produtos. Agora espera o tempo que a Shopify pede (Retry-After) e tenta de novo, até 5 vezes.
+function _esperar(ms) { return new Promise(function(ok){ setTimeout(ok, ms); }); }
 async function shopifyGet(url) {
-  const res = await fetch(url, {
-    headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN, 'Content-Type': 'application/json' }
-  });
-  if (!res.ok) throw new Error(`Shopify HTTP ${res.status}`);
-  return { data: await res.json(), link: res.headers.get('Link')||'' };
+  for (let tentativa = 0; ; tentativa++) {
+    const res = await fetch(url, {
+      headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN, 'Content-Type': 'application/json' }
+    });
+    if ((res.status === 429 || res.status >= 500) && tentativa < 5) {
+      const ra = parseFloat(res.headers.get('Retry-After') || '');
+      await _esperar(Math.min(8000, (ra > 0 ? ra * 1000 : 1000 * (tentativa + 1))) + Math.floor(Math.random() * 300));
+      continue;
+    }
+    if (!res.ok) throw new Error(`Shopify HTTP ${res.status}`);
+    return { data: await res.json(), link: res.headers.get('Link')||'' };
+  }
+}
+// roda no máximo N de cada vez (antes eram todas as coleções juntas = rajada de chamadas → 429)
+async function emLotes(lista, n, fn) {
+  let i = 0;
+  async function trabalhador() { while (i < lista.length) { const item = lista[i++]; await fn(item); } }
+  const ts = []; for (let k = 0; k < Math.min(n, lista.length); k++) ts.push(trabalhador());
+  await Promise.all(ts);
 }
 
 function mapCategory(title) {
@@ -107,7 +125,7 @@ exports.handler = async function(event) {
       };
     });
 
-    await Promise.all(catCols.map(async col => {
+    await emLotes(catCols, 4, async col => {
       const cat = mapCategory(col.title);
       try {
         const prods = await getAllPages(`${base}/products.json?collection_id=${col.id}&limit=250&fields=id`);
@@ -123,7 +141,7 @@ exports.handler = async function(event) {
           }
         });
       } catch(e) {}
-    }));
+    });
 
     const result = Object.values(allProducts)
       .map(p => ({ id: p.id, name: p.name, price: p.price, category: p.category, categories: p.categories, status: p.status, available: p.available }))
