@@ -1,3 +1,6 @@
+// v124.2 (17/11/2026 — Athena 2.0 fase 1, script 86): a resposta da IA que sai pelo BotConversa também vai para o registro da Athena
+//   (vitaflow_sync/athena_log, q = "Athena-IA"); antes o registro guardava só o "👀" e a resposta de verdade se perdia. Só a Athena
+//   (o registro do robô também é só dela). Nada muda no que a IA responde. Resto = v123.
 // v123 (17/11/2026): lê as respostas aprovadas pelo dono (vitaflow_sync/athena_aprendizado, Ronda) e junta ao prompt. Resto = v122.
 // netlify/functions/athena-ia-background.js
 // v122 (17/11/2026 — revisão das conversas pelo GPT-6, aprovada pelo Thiago "faça tudo e publique"): SYSTEM ganha 🩺 SAÚDE INDIVIDUAL (não garante
@@ -662,6 +665,19 @@ async function enviarBotConversa(phone, message, apiKey){
   }
 }
 
+// v124.2: o que esta chamada está respondendo (a função atende uma chamada por vez) — para o registro da Athena.
+let _logCtx = null;
+function _diaBRT(ms){ return new Date((ms || Date.now()) - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+async function _logIA(phone, msg, texto){
+  try {
+    const f = String(phone || '').replace(/\D/g, '');
+    if (!f || !String(texto || '').trim()) return;
+    const agora = Date.now();
+    await fetch(fbUrl('/vitaflow_sync/athena_log/' + _diaBRT(agora) + '.json'), Object.assign({ method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ f: f, s: '', m: String(msg || '').slice(0, 1500), r: String(texto).slice(0, 1500), ts: agora, q: 'Athena-IA' }) }, _optTimeout(2500)));
+  } catch (e) {}
+}
+
 // Envia texto possivelmente grande em VÁRIAS mensagens (o WhatsApp recusa mensagem única enorme).
 async function enviarLongo(phone, texto, apiKey){
   const partes = partirMensagem(texto, 3800);
@@ -669,6 +685,7 @@ async function enviarLongo(phone, texto, apiKey){
   for (const p of partes){
     if (p && p.trim()) ultimo = await enviarBotConversa(phone, p, apiKey);
   }
+  if (ultimo && ultimo.ok && _logCtx && _logCtx.assistente === 'Athena') await _logIA(phone, _logCtx.mensagem, texto);   // v124.2
   return ultimo;
 }
 
@@ -1402,6 +1419,7 @@ exports.handler = async (event) => {
     const phone = body.phone;
     const assistente = (body.assistente || 'Athena');   // "Athena" ou "Stella"
     const apiKey = keyDoAssistente(assistente);          // key da companhia certa
+    _logCtx = { assistente: assistente, mensagem: (body.tipo || '') === 'protocolo' ? '[protocolo pós-venda]' : (body.imagemUrl ? '[imagem]' : String(body.mensagem || '')) };   // v124.2
     // Modo PROTOCOLO pós-venda: gera e envia o protocolo completo dos produtos comprados.
     if ((body.tipo || '') === 'protocolo') return await gerarProtocoloPosVenda(body);
     // Modo VISÃO: cliente enviou imagem (o botconversa.js manda a URL em body.imagemUrl).

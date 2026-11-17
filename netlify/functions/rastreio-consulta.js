@@ -1,6 +1,9 @@
 'use strict';
 /* =============================================================================
-   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v8  ·  27/10/2026
+   rastreio-consulta.js — CONSULTA DE RASTREIO SEM APPS SCRIPT (VitaFlow)  ·  v9  ·  17/11/2026
+   v9 (17/11, achado na Athena 2.0): a busca por NÚMERO aceitava qualquer pedaço com 2 letras ou mais ("S0", "S001") e devolvia TODOS os
+     pedidos que tinham aquele pedaço — com nome, produtos e cidade — para quem chamasse a função (ela é pública). Agora o pedaço precisa
+     ter pelo menos 8 caracteres sem traço (ex.: "1711-S001" = número do dia + sequência). Número completo, CPF e e-mail = igual à v8.
    v8 (27/10, Thiago: atacado PJC com prefixo P): pedido P (VF-DDMM-P001) também é ATACADO → origem PY e prazo de atacado,
      igual ao W. Mesma regra no GAS. Resto = v7.
    Netlify Function no repo vitaflow-proxy → netlify/functions/rastreio-consulta.js
@@ -527,7 +530,7 @@ exports.handler = async function (event) {
       if (ehEmail) { bate = !!emailCel && emailCel === termoEmail; }
       else if (ehCpf) { bate = !!cpfCel && cpfCel === termoDig; }
       else if (pedidoCel && termoPed) {
-        bate = (pedidoCel === termoPed) || (pedidoCel.indexOf(termoPed) !== -1 && termoPed.length >= 2);
+        bate = (pedidoCel === termoPed) || (termoPed.length >= 8 && pedidoCel.indexOf(termoPed) !== -1);   /* v9: pedaço curto ("S001") não lista pedidos de outros */
         porNumero = true;
       }
       /* v4: pacote (linha D) do pedido procurado — PEDIDO_ORIGINAL igual ao número digitado */

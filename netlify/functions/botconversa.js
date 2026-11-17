@@ -1,5 +1,13 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v124.2 (17/11/2026 — Athena 2.0 fase 1, script 86; Thiago: "sem teto de gastos, quero ela perfeita! pode começar"):
+//   1) A RESPOSTA DA IA também vai para o registro (vitaflow_sync/athena_log, q = "Athena-IA"): antes ficava só a do robô — quando a IA
+//      respondia (envio direto ou "👀" + resposta depois), o registro guardava "" ou "Deixa eu ver isso pra você… 👀" e a resposta de
+//      verdade se perdia. O simulador e a sombra da Athena 2.0 comparam com o que o cliente realmente recebeu.
+//   2) QUADRO DE PROMOÇÕES de hoje (o mesmo texto que a IA da Athena recebe) gravado a cada 10 min em vitaflow_sync/athena_contexto:
+//      a Athena 2.0 usa exatamente as mesmas promoções (uma regra, um lugar).
+//   Nada muda no que a Athena responde. Resto = v124.1.
+
 // v124 (17/11/2026 — revisão do GPT-6 antes de ligar o socorro da Ronda):
 //   1) "quero atendente" vem ANTES de "não entendi" no vigia: quem pede pessoa nunca vira caso de socorro automático.
 //   2) TRANSFERÊNCIA PARA HUMANO GRAVADA: cliente pediu atendente, ou a Athena transferiu (transferir:true / "vou chamar um atendente")
@@ -573,6 +581,7 @@ async function responderComIA(sid, mensagem, contexto, respond){
       let _partesA = textoA.length > 3800 ? partirMensagem(textoA, 3800).slice(0, 3) : [textoA];
       _partesA = _partesA.map(function (x) { return normalizarMarkdownWhats(x); }).filter(Boolean);
       const _okA = await enviarWhatsAppDireto(sid, _partesA);
+      if (_okA) await _logIA(sid, mensagem, textoA);   // v124.2: a resposta que saiu direto entra no registro (o respond('') ficaria vazio)
       return _okA ? respond('') : respond(textoA);
     }
     console.log('[IA-SYNC] Athena: sem resposta completa a tempo — segue pelo 👀 (IA assíncrona).');
@@ -8538,7 +8547,18 @@ const _vigiaUltMsg = {};      // fone -> { m, ts } última mensagem do cliente
 const _vigiaUltSocorro = {};  // v123: fone -> ts do último socorro pedido à Ronda
 // v123: registro da conversa (pergunta + resposta) para a Ronda estudar — vitaflow_sync/athena_log/<dia BRT>, guardado 14 dias
 let _logLimpoDia = '';
+let _ctxGravadoEm = 0;   // v124.2: última gravação do quadro de promoções (vitaflow_sync/athena_contexto)
 function _diaBRT(ms) { return new Date((ms || Date.now()) - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+// v124.2: resposta da IA no registro (q = "Athena-IA"). Mesmo formato do registro do robô; a Ronda e a Athena 2.0 juntam as duas pela mensagem.
+async function _logIA(fone, msg, texto) {
+  try {
+    const f = String(fone || '').replace(/\D/g, '');
+    if (!f || !String(texto || '').trim()) return;
+    const agora = Date.now();
+    await fetchT(fbUrl('/vitaflow_sync/athena_log/' + _diaBRT(agora) + '.json'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ f: f, s: '', m: String(msg || '').slice(0, 1500), r: String(texto).slice(0, 1500), ts: agora, q: 'Athena-IA' }) }, 1500);
+  } catch (e) {}
+}
 function _foneDe(b) { return String(b.phone || '').replace(/\D/g, ''); }                 // v124: telefone SÓ do campo phone
 function _subDe(b) { return String(b.subscriber_id || '').replace(/[^0-9A-Za-z_-]/g, '').slice(0, 40); }
 function _ehTransferencia(out, resp) {
@@ -8563,6 +8583,15 @@ async function registrarConversa(event, res) {
         tarefas.push(fetchT(fbUrl('/vitaflow_sync/athena_humano/' + dia + '/' + fone + '.json'), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ts: agora }) }, 2500));
       }
+    }
+    if (agora - _ctxGravadoEm > 10 * 60 * 1000) {          // v124.2: o quadro de promoções de hoje, para a Athena 2.0 usar o mesmo
+      _ctxGravadoEm = agora;
+      try {
+        tarefas.push(Promise.resolve(contextoPromo()).then(function (t) {
+          return fetchT(fbUrl('/vitaflow_sync/athena_contexto.json'), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ texto: String(t || '').slice(0, 8000), ts: Date.now() }) }, 2500);
+        }).catch(function () {}));
+      } catch (e) {}
     }
     await Promise.all(tarefas);
     if (_logLimpoDia !== dia) {
@@ -8641,5 +8670,5 @@ exports.handler = async (event) => {
                             new Promise(function (ok) { setTimeout(ok, Math.max(200, Math.min(1500, msRestantes()))); })]); } catch (e) {}   // v123: + registro
   return res;
 };
-exports._vigia = { vigiaMotivo, _ehTransferencia, registrarConversa, vigiaAthena, _marcarChegada };
+exports._vigia = { vigiaMotivo, _ehTransferencia, registrarConversa, vigiaAthena, _marcarChegada, _logIA };
 
