@@ -1,5 +1,17 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v122 (17/11/2026 — auditoria das conversas pelo GPT-6 + Thiago: "faça tudo e publique"):
+//   1) 🔕 PARAR DE RECEBER: "pare de me mandar mensagem", "não quero receber mais", "me tira da lista", "descadastrar", "stop"…
+//      grava session.optout + vitaflow_optout/<fone> (com a frase), avisa no Telegram e confirma ao cliente; com optout o convite de
+//      retomada ({athena_abandono}) sai VAZIO. Atendimento continua: se ele chamar, a Athena responde normal. "quero voltar a receber"
+//      tira a marca. (Antes: ia pra IA e o cliente continuava recebendo lembrete comercial — caso de 23/10.)
+//   2) 💳 PERGUNTA SOBRE O CARTÃO ("quando volta o cartão?", "aceita cartão?", "o cartão voltou?") responde direto: InfinitePay
+//      desligada → como pagar no cartão pelo WhatsApp + dica de simular; ligada → no link escolhe as parcelas. Antes ia pra IA e
+//      abria catálogo de outra coisa (14 e 16/11). Leitura ainda não feita na instância = desligada (simulação e link).
+//   3) CANCELAR por frase ("quero cancelar o pedido de atacado", "quero desistir da compra") não abre mais o atacado nem busca produto:
+//      sem pedido em aberto, explica e manda o contato da logística para pedido já pago; dentro do atacado vale como "sair".
+//   Resto = v121.
+
 // v121 (17/11/2026 — Thiago: "faça alteração em todos os sistemas que mencionam o sorteio… essa etapa acabou na vitaflow" +
 //   aviso de cartão só pelo WhatsApp (print do carrinho para +44 7537 155723) + "deixe essa opção [simular parcelamento] ativada
 //   na athena também"): SORTEIO.ativa = false + SORTEIO.encerrado = true — some do menu, promo, IA e pós-venda; quem pergunta de
@@ -378,6 +390,7 @@ let SINAL_LISTA = false;
 // pessoa levaria dois lembretes diferentes pela mesma compra.
 let SINAL_CARRINHO = false;   // tem item no carrinho (VAREJO)
 let SINAL_ATACADO  = false;   // tem item no carrinho de ATACADO (carrinhoAtk)
+let SINAL_OPTOUT   = false;   // v122: cliente pediu para não receber mensagens comerciais → sem convite de retomada
 let SINAL_FECHANDO = false;   // já tem link/pedido em aberto, ou está informando dados
 async function dispararIA(phone, mensagem, contexto, imagemUrl){
   try {
@@ -815,7 +828,7 @@ function _rBRL(v){ return (Math.round(v*100)/100).toFixed(2).replace('.',','); }
 function simularParcelas(valor){
   const V = Number(valor) || 0;
   if (V <= 0) return null;
-  const _off = !!_pixModoCache.inf;   // v121: InfinitePay desligada → simula igual e o cartão é pelo WhatsApp (sem link)
+  const _off = !_pixModoCache.v || !!_pixModoCache.inf;   // v122: leitura ainda não feita = desligada · v121: InfinitePay desligada → simula igual e o cartão é pelo WhatsApp (sem link)
   let txt = `💳 *SIMULAÇÃO DE PAGAMENTO — R$ ${_rBRL(V)}*\n\n✅ *À vista no Pix:* R$ ${_rBRL(V)} _(sem juros!)_\n\n*No cartão* (parcelado, ${_off ? 'com juros' : 'taxas da InfinitePay'}):\n`;
   for (let nP = 1; nP <= 12; nP++){ txt += `${nP}x de R$ ${_rBRL(V * FATOR_PARCELAS[nP] / nP)}\n`; }
   txt += _off ? `\n${MSG_CARTAO_WHATS}` : `\n_No próprio *link de pagamento* você escolhe em quantas vezes quer pagar (até 12x)._`;
@@ -2121,6 +2134,7 @@ function _navegacaoAtacado(t) {
   var s = norm(t || '').replace(/[!?.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
   // v109: "Encerrar" virava "Não encontrei Encerrar na tabela" e "Fim" achava KING FINAPLIX (25/10).
   if (/^(encerrar|encerra|fim|sair|sai|cancelar|cancela|parar|desistir|desisto|chega|acabou|terminar|tchau)( o atacado| atacado| pedido| o pedido)?$/.test(s)) return 'sair';
+  if (ehFraseCancelamento(s)) return 'sair';   // v122: "quero cancelar o pedido de atacado"
   if (/^(o |no |por |pelo )?(atacado|mayoreo)( por favor| pf| pfv)?$/.test(s)) return 'apresentacao';
   if (/^(quero|queria|gostaria de|pode ser|vamos de|vou de) (comprar |fazer |ver |o |no |por |pelo )*(atacado|mayoreo)( por favor| pf| pfv)?$/.test(s)) return 'apresentacao';
   if (/^(comprar|compra|compras) (no |por |pelo |de )?atacado$/.test(s)) return 'apresentacao';
@@ -3875,6 +3889,8 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
     if (base > 0) return respond(simularParcelas(base));
     return respond(`💳 Claro! Você pode pagar *à vista no Pix (sem juros)* ou parcelar em *até 12x no cartão* (taxas da InfinitePay). 😊\n\nMe diz o *valor* que você quer simular (ex.: 1000), ou monte seu carrinho que eu já mostro as parcelas do total.`);
   }
+  // v122: pergunta SOBRE o cartão ("quando volta o cartão?") → resposta direta, sem IA nem catálogo
+  if (ehPerguntaCartao(nMsg)) return await responderCartao(session, respond);
   // Pediu TABELA DE FRACIONAMENTO → mesmo fluxo travado por CPF (só do que já comprou).
   // No fim (PROTO_TIPO) a Athena oferece protocolo+tabela OU só a tabela.
   // v109: a lista de compras guardada (protoProdutos) vale 3 h — depois o cliente pode ter comprado mais (Erick 26/10 via só o NAD+).
@@ -4467,6 +4483,7 @@ function _marcarSinais(sess) {
   if (Array.isArray(sess.carrinho) && sess.carrinho.length) SINAL_CARRINHO = true;
   if (Array.isArray(sess.carrinhoAtk) && sess.carrinhoAtk.length) SINAL_ATACADO = true;
   if (sess.link || sess.orderNsu || sess.state === 'AGUARDAR_COMPROVANTE' || sess.state === 'COLETA_DADOS') SINAL_FECHANDO = true;
+  if (sess.optout) SINAL_OPTOUT = true;   // v122
 }
 async function saveSession(sid, sess) {
   _marcarSinais(sess);   // ver SINAL_LISTA / SINAL_CARRINHO / SINAL_FECHANDO no topo
@@ -5262,7 +5279,7 @@ async function _lerModoPag() {
 async function pixModo() { return (await _lerModoPag()).v; }
 async function infDesligada() { return (await _lerModoPag()).inf; }
 // Link da InfinitePay só "vive" com ela ligada (usa a última leitura; quem chama garante a leitura antes).
-function _linkVivo(l) { return _pixModoCache.inf ? '' : (l || ''); }
+function _linkVivo(l) { return (!_pixModoCache.v || _pixModoCache.inf) ? '' : (l || ''); }   // v122: sem leitura = desligada
 // v121 (16/11/2026): cartão de crédito só pelo WhatsApp — o cliente manda o print do carrinho/pedido para o número abaixo.
 const CARTAO_WHATS = '+44 7537 155723';
 const MSG_CARTAO_WHATS = `💳 *Quer pagar no cartão de crédito?* As compras no cartão são feitas pelo nosso WhatsApp: tire um *print do seu carrinho* (ou deste pedido) e envie para *${CARTAO_WHATS}* — nossa equipe finaliza com você por lá. 😉`;
@@ -6259,6 +6276,49 @@ async function tratarRastreio(session, sid, mensagem, n, respond) {
     return respond(`Encontrei *${pedidos.length} pedidos* no seu cadastro:\n\n${blocos}` + RASTREIO_RODAPE);
 }
 
+// ═══ v122 (17/11/2026) — PARAR DE RECEBER · PERGUNTA DO CARTÃO · CANCELAR POR FRASE ═══════════════════════════
+// Frase CLARA de parar mensagens comerciais (não é "parar" sozinho — isso é navegação).
+function ehPedidoOptout(n) {
+  const t = ' ' + String(n || '').replace(/[!?.,;:]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+  if (/ (voltar a receber|quero receber de novo|pode voltar a mandar|quero voltar a receber) /.test(t)) return false;
+  return /^ (stop|descadastrar|descadastra|descadastre|me descadastra|me descadastre) $/.test(t)
+    || / (para|pare|parem|parar) de (me )?(mandar|enviar|mandarem|enviarem) /.test(t)
+    || / nao (quero|desejo) (mais )?receber /.test(t)
+    || / nao (me )?(mande|mandem|envie|enviem) mais /.test(t)
+    || / (me )?(tira|tire|tirem|remove|remova|removam|exclui|exclua) (da|dessa|desta|de) (lista|listas|campanha|transmissao|grupo de envio) /.test(t)
+    || / sair da (lista|transmissao|campanha) /.test(t)
+    || / (chega|parem|para|pare) de (mensage|propaganda|promoc|spam)/.test(t);
+}
+function ehPedidoVoltarReceber(n) { return / (voltar a receber|quero receber de novo|pode voltar a mandar|quero voltar a receber) /.test(' ' + String(n || '') + ' '); }
+async function gravarOptout(sid, mensagem, ligar) {
+  try {
+    const k = String(sid).replace(/[^a-zA-Z0-9]/g, '_');
+    await fetch(fbUrl(`/vitaflow_optout/${k}.json`), ligar
+      ? { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ em: Date.now(), msg: String(mensagem || '').slice(0, 120) }) }
+      : { method:'DELETE' });
+  } catch (e) {}
+}
+const MSG_OPTOUT_OK = '🔕 Pronto! Não vou mais te mandar *mensagens de promoção nem lembretes*.\n\nSe precisar de algo do seu *pedido* ou quiser *comprar*, é só me chamar aqui que eu te atendo normalmente. 🧡';
+const MSG_OPTOUT_VOLTA = '🔔 Pronto! Você volta a receber nossas *novidades e promoções*. 🧡\n\nDigite *menu* para ver as opções.';
+// Pergunta SOBRE o cartão de crédito (não é simulação de parcelas — essa é ehPedidoParcelamento).
+function ehPerguntaCartao(n) {
+  const t = ' ' + String(n || '').replace(/[!?.,;:]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+  if (!/ cart(ao|oes|ão|ões) /.test(t)) return false;
+  if (/ cart(ao|ão) (de visita|postal|presente|fidelidade) /.test(t)) return false;
+  return / (credito|crédito|debito|débito|aceita|aceitam|aceitar|volta|voltou|voltar|vai voltar|funciona|funcionando|pagar|pago|pagamento|tem|quando|da pra|dá pra|posso|consigo|passa|passam|indisponivel|indisponível|ainda) /.test(t);
+}
+async function responderCartao(session, respond) {
+  if (await infDesligada()) return respond(MSG_CARTAO_WHATS + `\n\n✅ No *Pix* é à vista e *sem juros*.\n💡 Quer ver as parcelas? Digite *parcelar* que eu simulo em até 12x.\n\nDigite *menu* para voltar.`);
+  return respond(`💳 Sim! Você pode pagar no *cartão de crédito em até 12x* — no próprio *link de pagamento* você escolhe as parcelas. No *Pix* é à vista e *sem juros*. 😊\n\n💡 Digite *parcelar* que eu simulo pra você.`);
+}
+// "quero cancelar o pedido (de atacado)", "quero desistir da compra" — frase de cancelamento (o "cancelar" sozinho já tem tratamento).
+function ehFraseCancelamento(n) {
+  const s = String(n || '').replace(/[!?.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  return /^(eu )?(quero|queria|vou|preciso|gostaria de|pode|posso|como|da pra|dá pra)? ?(cancelar|desistir)( d[oa]| o| a| meu| minha| esse| essa| este| esta)?( (pedido|compra|carrinho|encomenda))?( (de|do|no) atacado)?( (por favor|pf|pfv))?$/.test(s)
+    && !/^(cancelar|desistir)$/.test(s);
+}
+const MSG_CANCELAR_SEM_PEDIDO = `Tranquilo! 😊 Aqui comigo *não tem nenhum pedido em aberto* pra cancelar.\n\n📦 Se for um pedido que você *já pagou*, quem resolve é a nossa logística: 👉 wa.me/447537155718\n\nDigite *menu* para voltar.`;
+
 exports.handler = async (event) => {
   const headers = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json' };
   if (event.httpMethod === 'OPTIONS') return { statusCode:200, headers, body:'' };
@@ -6294,7 +6354,9 @@ exports.handler = async (event) => {
     //     em aberto quem cobra é o GAS (lembrete 3h, 20h e template de 24h) — mandar os
     //     dois seria cobrar a mesma pessoa duas vezes pela mesma compra.
     let _abandono = '';
-    if (nomeAssistente !== 'Athena') {
+    if (SINAL_OPTOUT) {
+      _abandono = '';                               // v122: pediu para parar de receber — nada de convite de retomada
+    } else if (nomeAssistente !== 'Athena') {
       _abandono = SINAL_LISTA ? _fmt(MSG_STELLA_ABANDONO) : '';
     } else if (!SINAL_FECHANDO && SINAL_ATACADO) {
       _abandono = _fmt(MSG_ATACADO_ABANDONO);      // carrinho de atacado vence: gancho é escassez
@@ -6312,6 +6374,7 @@ exports.handler = async (event) => {
     SINAL_CARRINHO = false;
     SINAL_ATACADO  = false;
     SINAL_FECHANDO = false;
+    SINAL_OPTOUT   = false;   // v122
     const body = JSON.parse(event.body || '{}');
     nomeAssistente = ((body.assistente || body.nome_assistente || 'Athena') + '').trim() || 'Athena';
     ASSISTENTE_ATUAL = nomeAssistente; // deixa a IA assíncrona responder pela companhia certa
@@ -6332,6 +6395,20 @@ exports.handler = async (event) => {
     if (body.type || body.mediaUrl || body.media_url || body.url || body.fileUrl) console.log('MIDIA DETECTADA:', JSON.stringify(body));
 
     const session = await getSession(sid);
+
+    // v122: 🔕 parar de receber / 🔔 voltar a receber — antes de qualquer outra coisa (não mexe no carrinho nem no pedido)
+    if (mensagem && ehPedidoOptout(n)) {
+      await gravarOptout(sid, mensagem, true);
+      await saveSession(sid, { ...session, optout: { em: Date.now() } });
+      try { await enviarTelegram(`🔕 Cliente pediu para NÃO receber mais mensagens (${nomeAssistente}): ${sid}\n“${String(mensagem).slice(0, 120)}”\nMarcado em vitaflow_optout — não incluir em disparos.`); } catch (e) {}
+      SINAL_OPTOUT = true;
+      return respond(MSG_OPTOUT_OK);
+    }
+    if (mensagem && session.optout && ehPedidoVoltarReceber(n)) {
+      await gravarOptout(sid, mensagem, false);
+      const _sOpt = { ...session }; delete _sOpt.optout; await saveSession(sid, _sOpt); SINAL_OPTOUT = false;
+      return respond(MSG_OPTOUT_VOLTA);
+    }
 
     // ── FLAG DURÁVEL PÓS-PAGAMENTO (independe do estado da sessão) ─────────────
     // Se a InfinitePay confirmou o pagamento, o GAS gravou vitaflow_aguardando_dados/{fone}.
@@ -7052,6 +7129,10 @@ exports.handler = async (event) => {
       return respond(`Sim! 😊 No *varejo* você leva *qualquer quantidade* — são os mesmos produtos do nosso site (*vitaflowoficial.com*), com os *${DESCONTO_ATHENA_PCT}% de desconto* e as promoções ativas. _(O *atacado* é o outro caminho: pedido mínimo de R$ 3.000, com frete grátis.)_\n\n` + buildMenuPrincipal());
     }
 
+    if (ehFraseCancelamento(n) && !emCheckout) {   // v122: "quero cancelar o pedido de atacado" abria o atacado
+      await saveSession(sid, { ...session, state:'MENU' });
+      return respond(MSG_CANCELAR_SEM_PEDIDO);
+    }
     const ehAtacado = ["atacado","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
     if (ehAtacado && !emCheckout) {
       return await entrarAtacado(session, sid, respond);

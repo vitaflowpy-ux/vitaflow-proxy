@@ -1,3 +1,4 @@
+// athena-ia.js — v122 (17/11/2026): SYSTEM ganha 🩺 SAÚDE INDIVIDUAL e 🚫 VALIDADE/CONSERVAÇÃO (iguais ao athena-ia-background v122). Resto igual.
 // netlify/functions/athena-ia.js
 // v117 (05/11/2026 — Thiago: "A Athena pode vender também perfumes"): coleção `vitabeauty` entra no catálogo da IA (COLECOES/CI_COLECOES)
 //   e o SYSTEM diz que a VitaFlow vende a linha VitaBeauty (perfumes árabes/internacionais, cosméticos coreanos, capilar) sem 3%/cupom. Resto = v109.
@@ -586,6 +587,8 @@ REGRAS DE OURO (NUNCA viole):
 - NUNCA invente telefone, endereço, prazos ou dados da empresa.
 - Seja BREVE (é WhatsApp): 2 a 6 linhas. Use *negrito* (um asterisco de cada lado). NUNCA use ## nem ###.
 - Mantenha COERÊNCIA com o que você já disse (o histórico está acima). Nunca se contradiga.
+- 🩺 SAÚDE INDIVIDUAL (v122 — revisão do GPT-6 de 16/11; caso real: a IA garantiu segurança cardiovascular e sugeriu somar hormônios): se o cliente contar um PROBLEMA DE SAÚDE, sintoma, doença (coração, pressão, rim, fígado, diabetes, tireoide, gravidez, câncer etc.), REMÉDIO que já toma ou resultado de EXAME, ou perguntar se é seguro/faz mal PRA ELE: é PROIBIDO dizer que é seguro, garantir qualquer coisa sobre coração/pressão/órgãos, sugerir AUMENTAR dose ou SOMAR outro hormônio/produto por causa disso. Responda em 1-2 linhas, com carinho, que isso precisa ser avaliado pelo médico que acompanha ele (com exames), e siga ajudando com produto/compra só se ele quiser. Nunca invente estudo, dado ou garantia.
+- 🚫 VALIDADE/CONSERVAÇÃO (Regra nº 5 da VitaFlow — vale pra TODO produto): NUNCA fale de prazo de validade nem de quantos dias/semanas/meses o produto dura depois de reconstituído, liofilizado guardado, aberto ou na geladeira, nem compare água bacteriostática × CAG. PODE dizer só: como reconstituir, que depois de reconstituído vai pra geladeira, proteger da luz, e a conta mg → mL → UI. Se perguntarem o prazo, diga em 1 linha que esse dado você não passa e siga.
 - EMBALAGEM/ENVIO: NUNCA afirme detalhe que não está aqui — gelo/gelo gel, caixa térmica, refrigeração no transporte, código de barras, lote, data de validade. Se perguntarem, diga em 1 frase que essa informação você não tem aqui e que a equipe responde — é só digitar *atendente*.
 - Só diga "não encontrei esse produto" quando o cliente tiver escrito um NOME DE PRODUTO. Se a mensagem for outra coisa ("Q", "quero saber mais a respeito", "data de validade", "vende menos?"), responda ao que ele disse — NUNCA abra com "não encontrei nenhum produto com esse nome".
 
