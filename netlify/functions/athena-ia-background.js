@@ -1,3 +1,5 @@
+// v125 (18/11/2026 — caso real 17/11): TRAVA DA BLACK FRIDAY na saída (travarBlackInventada): enquanto o quadro de promoções disser que ela
+//   AINDA NÃO FOI ANUNCIADA, resposta com data/benefício inventado é trocada pelo texto fixo. Prompt e resto = v124.2.
 // v124.2 (17/11/2026 — Athena 2.0 fase 1, script 86): a resposta da IA que sai pelo BotConversa também vai para o registro da Athena
 //   (vitaflow_sync/athena_log, q = "Athena-IA"); antes o registro guardava só o "👀" e a resposta de verdade se perdia. Só a Athena
 //   (o registro do robô também é só dela). Nada muda no que a IA responde. Resto = v123.
@@ -939,6 +941,22 @@ FARMÁCIA E ESTÉTICA: Clembuterol (beta-2 agonista, termogênico — NÃO é ho
 // orientação fixa. "Frete grátis acima de R$ 1.000" (promoção) NÃO é barrado: só PAC/SEDEX/Transportadora
 // com valor, "frete fica/sai/custa R$", ou pedido de CEP/estado.
 const MSG_FRETE_SISTEMA = 'Pra te passar o frete certinho, é só digitar *frete* que eu calculo na hora pelo seu estado 👇';
+// v125 (18/11/2026 — caso real 17/11: a IA inventou a Black Friday "de 29/11 a 2/12" e depois "a equipe só libera perto da data"):
+// TRAVA DA BLACK FRIDAY. Enquanto o quadro de promoções do botconversa.js disser "AINDA NÃO ANUNCIOU a Black Friday", resposta que fala de
+// Black Friday / Black Week / Cyber Monday com data, "descontos especiais", "produtos selecionados", "a equipe libera/divulga", "está chegando",
+// ou sem dizer que ainda não foi anunciada, é TROCADA pelo texto fixo. Quando a Black Friday for anunciada, a frase sai do quadro e a trava desliga.
+const MSG_BLACK_NAO_ANUNCIADA = 'A *Black Friday* da VitaFlow ainda não foi anunciada: datas e descontos ainda não foram divulgados. 📣 O anúncio sai primeiro no nosso *Grupo VIP* e no site — fica de olho por lá!\n\nEnquanto isso, posso te ajudar a montar um pedido com o que vale hoje? 😊';
+function travarBlackInventada(txt, promoContext){
+  if (!txt) return txt;
+  if (!/AINDA NÃO ANUNCIOU a Black Friday/.test(String(promoContext || ''))) return txt;
+  const t = String(txt);
+  if (!/black\s*-?\s*friday|blackfriday|black\s*week|cyber\s*monday|semana\s+black|\ba\s+black\b(?!\s*pen)/i.test(t)) return t;
+  const seguro = /ainda\s+n[aã]o\s+(foi\s+)?(anunciad|divulgad)/i.test(t);
+  const inventou = /\b\d{1,2}\s*(?:\/\s*(?:1[0-2]|0?[1-9])\b|de\s+(?:novembro|dezembro|janeiro))|produtos?\s+selecionad|descontos?\s+especia|equipe[^.\n]{0,40}(libera|divulga|passa)|mais\s+perto\s+da\s+data|est[aá]\s+chegando/i.test(t);
+  if (seguro && !inventou) return t;
+  console.log('[IA] TRAVA BLACK FRIDAY: resposta trocada ->', t.slice(0, 160));
+  return MSG_BLACK_NAO_ANUNCIADA;
+}
 function travarFreteInventado(txt){
   if (!txt) return txt;
   const t = String(txt);
@@ -1473,7 +1491,7 @@ exports.handler = async (event) => {
       console.log('[IA] reply da Claude OK (', reply.length, 'chars ):', reply.slice(0, 120));
     }
 
-    reply = travarFreteInventado(reply);   // v78: nunca frete inventado nem checkout simulado
+    reply = travarBlackInventada(travarFreteInventado(reply), promoContext);   // v78: nunca frete inventado · v125: nem Black Friday inventada
     // Limpa qualquer marcador do texto (o cliente NUNCA vê o marcador).
     const replyLimpo = reply.replace(/\[\[\s*(LISTA|STACK|COMPRAR)\s*:[^\]]*\]\]/gi, '').trim();
 

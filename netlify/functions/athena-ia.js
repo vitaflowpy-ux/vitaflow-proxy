@@ -1,3 +1,5 @@
+// v125 (18/11/2026 — caso real 17/11): TRAVA DA BLACK FRIDAY na saída (travarBlackInventada): enquanto o quadro de promoções disser que ela
+//   AINDA NÃO FOI ANUNCIADA, resposta com data/benefício inventado é trocada pelo texto fixo. Prompt e resto = v124.2.
 // v123 (17/11/2026): lê as respostas aprovadas pelo dono (vitaflow_sync/athena_aprendizado, Ronda) e junta ao prompt (igual à athena-ia-background v123). Resto = v122.
 // athena-ia.js — v122 (17/11/2026): SYSTEM ganha 🩺 SAÚDE INDIVIDUAL e 🚫 VALIDADE/CONSERVAÇÃO (iguais ao athena-ia-background v122). Resto igual.
 // netlify/functions/athena-ia.js
@@ -814,6 +816,22 @@ async function pensarComClaude(sys, mensagem, historico, prazoMs){
 // orientação fixa. "Frete grátis acima de R$ 1.000" (promoção) NÃO é barrado: só PAC/SEDEX/Transportadora
 // com valor, "frete fica/sai/custa R$", ou pedido de CEP/estado.
 const MSG_FRETE_SISTEMA = 'Pra te passar o frete certinho, é só digitar *frete* que eu calculo na hora pelo seu estado 👇';
+// v125 (18/11/2026 — caso real 17/11: a IA inventou a Black Friday "de 29/11 a 2/12" e depois "a equipe só libera perto da data"):
+// TRAVA DA BLACK FRIDAY. Enquanto o quadro de promoções do botconversa.js disser "AINDA NÃO ANUNCIOU a Black Friday", resposta que fala de
+// Black Friday / Black Week / Cyber Monday com data, "descontos especiais", "produtos selecionados", "a equipe libera/divulga", "está chegando",
+// ou sem dizer que ainda não foi anunciada, é TROCADA pelo texto fixo. Quando a Black Friday for anunciada, a frase sai do quadro e a trava desliga.
+const MSG_BLACK_NAO_ANUNCIADA = 'A *Black Friday* da VitaFlow ainda não foi anunciada: datas e descontos ainda não foram divulgados. 📣 O anúncio sai primeiro no nosso *Grupo VIP* e no site — fica de olho por lá!\n\nEnquanto isso, posso te ajudar a montar um pedido com o que vale hoje? 😊';
+function travarBlackInventada(txt, promoContext){
+  if (!txt) return txt;
+  if (!/AINDA NÃO ANUNCIOU a Black Friday/.test(String(promoContext || ''))) return txt;
+  const t = String(txt);
+  if (!/black\s*-?\s*friday|blackfriday|black\s*week|cyber\s*monday|semana\s+black|\ba\s+black\b(?!\s*pen)/i.test(t)) return t;
+  const seguro = /ainda\s+n[aã]o\s+(foi\s+)?(anunciad|divulgad)/i.test(t);
+  const inventou = /\b\d{1,2}\s*(?:\/\s*(?:1[0-2]|0?[1-9])\b|de\s+(?:novembro|dezembro|janeiro))|produtos?\s+selecionad|descontos?\s+especia|equipe[^.\n]{0,40}(libera|divulga|passa)|mais\s+perto\s+da\s+data|est[aá]\s+chegando/i.test(t);
+  if (seguro && !inventou) return t;
+  console.log('[IA] TRAVA BLACK FRIDAY: resposta trocada ->', t.slice(0, 160));
+  return MSG_BLACK_NAO_ANUNCIADA;
+}
 function travarFreteInventado(txt){
   if (!txt) return txt;
   const t = String(txt);
@@ -1225,7 +1243,7 @@ exports.handler = async (event) => {
 
     const restante = PRAZO_MS - (Date.now() - t0);
     const pensado = await pensarComClaude(sys, mensagem, historico, restante - 450);   // v90: folga para gravar o histórico e devolver
-    const reply = travarFreteInventado(pensado.texto);   // v78: nunca frete inventado nem checkout simulado
+    const reply = travarBlackInventada(travarFreteInventado(pensado.texto), promoContext);   // v78: nunca frete inventado · v125: nem Black Friday inventada
     if (!reply) { console.log('[IA-SYNC] sem resposta do modelo dentro do prazo.'); return vazio; }
 
     // O cliente NUNCA vê o marcador.

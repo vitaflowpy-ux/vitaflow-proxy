@@ -1,5 +1,18 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v125 (18/11/2026 — caso real de 17/11, ~23h: a IA inventou a Black Friday "de 29/11 a 2/12" com "descontos especiais em produtos
+//   selecionados", depois disse que "a equipe só libera os valores perto da data", respondeu "nesse mês não rolou cupom" (teve o DUPLO11
+//   em 11/11) e listou os 3% + o frete grátis como se somassem. Thiago: Black Friday = "ainda não anunciada"; listar as promoções do mês;
+//   "faça tudo e publique"):
+//   1) BLACK_FRIDAY = { anunciada:false }: o quadro de promoções da IA diz que ela AINDA NÃO FOI ANUNCIADA e o texto que a IA deve usar;
+//      a athena-ia(-background) v125 tem a TRAVA de saída (resposta com data/benefício inventado é trocada pelo texto fixo).
+//      Quando o Thiago anunciar: anunciada:true + a promoção cadastrada como as outras (quadro, opção 8, menu).
+//   2) PROMOS_HISTORICO: promoções JÁ ENCERRADAS; o quadro leva as que terminaram NESTE MÊS (horário de Brasília), para a IA responder
+//      "teve cupom/promoção esse mês?" sem dizer que "não teve". Promoção nova: acrescentar aqui quando ela for criada.
+//   3) Ao listar benefícios: 3% e frete grátis são UM OU OUTRO (regra de 27/09), só o cashback vale junto.
+//   4) Cashback que a compra gera: nunca "liberado na hora" — liberado depois da confirmação do pagamento, para as PRÓXIMAS compras.
+//   O quadro vai também para a Athena 2.0 (vitaflow_sync/athena_contexto). Fluxos de menu, carrinho e fechamento: nada muda. Resto = v124.2.
+
 // v124.2 (17/11/2026 — Athena 2.0 fase 1, script 86; Thiago: "sem teto de gastos, quero ela perfeita! pode começar"):
 //   1) A RESPOSTA DA IA também vai para o registro (vitaflow_sync/athena_log, q = "Athena-IA"): antes ficava só a do robô — quando a IA
 //      respondia (envio direto ou "👀" + resposta depois), o registro guardava "" ou "Deixa eu ver isso pra você… 👀" e a resposta de
@@ -1446,6 +1459,8 @@ async function contextoPromo(){
   if (ATACADO_PAUSADO) linhas.push('ATACADO PAUSADO (desde 26/10/2026): o atacado está TEMPORARIAMENTE PAUSADO — estamos aguardando a estabilização do câmbio para atualizar as tabelas de atacado. NÃO ofereça, NÃO monte e NÃO passe preço de atacado; se perguntarem, diga exatamente isso e ofereça o varejo (digite menu). Não dê previsão de volta.');   // v105
   linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
   linhas.push(`DEFINIÇÃO — "VAREJO": são os produtos NORMAIS da VitaFlow (os MESMOS que você oferece fora do modo atacado, iguais aos do site vitaflowoficial.com), vendidos em QUALQUER quantidade. Quando o cliente falar "varejo", é disso que ele fala — é o padrão de compra, NÃO é o atacado (que tem mínimo de R$ 3.000 e frete grátis). Os 3% e as promoções valem no varejo.`);
+  try { linhas.push(contextoHistoricoMes()); } catch (e) {}   // v125 (no começo: a Athena 2.0 lê só os primeiros 6.000 caracteres do quadro)
+  if (!BLACK_FRIDAY.anunciada) linhas.push('BLACK FRIDAY (também Black Week e Cyber Monday): a VitaFlow AINDA NÃO ANUNCIOU a Black Friday — NÃO existe data, porcentagem, lista de produtos nem regra definida. Se o cliente perguntar (vai ter? quando? de quanto? quais produtos?), responda só: "' + MSG_BLACK_NAO_ANUNCIADA_IA + '" É PROIBIDO dizer qualquer data, dizer que "vai ter descontos especiais" ou "produtos selecionados", dizer que "a equipe libera perto da data" ou prometer qualquer benefício para a Black Friday. Depois disso, pode oferecer o que vale HOJE.');   // v125 (caso real 17/11)
   if (semanaClienteAtiva()) {
     const _fx = PROMO_SEMANA_CLIENTE.faixas.map(f => `acima de R$ ${f.min} ganha R$ ${f.desc} OFF`).join('; ');
     linhas.push(`PROMOÇÃO ATIVA — SEMANA DO CLIENTE VitaFlow (13 a 20/09): desconto AUTOMÁTICO por faixa do valor em PRODUTOS (varejo): ${_fx}. É automático no fechamento — o cliente NÃO digita cupom. NÃO acumula com cupom nem com os ${DESCONTO_ATHENA_PCT}% (vale sempre o MAIOR). NÃO vale no atacado. SEMPRE que o cliente perguntar de promoção/desconto, ou estiver perto de uma faixa, DIVULGUE e incentive completar o valor pra subir de faixa.`);
@@ -1461,7 +1476,7 @@ async function contextoPromo(){
     }
   } catch (e) {}
   if (freteGratisAutoAtivo()) {
-    linhas.push('FRETE GRÁTIS AUTOMÁTICO (varejo, sem data de fim): em pedidos A PARTIR DE R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' em produtos, o FRETE é GRÁTIS pra todo o Brasil, em qualquer opção de envio (PAC, SEDEX ou Transportadora). É AUTOMÁTICO no fechamento (aqui na Athena e no site) — o cliente NÃO precisa digitar cupom nenhum; NÃO peça nem mencione o cupom FRETEZERO. NÃO ACUMULA com cupom, promoção nem com o benefício de ' + DESCONTO_ATHENA_PCT + '% da Athena: quando o pedido tem outro benefício, o resumo do pedido mostra as DUAS opções (frete grátis OU o desconto) com o valor de cada uma e o CLIENTE escolhe a que preferir. NUNCA diga que o cliente ganha o frete grátis E o desconto juntos. Única exceção: VALE-COMPRAS (é como dinheiro) funciona junto com o frete grátis. Abaixo de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' o frete é cobrado normalmente. No ATACADO a regra é outra (lá o frete já é grátis). REVENDEDORES: o benefício NÃO é concedido a revendedores, que já têm desconto nos produtos (compram pelo portal de revendedores). SEMPRE que o cliente perguntar de frete grátis, promoção ou desconto, explique isso; se o pedido estiver perto de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ', avise quanto falta pro frete sair de graça. SEGURO: o seguro grátis contra apreensão e extravio CONTINUA VALENDO com o frete grátis, desde que o envio seja por TRANSPORTADORA; PAC e SEDEX (Correios) NÃO têm seguro, com ou sem frete grátis — o frete grátis não muda nada nisso. Como a Transportadora também sai grátis nesses pedidos, recomende a Transportadora.');
+    linhas.push('FRETE GRÁTIS AUTOMÁTICO (varejo, sem data de fim): em pedidos A PARTIR DE R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' em produtos, o FRETE é GRÁTIS pra todo o Brasil, em qualquer opção de envio (PAC, SEDEX ou Transportadora). É AUTOMÁTICO no fechamento (aqui na Athena e no site) — o cliente NÃO precisa digitar cupom nenhum; NÃO peça nem mencione o cupom FRETEZERO. NÃO ACUMULA com cupom, promoção nem com o benefício de ' + DESCONTO_ATHENA_PCT + '% da Athena: quando o pedido tem outro benefício, o resumo do pedido mostra as DUAS opções (frete grátis OU o desconto) com o valor de cada uma e o CLIENTE escolhe a que preferir. NUNCA diga que o cliente ganha o frete grátis E o desconto juntos. Única exceção: VALE-COMPRAS (é como dinheiro) funciona junto com o frete grátis. Abaixo de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' o frete é cobrado normalmente. No ATACADO a regra é outra (lá o frete já é grátis). REVENDEDORES: o benefício NÃO é concedido a revendedores, que já têm desconto nos produtos (compram pelo portal de revendedores). SEMPRE que o cliente perguntar de frete grátis, promoção ou desconto, explique isso; se o pedido estiver perto de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ', avise quanto falta pro frete sair de graça. AO LISTAR OS BENEFÍCIOS ("o que tá valendo", "o que você já garante", "benefícios permanentes"), NUNCA ponha os ' + DESCONTO_ATHENA_PCT + '% e o frete grátis lado a lado como se somassem: escreva que é UM OU OUTRO (no resumo do pedido aparecem os dois e o cliente escolhe o melhor). O único que vale JUNTO é o cashback. SEGURO: o seguro grátis contra apreensão e extravio CONTINUA VALENDO com o frete grátis, desde que o envio seja por TRANSPORTADORA; PAC e SEDEX (Correios) NÃO têm seguro, com ou sem frete grátis — o frete grátis não muda nada nisso. Como a Transportadora também sai grátis nesses pedidos, recomende a Transportadora.');
   }
   if (promoDuplo11Ativa()) {   // v118
     linhas.push('PROMOÇÃO ATUAL — DUPLO11 (11.11, SÓ HOJE, quarta 11/11, das 00h até 23h59): 15% OFF em TODO o VAREJO VitaFlow com o cupom DUPLO11, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo VitaFlow, qualquer quantidade. Termina HOJE às 23h59 — faltam ' + tempoRestanteTxt(PROMO_DUPLO11.fim) + '. SEMPRE diga que é só hoje e quanto tempo falta quando falar dela, e incentive a fechar agora (o estoque pode acabar antes). A linha VITABEAUTY (perfumes e cosméticos) e os produtos do ATACADO NÃO participam (no atacado o benefício continua sendo o frete grátis). NÃO acumula com outros cupons nem promoções (nem com os 3%: vale o maior). Hoje o FRETE GRÁTIS AUTOMÁTICO (pedidos a partir de R$ 1.000) está PAUSADO — não ofereça frete grátis no varejo hoje e não fale quando ele volta. Produtos com preço especial já têm o desconto no preço (o cupom não pega neles). O CASHBACK de 3% continua valendo normalmente (pode usar o saldo junto com o cupom e a compra gera cashback sobre o valor pago). Não vale para revendedores. NÃO fale da HALLOWEEN15 (já encerrou).');
@@ -1502,7 +1517,7 @@ async function contextoPromo(){
   }
   if (!SORTEIO.ativa && SORTEIO.encerrado) linhas.push('O SORTEIO QUINZENAL (números da sorte, vale-compras de R$ 1.000) FOI ENCERRADO em 16/11/2026 e NÃO EXISTE MAIS. Se o cliente perguntar, diga que foi encerrado e que no lugar dele existe o cashback. NUNCA ofereça número da sorte nem fale de ciclo ou data de sorteio.');   // v121
   if (CASHBACK.ativa) {
-    linhas.push(`CASHBACK ATIVO (programa permanente): ${CASHBACK.pct}% do valor PAGO em produtos (frete não entra; cupom/desconto já descontados) volta como saldo, liberado logo depois da confirmação do pagamento e válido por ${CASHBACK.dias} dias. Pedido cancelado/estornado perde o cashback. Revendedor não participa; atacado participa. O CLIENTE ESCOLHE usar ou acumular: no resumo do pedido aqui na Athena aparece o saldo (achado pelo WhatsApp das compras) e ele digita *usar cashback* para descontar (ou *acumular* para guardar); no carrinho do site aparece um quadro "Usar meu cashback" (mesmo CPF e e-mail das compras) que ele marca se quiser. Cada crédito vence 45 dias depois da compra que o gerou. Vale JUNTO com cupons e promoções (é a exceção ao "não acumula"). Abate só dos produtos, nunca do frete. O cliente vê o saldo digitando *cashback* aqui ou na Minha Conta do site (vitaflowoficial.com/pages/minha-conta). Lembrete por e-mail 5 dias antes de vencer. NÃO invente valores de saldo.`);
+    linhas.push(`CASHBACK ATIVO (programa permanente): ${CASHBACK.pct}% do valor PAGO em produtos (frete não entra; cupom/desconto já descontados) volta como saldo, liberado logo depois da confirmação do pagamento e válido por ${CASHBACK.dias} dias. Pedido cancelado/estornado perde o cashback. Revendedor não participa; atacado participa. O CLIENTE ESCOLHE usar ou acumular: no resumo do pedido aqui na Athena aparece o saldo (achado pelo WhatsApp das compras) e ele digita *usar cashback* para descontar (ou *acumular* para guardar); no carrinho do site aparece um quadro "Usar meu cashback" (mesmo CPF e e-mail das compras) que ele marca se quiser. Cada crédito vence 45 dias depois da compra que o gerou. Vale JUNTO com cupons e promoções (é a exceção ao "não acumula"). Abate só dos produtos, nunca do frete. O cliente vê o saldo digitando *cashback* aqui ou na Minha Conta do site (vitaflowoficial.com/pages/minha-conta). Lembrete por e-mail 5 dias antes de vencer. NÃO invente valores de saldo. Sobre o cashback que a compra GERA: NUNCA diga que é "liberado na hora" nem que os ${CASHBACK.pct}% saem nesta compra — diga que é liberado depois da confirmação do pagamento, para usar nas PRÓXIMAS compras.`);
   }
   if (linhas.length === 1) linhas.push('Não há promoção relâmpago nem lançamento com desconto especial ativos no momento (só o benefício padrão acima). NÃO invente promoções.');
   return linhas.join('\n');
@@ -1630,6 +1645,34 @@ _Alguns produtos já saem com preço especial — nesses o cupom não é necess�
 // ── v118: DUPLO11 — 11.11: 15% OFF em todo o varejo VitaFlow com o cupom DUPLO11, SÓ em qua 11/11 (00h a 23h59) ──
 // Liga e desliga sozinha pela data. VitaBeauty e atacado NÃO participam. Frete grátis automático pausado no dia (FRETE_GRATIS_AUTO.pausas).
 const PROMO_DUPLO11 = { ativa: true, cupom: 'DUPLO11', pct: 15, ini: '2026-11-11T00:00:00-03:00', fim: '2026-11-11T23:59:59-03:00' };
+// ── v125: BLACK FRIDAY — enquanto anunciada:false, a IA só pode dizer que ela ainda não foi anunciada (sem data, sem %, sem promessa). ──
+// O texto do quadro tem a frase "AINDA NÃO ANUNCIOU a Black Friday": é ela que liga a trava de saída da athena-ia(-background).
+const BLACK_FRIDAY = { anunciada: false };
+const MSG_BLACK_NAO_ANUNCIADA_IA = 'A Black Friday da VitaFlow ainda não foi anunciada: datas e descontos ainda não foram divulgados. O anúncio sai primeiro no nosso Grupo VIP e no site.';
+// ── v125: promoções JÁ ENCERRADAS (a IA conta as que terminaram NESTE MÊS). Promoção nova: acrescentar aqui quando for criada. ──
+const PROMOS_HISTORICO = [
+  { nome: 'DEZ10 (10.10 + feriadão)', como: 'cupom DEZ10 — 15% OFF em todo o varejo', quando: '10/10 a 12/10', fim: '2026-10-12T23:59:59-03:00' },
+  { nome: 'PROF15 (Dia do Professor)', como: 'cupom PROF15 — 15% OFF em todo o varejo', quando: '15/10', fim: '2026-10-15T23:59:59-03:00' },
+  { nome: 'HALLOWEEN15 (Halloween)', como: 'cupom HALLOWEEN15 — 15% OFF em todo o varejo', quando: '31/10', fim: '2026-10-31T23:59:59-03:00' },
+  { nome: 'Promoção relâmpago da caneta Mounjaro KwikPen', como: 'preço especial no produto, sem cupom', quando: 'encerrada em 10/11', fim: '2026-11-10T23:59:59-03:00' },
+  { nome: 'DUPLO11 (11.11)', como: 'cupom DUPLO11 — 15% OFF em todo o varejo (VitaBeauty e atacado fora)', quando: '11/11', fim: PROMO_DUPLO11.fim },
+  { nome: 'Promoção relâmpago COMBO 5 caixas de TG 10mg por R$ 1.999', como: 'preço especial no combo, sem cupom', quando: 'encerrada em 14/11', fim: '2026-11-14T23:59:59-03:00' },
+];
+function mesBR(ms){
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit' }).format(new Date(ms)).slice(0, 7); }
+  catch (e) { return new Date(ms - 3 * 3600000).toISOString().slice(0, 7); }
+}
+function promosEncerradasNoMes(agora){
+  agora = agora || Date.now();
+  const mes = mesBR(agora);
+  return PROMOS_HISTORICO.filter(p => { const f = new Date(p.fim).getTime(); return f < agora && mesBR(f) === mes; });
+}
+function contextoHistoricoMes(){
+  const lst = promosEncerradasNoMes();
+  const fim = ' Se o cliente perguntar se teve cupom/promoção NESTE MÊS, responda com ESTA informação (as da lista já aconteceram e JÁ ENCERRARAM — diga isso) e depois diga o que vale HOJE. Sobre OUTROS meses ou promoção que não está aqui, diga que não tem essa informação (nunca afirme que "não teve").';
+  if (!lst.length) return 'PROMOÇÕES QUE JÁ ACONTECERAM NESTE MÊS: nenhuma encerrada até agora (pode dizer que neste mês ainda não teve cupom/promoção além do que vale hoje).' + fim;
+  return 'PROMOÇÕES QUE JÁ ACONTECERAM NESTE MÊS (TODAS ENCERRADAS — NÃO valem mais, não ofereça): ' + lst.map(p => p.nome + ' (' + p.quando + '): ' + p.como).join(' · ') + '.' + fim;
+}
 function promoDuplo11Ativa(){ return PROMO_DUPLO11.ativa && Date.now() >= new Date(PROMO_DUPLO11.ini).getTime() && Date.now() <= new Date(PROMO_DUPLO11.fim).getTime(); }
 function duplo11Termina(){ return `*SÓ HOJE* — termina *hoje às 23h59* (faltam ${tempoRestanteTxt(PROMO_DUPLO11.fim)})`; }
 function msgPromoDuplo11(){
