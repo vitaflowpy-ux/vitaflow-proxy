@@ -969,7 +969,8 @@ function travarBlackInventada(txt, promoContext){
 // Netlify: ATHENA_CONFERENTE = 'ativo' (padrão) | 'desligado' (emergência: volta ao comportamento da v125).
 // Teste real (18/11, 10 casos: 3 respostas reais inventadas da conversa de 17/11, preço errado, embalagem inventada e 5 respostas certas): 10/10.
 const CONF_MODO = String(process.env.ATHENA_CONFERENTE || 'ativo').toLowerCase();
-const CONF_MODELOS = String(process.env.ATHENA_CONFERENTE_MODELOS || 'claude-haiku-5-5,claude-sonnet-5-5')   // Haiku: 1–5 s no teste real (10/10 certos); Sonnet de reserva.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+// Haiku: 1–5 s no teste real (10/10 certos); Sonnet de reserva
+const CONF_MODELOS = String(process.env.ATHENA_CONFERENTE_MODELOS || 'claude-haiku-5-5,claude-sonnet-5-5').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
 const MSG_SEM_CONFIRMACAO = 'Sobre isso eu não tenho uma informação confirmada aqui pra te passar com segurança. 🙏\n\nSe quiser, digite *atendente* que eu te passo para uma pessoa da equipe.';
 const T_VEREDITO = { name: 'veredito', description: 'Entrega a conferência da resposta.', input_schema: { type: 'object', properties: {
   afirmacoes: { type: 'array', items: { type: 'object', properties: {
