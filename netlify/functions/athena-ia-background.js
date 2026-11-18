@@ -967,8 +967,9 @@ function travarBlackInventada(txt, promoContext){
 // falhou de novo → resposta segura (MSG_SEM_CONFIRMACAO). Conferente sem resposta (tempo, erro, JSON ruim) → o rascunho NÃO sai.
 // Cada conferência vai para vitaflow_sync/athena_conferente/<dia> — é daí que a autocorreção diária (Ronda, servidor) tira os erros.
 // Netlify: ATHENA_CONFERENTE = 'ativo' (padrão) | 'desligado' (emergência: volta ao comportamento da v125).
-const CONF_MODO = String(process.env.ATHENA_CONFERENTE || 'desligado').toLowerCase();   // 1º deploy: só o teste; o 2º liga ('ativo')
-const CONF_MODELOS = String(process.env.ATHENA_CONFERENTE_MODELOS || 'claude-sonnet-5-5,claude-haiku-5-5').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+// Teste real (18/11, 10 casos: 3 respostas reais inventadas da conversa de 17/11, preço errado, embalagem inventada e 5 respostas certas): 10/10.
+const CONF_MODO = String(process.env.ATHENA_CONFERENTE || 'ativo').toLowerCase();
+const CONF_MODELOS = String(process.env.ATHENA_CONFERENTE_MODELOS || 'claude-haiku-5-5,claude-sonnet-5-5')   // Haiku: 1–5 s no teste real (10/10 certos); Sonnet de reserva.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
 const MSG_SEM_CONFIRMACAO = 'Sobre isso eu não tenho uma informação confirmada aqui pra te passar com segurança. 🙏\n\nSe quiser, digite *atendente* que eu te passo para uma pessoa da equipe.';
 const T_VEREDITO = { name: 'veredito', description: 'Entrega a conferência da resposta.', input_schema: { type: 'object', properties: {
   afirmacoes: { type: 'array', items: { type: 'object', properties: {
@@ -1023,7 +1024,8 @@ async function chamarConferente(sys, mensagem, rascunho, prazoMs) {
     try {
       const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: modelo, max_tokens: 2500, system: sysComCache(sys), tools: [T_VEREDITO], tool_choice: { type: 'tool', name: 'veredito' },
+        body: JSON.stringify({ model: modelo, max_tokens: 2500, system: sysComCache(sys), tools: [T_VEREDITO],
+          tool_choice: /sonnet|opus/i.test(modelo) ? { type: 'auto' } : { type: 'tool', name: 'veredito' },   // Sonnet/Opus 5.5 não aceitam ferramenta forçada
           messages: [{ role: 'user', content: conferenteUserMsg(mensagem, rascunho) }] }) });
       clearTimeout(tm);
       const d = await r.json();
