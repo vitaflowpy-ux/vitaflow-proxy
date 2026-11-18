@@ -979,6 +979,10 @@ async function conferirResposta(o) {
   return { texto: MSG_SEM_CONFIRMACAO, acao: 'seguro', problemas: p1 };
 }
 
+// v126: FONTE ÚNICA — conhecimento oficial (o mesmo da Athena 2.0), gerado do cofre _servidor/athena2_conhecimento.md
+const CONHECIMENTO = (function () { try { return require('./_comum/athena-conhecimento.js'); } catch (e) { return { versao: '', texto: '' }; } })();
+function blocoConhecimento() { return CONHECIMENTO.texto ? ('\n\n=== CONHECIMENTO OFICIAL DA VITAFLOW (fatos aprovados pelo dono — a MESMA base da Athena 2.0; versão ' + CONHECIMENTO.versao + ') ===\n' +
+    'Use estes fatos. Onde o texto fala de "ferramenta" (frete, rastrear, catalogo_buscar, produto_detalhes), siga as REGRAS acima: aqui você não tem ferramentas — o frete o SISTEMA calcula quando o cliente digita *frete*, os produtos e preços são os do CATÁLOGO abaixo e pedido já feito vai para a página de rastreio/logística.\n' + CONHECIMENTO.texto) : ''; }
 function travarFreteInventado(txt){
   if (!txt) return txt;
   const t = String(txt);
@@ -1356,7 +1360,7 @@ exports.handler = async (event) => {
     const historico = await lerHistorico(phone);
     const catalogo = await catalogoResumo();
 
-    let sys = SYSTEM
+    let sys = SYSTEM + blocoConhecimento()
       + '\n\n=== FICHAS TÉCNICAS OFICIAIS (fonte da verdade p/ composição/o que é — use SÓ isto; NÃO invente) ===\n' + FICHAS_TECNICAS
       + '\n\n=== CATÁLOGO REAL (preços e disponibilidade de hoje) ===\n' + catalogo + '\n' + FIM_CATALOGO;
     if (promoContext) {
