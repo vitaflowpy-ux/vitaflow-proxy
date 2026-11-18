@@ -1,5 +1,13 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v127 (18/11/2026 — PIX ALTERNATIVO. Thiago: "alguns clientes estão tendo dificuldade de pagar com a chave pix gerada na hora… quando
+//   isso acontece eu mando a chave pix fixa… ele tem que conseguir resolver isso de forma simples e rapida" · "faça tudo"):
+//   com o pedido aberto (AGUARDAR_COMPROVANTE), se o cliente diz que o Pix/código deu erro, não vai, não aceita, ou que não consegue pagar,
+//   a Athena pede à função braspay (v4.3+, acao 'alternativo', canal 'athena') o copia e cola do QR FIXO da Bras Pay já com o valor do
+//   pedido + centavos únicos e manda (texto + código sozinho). Quando cai, a função reconhece pelo valor e confirma no GAS como Pix (o
+//   resto segue igual: coleta de dados). "Paguei" depois do alternativo: pixJaPago também pergunta ?alt=<pedido>. Sem alternativo
+//   (função fora) → segue o fluxo antigo de "link não abre" (avisa a equipe). A Athena NUNCA confirma por palavra/comprovante.
+
 // v125 (18/11/2026 — caso real de 17/11, ~23h: a IA inventou a Black Friday "de 29/11 a 2/12" com "descontos especiais em produtos
 //   selecionados", depois disse que "a equipe só libera os valores perto da data", respondeu "nesse mês não rolou cupom" (teve o DUPLO11
 //   em 11/11) e listou os 3% + o frete grátis como se somassem. Thiago: Black Friday = "ainda não anunciada"; listar as promoções do mês;
@@ -5428,12 +5436,39 @@ async function responderDiretoMulti(sid, textos, respond, assistente, diretoSeUm
 }
 // Cliente diz que pagou: pergunta à Bras Pay (a função braspay já confirma no GAS se estiver pago).
 async function pixJaPago(session) {
-  if (!session || !session.pixRef) return false;
+  if (!session || (!session.pixRef && !session.altEnviadoEm)) return false;
   try {
-    const r = await fetchT(BRASPAY_FN + '?ref=' + encodeURIComponent(session.pixRef), { method:'GET' }, 9000);
-    const d = await r.json();
-    return !!(d && d.ok && d.status === 'pago');
+    if (session.pixRef) {
+      const r = await fetchT(BRASPAY_FN + '?ref=' + encodeURIComponent(session.pixRef), { method:'GET' }, 9000);
+      const d = await r.json();
+      if (d && d.ok && d.status === 'pago') return true;
+    }
+    if (session.altEnviadoEm && session.orderNsu) {                 // v127: o Pix alternativo (QR fixo) já caiu?
+      const r2 = await fetchT(BRASPAY_FN + '?alt=' + encodeURIComponent(session.orderNsu), { method:'GET' }, 9000);
+      const d2 = await r2.json();
+      if (d2 && d2.ok && d2.pago) return true;
+    }
+    return false;
   } catch (e) { return false; }
+}
+// v127: copia e cola do Pix alternativo (QR fixo da Bras Pay + valor do pedido com centavos únicos). null = indisponível.
+async function pixAlternativo(session) {
+  try {
+    const valor = Math.round(Number(session.total || 0) * 100);
+    if (!session.orderNsu || !(valor >= 100)) return null;
+    const r = await fetchT(BRASPAY_FN, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ acao:'alternativo', referencia: session.orderNsu, valorCentavos: valor, canal:'athena', motivo:'cliente_relatou_erro' }) }, 9000);
+    const d = await r.json();
+    return (d && d.ok && d.brCode && Number(d.valorCentavos) >= 100) ? d : null;
+  } catch (e) { return null; }
+}
+// v127: o cliente está dizendo que o Pix não foi? (texto já normalizado: minúsculo, sem acento)
+function ehErroNoPix(n) {
+  n = String(n || '');
+  if (!n) return false;
+  return /(\bpix\b|codigo|qr ?code|\bqr\b|copia e cola|pagamento|banco|\bapp\b|chave)[^.?!]{0,40}(deu erro|da erro|dando erro|com erro|\berro\b|invalid|nao (esta |ta |to )?(vai|foi|indo|aceita|aceitou|funciona|funcionou|funcionando|passa|passou|passando|deu certo|da certo|reconhece|le\b|leu)|recus|bloquead)/.test(n)
+      || /(nao|n) (consigo|consegui|to conseguindo|estou conseguindo|tou conseguindo) (pagar|fazer o pix|finalizar|concluir)/.test(n)
+      || /\b(deu erro|dando erro|da erro|erro ao pagar|erro no pagamento|erro no pix)\b/.test(n);
 }
 // Número de contingência no MESMO formato do GAS (VF-DDMM-AX<HHmm> / atacado VF-DDMM-WX<HHmm>, fuso de São Paulo).
 // Usado SÓ quando o GAS não responde — assim a InfinitePay NUNCA carimba um UUID no pedido.
@@ -6754,6 +6789,7 @@ exports.handler = async (event) => {
     const _ehNavegacao = /^\s*\d{1,3}\s*$/.test(n) || /^(menu|voltar|volta|sair|cancelar|inicio|come[cç]ar)$/.test(n);
     if (state && _JA_TRATA_DUVIDA.indexOf(state) < 0 && _DADO_LIVRE.indexOf(state) < 0
         && !_ehMidiaMsg && !_ehNavegacao
+        && !(state === 'AGUARDAR_COMPROVANTE' && ehErroNoPix(n))           // v127: erro no Pix vai para o Pix alternativo, não para a IA
         && (ehDuvida(n) || ehPedidoProtocoloCompleto(n))) {
       console.log('[DUVIDA-FORA-DO-MENU] state:', state, '| msg:', String(mensagem).slice(0, 60));
       await saveSession(sid, { ...session, errosSeguidos: 0 });   // estado PRESERVADO
@@ -8255,6 +8291,23 @@ exports.handler = async (event) => {
 
       const carrinhoPend = session.carrinho || [];
       const totalPend = session.total || 0;
+
+      // ── v127: PIX ALTERNATIVO — o Pix gerado deu erro no banco do cliente ─────
+      if (session.orderNsu && ehErroNoPix(n) && (session.pixRef || await infDesligada())) {
+        const _alt = await pixAlternativo(session);
+        if (_alt) {
+          await saveSession(sid, { ...session, altEnviadoEm: Date.now(), altValor: Number(_alt.valorCentavos) });
+          const _vt = 'R$ ' + (Number(_alt.valorCentavos) / 100).toFixed(2).replace('.', ',');
+          return await responderDiretoMulti(sid, [
+            `Sem problema, vamos pelo *Pix alternativo* 👇\n\n` +
+            `No app do seu banco, vá em *Pix → Pix copia e cola* e cole o código ${nomeAssistente === 'Athena' ? 'da *próxima mensagem*' : '*logo abaixo*'}. ` +
+            `O valor de *${_vt}* já vem no código (se o banco pedir o valor, digite exatamente *${_vt}* — os centavos identificam o seu pedido). ` +
+            `O recebedor aparece como *Bras Serviços*, a mesma intermediadora.\n\n_Assim que cair, eu confirmo automaticamente aqui._ 😊`,
+            _alt.brCode
+          ], respond, nomeAssistente);
+        }
+        // sem alternativo (função fora): segue para o fluxo de "link não abre" abaixo, que avisa a equipe
+      }
 
       // ── LINK NÃO ABRE (17/09/2026) ─────────────────────────────────────────
       // Caso real: cliente com pedido de R$ 654 gerado disse "Link não abre" e recebeu, DUAS
