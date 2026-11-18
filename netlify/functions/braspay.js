@@ -341,7 +341,7 @@ async function criarUsdt(corpo, base, valor, key) {
 // com uma chave tirada do BRASPAY_WEBHOOK_SECRET (que já existe e nunca sai do Netlify). No repositório só fica o texto cifrado.
 // Para trocar o QR fixo: o dono abre ?cartaz=1, cola o código novo, a função devolve o cifrado e o Claude põe aqui.
 // (A variável BRASPAY_CARTAZ_BRCODE, se existir, ainda vale — mas não deve existir: estoura o limite.)
-const CARTAZ_CIFRADO = '';
+const CARTAZ_CIFRADO = 'bOdb2YkBRKjrbSlRZ/OZQ0TklSyT9rQyfPQd7mtvTooXZ5b7pcBGxNWd4Xe2WfIsxLMrYCAmsb/P5Yr76nYYf/6SJcGsjrh0DSrmJizmWegey2yyXtwG4WhFKpmuApQU119MWuGyF/bjfVHbfwBpEXKymCJkyMx/OlNLhJJrtXNEhv7emv8g4qcf12gtRWix/uHOZXRaFBZ3AjEm6XuS8fNGtO/owjWveEyOzIGYVss+1MslcvXMvGkxZBjIUqAor3PE+gOQL2xXfXgoGw==';   // QR Pix fixo da Bras Pay (18/11/2026), embaralhado pela própria função (?cartaz=1)
 function chaveCartaz() { return crypto.createHash('sha256').update('vitaflow-cartaz|' + (process.env.BRASPAY_WEBHOOK_SECRET || ''), 'utf8').digest(); }
 function cifrarCartaz(txt) {
   const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', chaveCartaz(), iv);
@@ -647,8 +647,8 @@ exports.handler = async function (event) {
         alternativo: !!(cartaz && brcodeValido(cartaz)), usdt: { habilitado: !!(u.habilitado && uc.ativo), redes: u.habilitado && uc.ativo ? u.redes : [] } }) };
     }
     if (q.cartaz) return paginaCartaz();
-    if (q.diag) { await lerUsdt(); return resposta(200, { ok: true, versao: 'v4.2', usdt: _usdtCache.diag, alternativo: brcodeValido(cartazAtual()) }); }
-    return resposta(200, { ok: true, servico: 'braspay', versao: 'v4.2', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
+    if (q.diag) { await lerUsdt(); return resposta(200, { ok: true, versao: 'v4.3', usdt: _usdtCache.diag, alternativo: brcodeValido(cartazAtual()) }); }
+    return resposta(200, { ok: true, servico: 'braspay', versao: 'v4.3', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
                            alternativo: brcodeValido(cartazAtual()) });
   }
   if (event.httpMethod !== 'POST') return resposta(405, { ok: false, erro: 'metodo' });
