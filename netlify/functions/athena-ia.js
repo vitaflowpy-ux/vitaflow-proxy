@@ -854,10 +854,29 @@ const T_VEREDITO = { name: 'veredito', description: 'Entrega a conferência da r
   required: ['afirmacoes', 'combinacoes_indevidas'] } };
 function _normConf(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[*_~`"“”‘’']/g, '').replace(/\s+/g, ' ').trim(); }
 // a evidência precisa EXISTIR nas fontes (cada pedaço entre "…" com 6+ caracteres)
+function _palavrasConf(s) { return _normConf(s).replace(/[^a-z0-9$%,.\/+-]+/g, ' ').replace(/(^|[^0-9])[.,]+|[.,]+(?=[^0-9]|$)/g, '$1 ').replace(/\s+/g, ' ').trim(); }
 function evidenciaExiste(evid, fontesNorm) {
-  const pedacos = String(evid || '').split(/\.\.\.|…|\n/).map(_normConf).filter(function (p) { return p.length >= 6; });
+  const fontesP = ' ' + _palavrasConf(fontesNorm) + ' ';
+  const pedacos = String(evid || '').split(/\.\.\.|…|\n/).map(_palavrasConf).filter(function (p) { return p.length >= 6; });
   if (!pedacos.length) return false;
-  return pedacos.every(function (p) { return fontesNorm.indexOf(p) >= 0; });
+  return pedacos.every(function (p) {
+    if (fontesP.indexOf(' ' + p + ' ') >= 0 || fontesP.indexOf(p) >= 0) return true;
+    const w = p.split(' '); if (w.length < 4) return false;
+    let achou = 0, total = 0;
+    for (let i = 0; i + 4 <= w.length; i++) {
+      const bloco = w.slice(i, i + 4).join(' '), tem = fontesP.indexOf(' ' + bloco + ' ') >= 0;
+      if (!tem && /\d/.test(bloco)) return false;   // número (preço, mg, data) tem que bater EXATO no seu bloco
+      total++; if (tem) achou++;
+    }
+    return total > 0 && achou / total >= 0.75;
+  });
+}
+// pergunta ao cliente e fragmento curto sem número ("Tem sim!", "Sim!") não são afirmação
+function _ehAfirmacao(trecho) {
+  const t = String(trecho || '').replace(/[*_~]/g, '').trim();
+  if (!t || /\?\s*[\p{Extended_Pictographic}\s]*$/u.test(t)) return false;
+  const pal = _palavrasConf(t).split(' ').filter(Boolean);
+  return pal.length >= 3 || /\d/.test(t);
 }
 function conferenteUserMsg(mensagem, rascunho) {
   return '=== TAREFA AGORA: CONFERIR UMA RESPOSTA ANTES DE ELA SER ENVIADA ===\n' +
@@ -865,13 +884,13 @@ function conferenteUserMsg(mensagem, rascunho) {
     'Mensagem do cliente:\n«' + String(mensagem || '').slice(0, 1500) + '»\n\n' +
     'Resposta que a Athena quer enviar (marcadores de lista já tirados: quando ela diz "veja as opções 👇", o SISTEMA abre a lista real com preços — isso não é afirmação):\n«' + String(rascunho || '').slice(0, 3500) + '»\n\n' +
     'Liste CADA afirmação da resposta sobre: a VitaFlow; produtos (se existe, preço, marca, mg, formato, disponibilidade, composição); promoções, cupons, descontos, cashback, frete grátis; frete, prazo, envio, seguro, embalagem; pagamento; pedidos, status ou rastreio do cliente; regras e políticas; datas e eventos (inclusive futuros, como Black Friday); contatos e links; promessas do que a equipe ou o sistema vai fazer.\n' +
-    'NÃO liste: cumprimentos, perguntas ao cliente, convites ("quer ver?", "posso te ajudar?"), e orientação geral que não afirma nada sobre a VitaFlow, os produtos dela ou o cliente.\n' +
+    'NÃO liste: cumprimentos, perguntas e ofertas ao cliente ("quer ver?", "quer que eu coloque no carrinho?", "posso te ajudar?"), interjeições ("Sim!", "Tem sim!") — confira a afirmação completa que vem depois — e orientação geral que não afirma nada sobre a VitaFlow, os produtos dela ou o cliente.\n' +
     'Para cada afirmação: "trecho" (copiado da resposta), "evidencia" (copie LITERALMENTE, palavra por palavra, o trecho das FONTES que a sustenta — sem parafrasear; vazio se não houver) e "veredito": suportada | contradita | sem_evidencia. Conta simples a partir da fonte (ex.: 2 × o preço) é suportada, com a evidência do valor usado. Dizer que NÃO tem uma informação ou que algo AINDA NÃO foi anunciado é suportado quando as fontes não trazem essa informação.\n' +
-    'Em "combinacoes_indevidas", aponte o que é verdadeiro sozinho mas foi juntado errado (ex.: os 3% e o frete grátis apresentados como se somassem; promoção encerrada oferecida como se valesse).\n' +
+    'Em "combinacoes_indevidas", aponte o que é verdadeiro sozinho mas foi juntado errado (ex.: os 3% e o frete grátis apresentados como se somassem; promoção encerrada oferecida como se valesse). Se a resposta JÁ diz que é um OU outro / que não acumulam / que a promoção já encerrou, isso está CERTO: não aponte.\n' +
     'Responda SÓ pela ferramenta "veredito".';
 }
 async function chamarConferente(sys, mensagem, rascunho, prazoMs) {
-  const t0 = Date.now();
+  const t0 = Date.now(), erros = [];
   for (const modelo of CONF_MODELOS) {
     const resta = prazoMs - (Date.now() - t0);
     if (resta < 1200) break;
@@ -884,17 +903,18 @@ async function chamarConferente(sys, mensagem, rascunho, prazoMs) {
       clearTimeout(tm);
       const d = await r.json();
       const tu = (d && Array.isArray(d.content)) ? d.content.find(function (c) { return c && c.type === 'tool_use'; }) : null;
-      if (r.status === 200 && tu && tu.input && Array.isArray(tu.input.afirmacoes)) return { ok: true, dados: tu.input, modelo: modelo, ms: Date.now() - t0 };
-      console.log('[CONF] modelo', modelo, '-> status', r.status, '|', JSON.stringify((d && d.error) || '').slice(0, 160));
-    } catch (e) { clearTimeout(tm); console.log('[CONF] exceção', modelo, ':', e.message); }
+      if (r.status === 200 && tu && tu.input && Array.isArray(tu.input.afirmacoes)) return { ok: true, dados: tu.input, modelo: modelo, ms: Date.now() - t0, erros: erros };
+      erros.push(modelo + ' ' + r.status + ' ' + JSON.stringify((d && d.error) || (d && d.content && d.content.map(function (c) { return c.type; })) || '').slice(0, 200));
+      console.log('[CONF] modelo', modelo, '-> status', r.status, '|', erros[erros.length - 1]);
+    } catch (e) { clearTimeout(tm); erros.push(modelo + ' exceção ' + e.message); console.log('[CONF] exceção', modelo, ':', e.message); }
   }
-  return { ok: false, ms: Date.now() - t0 };
+  return { ok: false, ms: Date.now() - t0, erros: erros };
 }
 // problemas = afirmações não suportadas (inclusive "suportada" cuja evidência não existe nas fontes) + combinações indevidas
 function avaliarVeredito(dados, fontesNorm) {
   const problemas = [];
   ((dados && dados.afirmacoes) || []).forEach(function (a) {
-    if (!a || !String(a.trecho || '').trim()) return;
+    if (!a || !_ehAfirmacao(a.trecho)) return;
     let v = String(a.veredito || '');
     if (v === 'suportada' && !evidenciaExiste(a.evidencia, fontesNorm)) v = 'evidencia_nao_achada';
     if (v !== 'suportada') problemas.push({ trecho: String(a.trecho).slice(0, 300), veredito: v, evidencia: String(a.evidencia || '').slice(0, 200) });
@@ -1369,7 +1389,7 @@ exports.handler = async (event) => {
     if (body.testeConferente && Date.now() < Date.parse('2026-11-19T21:00:00Z')) {
       const t1 = Date.now();
       const c = await chamarConferente(sys, mensagem, String(body.rascunho || ''), 9200);
-      return { statusCode:200, headers, body: JSON.stringify({ teste:true, ok:c.ok, modelo:c.modelo || '', ms: Date.now() - t1, sysLen: sys.length, dados: c.dados || null,
+      return { statusCode:200, headers, body: JSON.stringify({ teste:true, ok:c.ok, modelo:c.modelo || '', erros: c.erros || [], ms: Date.now() - t1, sysLen: sys.length, dados: c.dados || null,
         problemas: c.ok ? avaliarVeredito(c.dados, _normConf(sys + '\n' + mensagem)) : null }) };
     }
     const restante = PRAZO_MS - (Date.now() - t0);
