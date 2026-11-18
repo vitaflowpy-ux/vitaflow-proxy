@@ -485,6 +485,13 @@ async function pagamentoQrFixo(dados) {
   let cand = naJanela.filter(function (x) { return Number(x.valorUnico) === valor; });
   // o cliente digitou o total do pedido sem os centavos únicos: só vale se for UM pedido com esse total exato
   if (!cand.length) cand = naJanela.filter(function (x) { return Number(x.valor) === valor; });
+  if (cand.length === 1 && /^TESTE/i.test(String(cand[0].pedido))) {        // teste de R$ 1,00 do dono: não vai à planilha
+    const c = cand[0];
+    try { await fbPut('/vitaflow_braspay/alternativo/' + c._dia + '/' + c._k + '.json', { pago: true, cobranca: dados.id || '', pagoEm: pagoMs }, 'PATCH'); } catch (e) {}
+    await telegram('✅ TESTE DO PIX ALTERNATIVO OK\nPagamento de ' + reais(valor) + ' no QR fixo reconhecido sozinho como ' + c.pedido +
+                   ' (referência da Bras Pay: ' + (dados.referenciaExterna || '—') + ').\nNada foi lançado na planilha.');
+    return 'teste';
+  }
   if (cand.length === 1) {
     const c = cand[0];
     const r = await confirmarNoGAS({ id: dados.id, referenciaExterna: c.pedido + '~alt', valorCentavos: Number(c.valor), e2e: dados.e2e }, 'alternativo');
