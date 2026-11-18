@@ -1,3 +1,4 @@
+// v126 (18/11/2026): CONFERENTE antes de devolver (conferirResposta) + modo de teste temporário. Resto = v125.
 // v125 (18/11/2026 — caso real 17/11): TRAVA DA BLACK FRIDAY na saída (travarBlackInventada): enquanto o quadro de promoções disser que ela
 //   AINDA NÃO FOI ANUNCIADA, resposta com data/benefício inventado é trocada pelo texto fixo. Prompt e resto = v124.2.
 // v123 (17/11/2026): lê as respostas aprovadas pelo dono (vitaflow_sync/athena_aprendizado, Ronda) e junta ao prompt (igual à athena-ia-background v123). Resto = v122.
@@ -832,6 +833,129 @@ function travarBlackInventada(txt, promoContext){
   console.log('[IA] TRAVA BLACK FRIDAY: resposta trocada ->', t.slice(0, 160));
   return MSG_BLACK_NAO_ANUNCIADA;
 }
+// ═══ v126 (18/11/2026): CONFERENTE — toda resposta da IA é conferida contra as FONTES antes de sair ═══
+// Thiago: "vc precisa corrigir a doença, não somente o sintoma!" · revisão do GPT-6 (vitaflow-colab revisoes/2026-11-18_athena_inventa-causa-raiz_revisao_gpt6.md).
+// Como: uma 2ª chamada recebe as MESMAS fontes que a resposta teve (o sys inteiro: regras, fichas, catálogo, promoções do dia, contexto do
+// cliente, respostas aprovadas, descrições) e devolve CADA afirmação sobre a VitaFlow/o cliente com a EVIDÊNCIA copiada das fontes.
+// O CÓDIGO confere se a evidência existe mesmo nas fontes — não basta o modelo dizer "suportada". Histórico NÃO é fonte.
+// Afirmação sem evidência, contradita ou combinação indevida (ex.: 3% + frete grátis somando) → 1 reescrita, conferida DE NOVO;
+// falhou de novo → resposta segura (MSG_SEM_CONFIRMACAO). Conferente sem resposta (tempo, erro, JSON ruim) → o rascunho NÃO sai.
+// Cada conferência vai para vitaflow_sync/athena_conferente/<dia> — é daí que a autocorreção diária (Ronda, servidor) tira os erros.
+// Netlify: ATHENA_CONFERENTE = 'ativo' (padrão) | 'desligado' (emergência: volta ao comportamento da v125).
+const CONF_MODO = String(process.env.ATHENA_CONFERENTE || 'desligado').toLowerCase();   // 1º deploy: só o teste; o 2º liga ('ativo')
+const CONF_MODELOS = String(process.env.ATHENA_CONFERENTE_MODELOS || 'claude-sonnet-5-5,claude-haiku-5-5').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+const MSG_SEM_CONFIRMACAO = 'Sobre isso eu não tenho uma informação confirmada aqui pra te passar com segurança. 🙏\n\nSe quiser, digite *atendente* que eu te passo para uma pessoa da equipe.';
+const T_VEREDITO = { name: 'veredito', description: 'Entrega a conferência da resposta.', input_schema: { type: 'object', properties: {
+  afirmacoes: { type: 'array', items: { type: 'object', properties: {
+    trecho: { type: 'string', description: 'a afirmação, copiada da resposta' },
+    evidencia: { type: 'string', description: 'trecho COPIADO LITERALMENTE das FONTES que sustenta a afirmação (vazio se não houver)' },
+    veredito: { type: 'string', enum: ['suportada', 'contradita', 'sem_evidencia'] } }, required: ['trecho', 'evidencia', 'veredito'] } },
+  combinacoes_indevidas: { type: 'array', items: { type: 'string' }, description: 'benefícios/fatos que a resposta junta indevidamente (ex.: dois benefícios que não acumulam apresentados como se somassem; promoção encerrada oferecida como se valesse)' } },
+  required: ['afirmacoes', 'combinacoes_indevidas'] } };
+function _normConf(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[*_~`"“”‘’']/g, '').replace(/\s+/g, ' ').trim(); }
+// a evidência precisa EXISTIR nas fontes (cada pedaço entre "…" com 6+ caracteres)
+function evidenciaExiste(evid, fontesNorm) {
+  const pedacos = String(evid || '').split(/\.\.\.|…|\n/).map(_normConf).filter(function (p) { return p.length >= 6; });
+  if (!pedacos.length) return false;
+  return pedacos.every(function (p) { return fontesNorm.indexOf(p) >= 0; });
+}
+function conferenteUserMsg(mensagem, rascunho) {
+  return '=== TAREFA AGORA: CONFERIR UMA RESPOSTA ANTES DE ELA SER ENVIADA ===\n' +
+    'Você NÃO é a Athena agora: você é o CONFERENTE. Tudo o que está no system (regras, fichas técnicas, catálogo, promoções e descontos de hoje, contexto do cliente, respostas aprovadas, descrições de produto) são as FONTES — a única verdade. O que não está nas fontes não pode ser afirmado.\n\n' +
+    'Mensagem do cliente:\n«' + String(mensagem || '').slice(0, 1500) + '»\n\n' +
+    'Resposta que a Athena quer enviar (marcadores de lista já tirados: quando ela diz "veja as opções 👇", o SISTEMA abre a lista real com preços — isso não é afirmação):\n«' + String(rascunho || '').slice(0, 3500) + '»\n\n' +
+    'Liste CADA afirmação da resposta sobre: a VitaFlow; produtos (se existe, preço, marca, mg, formato, disponibilidade, composição); promoções, cupons, descontos, cashback, frete grátis; frete, prazo, envio, seguro, embalagem; pagamento; pedidos, status ou rastreio do cliente; regras e políticas; datas e eventos (inclusive futuros, como Black Friday); contatos e links; promessas do que a equipe ou o sistema vai fazer.\n' +
+    'NÃO liste: cumprimentos, perguntas ao cliente, convites ("quer ver?", "posso te ajudar?"), e orientação geral que não afirma nada sobre a VitaFlow, os produtos dela ou o cliente.\n' +
+    'Para cada afirmação: "trecho" (copiado da resposta), "evidencia" (copie LITERALMENTE, palavra por palavra, o trecho das FONTES que a sustenta — sem parafrasear; vazio se não houver) e "veredito": suportada | contradita | sem_evidencia. Conta simples a partir da fonte (ex.: 2 × o preço) é suportada, com a evidência do valor usado. Dizer que NÃO tem uma informação ou que algo AINDA NÃO foi anunciado é suportado quando as fontes não trazem essa informação.\n' +
+    'Em "combinacoes_indevidas", aponte o que é verdadeiro sozinho mas foi juntado errado (ex.: os 3% e o frete grátis apresentados como se somassem; promoção encerrada oferecida como se valesse).\n' +
+    'Responda SÓ pela ferramenta "veredito".';
+}
+async function chamarConferente(sys, mensagem, rascunho, prazoMs) {
+  const t0 = Date.now();
+  for (const modelo of CONF_MODELOS) {
+    const resta = prazoMs - (Date.now() - t0);
+    if (resta < 1200) break;
+    const ctrl = new AbortController(); const tm = setTimeout(function () { ctrl.abort(); }, resta);
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', signal: ctrl.signal,
+        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: modelo, max_tokens: 2500, system: sysComCache(sys), tools: [T_VEREDITO], tool_choice: { type: 'tool', name: 'veredito' },
+          messages: [{ role: 'user', content: conferenteUserMsg(mensagem, rascunho) }] }) });
+      clearTimeout(tm);
+      const d = await r.json();
+      const tu = (d && Array.isArray(d.content)) ? d.content.find(function (c) { return c && c.type === 'tool_use'; }) : null;
+      if (r.status === 200 && tu && tu.input && Array.isArray(tu.input.afirmacoes)) return { ok: true, dados: tu.input, modelo: modelo, ms: Date.now() - t0 };
+      console.log('[CONF] modelo', modelo, '-> status', r.status, '|', JSON.stringify((d && d.error) || '').slice(0, 160));
+    } catch (e) { clearTimeout(tm); console.log('[CONF] exceção', modelo, ':', e.message); }
+  }
+  return { ok: false, ms: Date.now() - t0 };
+}
+// problemas = afirmações não suportadas (inclusive "suportada" cuja evidência não existe nas fontes) + combinações indevidas
+function avaliarVeredito(dados, fontesNorm) {
+  const problemas = [];
+  ((dados && dados.afirmacoes) || []).forEach(function (a) {
+    if (!a || !String(a.trecho || '').trim()) return;
+    let v = String(a.veredito || '');
+    if (v === 'suportada' && !evidenciaExiste(a.evidencia, fontesNorm)) v = 'evidencia_nao_achada';
+    if (v !== 'suportada') problemas.push({ trecho: String(a.trecho).slice(0, 300), veredito: v, evidencia: String(a.evidencia || '').slice(0, 200) });
+  });
+  ((dados && dados.combinacoes_indevidas) || []).forEach(function (c) { if (c && String(c).trim()) problemas.push({ trecho: String(c).slice(0, 300), veredito: 'combinacao_indevida' }); });
+  return problemas;
+}
+function _semMarcadores(t) { return String(t || '').replace(/\[\[\s*(LISTA|STACK|COMPRAR)\s*:[^\]]*\]\]/gi, '').trim(); }
+function instrucaoReescrita(problemas) {
+  return '\n\n=== CORREÇÃO OBRIGATÓRIA DA SUA RESPOSTA ===\nO conferente barrou a sua resposta anterior porque ela tinha afirmações SEM FONTE ou juntadas errado:\n' +
+    problemas.map(function (p) { return '- "' + p.trecho + '" (' + p.veredito + ')'; }).join('\n') +
+    '\nEscreva de novo a resposta ao cliente SEM essas afirmações. Para o que NÃO está nas fontes, diga com naturalidade que não tem essa informação confirmada — sem prometer retorno, sem inventar data, valor, regra ou promoção. Benefícios que não acumulam: diga que é um OU outro. Mantenha o que estava certo e continue ajudando o cliente.';
+}
+// grava a conferência (base da autocorreção diária). Nunca derruba a resposta.
+async function _logConferente(reg) {
+  try {
+    const agora = Date.now();
+    const dia = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(agora));
+    const ctrl = new AbortController(); const tm = setTimeout(function () { ctrl.abort(); }, 2500);
+    await fetch(fbUrl('/vitaflow_sync/athena_conferente/' + dia + '.json'), { method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ ts: agora }, reg)) });
+    clearTimeout(tm);
+  } catch (e) {}
+}
+// o: { sys, mensagem, rascunho, prazoMs, reescrever: async (sysExtra) => textoNovo | '' (ou null se não houver tempo), fone, assistente, caminho }
+// devolve { texto, acao: 'ok'|'reescrita'|'seguro'|'sem_conferente'|'desligado'|'pulado', problemas }
+async function conferirResposta(o) {
+  const rasc = String(o.rascunho || '');
+  if (CONF_MODO === 'desligado') return { texto: rasc, acao: 'desligado', problemas: [] };
+  const limpo = _semMarcadores(rasc);
+  if (!limpo || rasc === MSG_FRETE_SISTEMA || rasc === MSG_BLACK_NAO_ANUNCIADA || rasc === MSG_SEM_CONFIRMACAO) return { texto: rasc, acao: 'pulado', problemas: [] };
+  const t0 = Date.now();
+  const fontesNorm = _normConf(String(o.sys || '') + '\n' + String(o.mensagem || ''));
+  const prazo = function () { return (o.prazoMs || 25000) - (Date.now() - t0); };
+  const reg = { f: String(o.fone || '').replace(/\D/g, ''), a: o.assistente || '', c: o.caminho || '', m: String(o.mensagem || '').slice(0, 800), r1: limpo.slice(0, 1500) };
+  const c1 = await chamarConferente(o.sys, o.mensagem, limpo, prazo());
+  if (!c1.ok) { await _logConferente(Object.assign(reg, { acao: 'sem_conferente', ms: Date.now() - t0 })); return { texto: '', acao: 'sem_conferente', problemas: [] }; }
+  const p1 = avaliarVeredito(c1.dados, fontesNorm);
+  reg.mod = c1.modelo; reg.n1 = (c1.dados.afirmacoes || []).length;
+  if (!p1.length) { await _logConferente(Object.assign(reg, { acao: 'ok', ms: Date.now() - t0 })); return { texto: rasc, acao: 'ok', problemas: [] }; }
+  reg.p1 = p1;
+  console.log('[CONF] barrou', p1.length, 'afirmação(ões):', JSON.stringify(p1).slice(0, 300));
+  let novo = null;
+  if (typeof o.reescrever === 'function' && prazo() > 6000) { try { novo = await o.reescrever(instrucaoReescrita(p1)); } catch (e) { novo = null; } }
+  if (novo === null) { await _logConferente(Object.assign(reg, { acao: 'sem_tempo', ms: Date.now() - t0 })); return { texto: '', acao: 'sem_tempo', problemas: p1 }; }
+  novo = travarBlackInventada(travarFreteInventado(String(novo || '')), o.promoContext);
+  const limpo2 = _semMarcadores(novo);
+  if (limpo2 && novo !== MSG_FRETE_SISTEMA && novo !== MSG_BLACK_NAO_ANUNCIADA) {
+    const c2 = await chamarConferente(o.sys, o.mensagem, limpo2, prazo());
+    if (c2.ok) {
+      const p2 = avaliarVeredito(c2.dados, fontesNorm);
+      if (!p2.length) { await _logConferente(Object.assign(reg, { acao: 'reescrita', r2: limpo2.slice(0, 1500), ms: Date.now() - t0 })); return { texto: novo, acao: 'reescrita', problemas: p1 }; }
+      reg.p2 = p2;
+    }
+  } else if (novo === MSG_FRETE_SISTEMA || novo === MSG_BLACK_NAO_ANUNCIADA) {
+    await _logConferente(Object.assign(reg, { acao: 'reescrita', r2: novo.slice(0, 600), ms: Date.now() - t0 })); return { texto: novo, acao: 'reescrita', problemas: p1 };
+  }
+  await _logConferente(Object.assign(reg, { acao: 'seguro', r2: limpo2.slice(0, 1500), ms: Date.now() - t0 }));
+  return { texto: MSG_SEM_CONFIRMACAO, acao: 'seguro', problemas: p1 };
+}
+
 function travarFreteInventado(txt){
   if (!txt) return txt;
   const t = String(txt);
@@ -1241,10 +1365,27 @@ exports.handler = async (event) => {
       }
     }
 
+    // v126: TESTE do conferente (temporário, até 19/11/2026 18h de Brasília): confere um rascunho dado, sem gerar, enviar ou gravar nada.
+    if (body.testeConferente && Date.now() < Date.parse('2026-11-19T21:00:00Z')) {
+      const t1 = Date.now();
+      const c = await chamarConferente(sys, mensagem, String(body.rascunho || ''), 9200);
+      return { statusCode:200, headers, body: JSON.stringify({ teste:true, ok:c.ok, modelo:c.modelo || '', ms: Date.now() - t1, sysLen: sys.length, dados: c.dados || null,
+        problemas: c.ok ? avaliarVeredito(c.dados, _normConf(sys + '\n' + mensagem)) : null }) };
+    }
     const restante = PRAZO_MS - (Date.now() - t0);
     const pensado = await pensarComClaude(sys, mensagem, historico, restante - 450);   // v90: folga para gravar o histórico e devolver
-    const reply = travarBlackInventada(travarFreteInventado(pensado.texto), promoContext);   // v78: nunca frete inventado · v125: nem Black Friday inventada
+    let reply = travarBlackInventada(travarFreteInventado(pensado.texto), promoContext);   // v78: nunca frete inventado · v125: nem Black Friday inventada
     if (!reply) { console.log('[IA-SYNC] sem resposta do modelo dentro do prazo.'); return vazio; }
+    // v126: CONFERENTE. Aqui não há tempo de reescrever: barrou ou não coube no prazo → Athena vai pelo caminho do 👀 (lá reescreve e
+    // confere de novo); a Stella (sem o caminho do 👀) recebe a resposta segura quando barrou, e o menu quando não houve tempo.
+    if (CONF_MODO !== 'desligado') {
+      const restC = PRAZO_MS - (Date.now() - t0) - 350;
+      if (restC < 2200) { console.log('[IA-SYNC] sem tempo para o conferente (', restC, 'ms)'); return vazio; }
+      const cf = await conferirResposta({ sys: sys, mensagem: mensagem, rascunho: reply, promoContext: promoContext, prazoMs: restC, fone: phone,
+        assistente: body.semParcial ? 'Athena' : 'Stella', caminho: 'sync' });
+      if (cf.acao === 'sem_tempo' || cf.acao === 'seguro') { if (body.semParcial) return vazio; reply = MSG_SEM_CONFIRMACAO; }
+      else if (cf.acao !== 'ok' && cf.acao !== 'pulado') return vazio;
+    }
 
     // O cliente NUNCA vê o marcador.
     const replyLimpo = reply.replace(/\[\[\s*(LISTA|STACK|COMPRAR)\s*:[^\]]*\]\]/gi, '').trim();
