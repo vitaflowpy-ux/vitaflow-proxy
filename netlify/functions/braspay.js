@@ -257,7 +257,7 @@ async function confirmarNoGAS(dados, origem) {
 // ══ v4: USDT ═════════════════════════════════════════════════════════════════════
 const USDT_REDES = { trc20: 'Trc20', bep20: 'Bep20' };
 const USDT_CFG_PATH = '/vitaflow_sync/pagamento_usdt.json';
-let _usdtCache = { t: 0, v: null };
+let _usdtCache = { t: 0, v: null, diag: null };
 
 // a parte da resposta da Bras Pay que vai para o navegador (endereço, valor, rede, validade) — nada além disso
 function usdtPublico(u) {
@@ -283,16 +283,23 @@ async function lerConfigUsdt() {
 async function lerUsdt() {
   if (_usdtCache.v && Date.now() - _usdtCache.t < 600000) return _usdtCache.v;
   const key = process.env.BRASPAY_API_KEY || '';
-  let v = { habilitado: false, redes: [] };
+  let v = { habilitado: false, redes: [] }, diag = 'sem_chave_da_api';
   if (key) {
     try {
-      const r = await fetchT(BRASPAY_API.replace(/\/cobrancas$/, '/usdt/disponibilidade'), { method: 'GET', headers: { 'Authorization': 'Bearer ' + key } }, 2000);
-      const d = r.ok ? await r.json() : null;
-      if (d) v = { habilitado: !!d.habilitado, redes: (Array.isArray(d.redes) ? d.redes : []).map(function (x) {
-        return { codigo: x.codigo, nome: x.nome, confirmacoesMin: x.confirmacoesMin }; }) };
-    } catch (e) {}
+      const r = await fetchT(BRASPAY_API.replace(/\/cobrancas$/, '/usdt/disponibilidade'), { method: 'GET', headers: { 'Authorization': 'Bearer ' + key } }, 4000);
+      let d = null;
+      try { d = await r.json(); } catch (e) { d = null; }
+      if (r.ok && d) {
+        v = { habilitado: !!d.habilitado, redes: (Array.isArray(d.redes) ? d.redes : []).map(function (x) {
+          return { codigo: x.codigo, nome: x.nome, confirmacoesMin: x.confirmacoesMin }; }) };
+        diag = 'bras_pay_respondeu: habilitado=' + !!d.habilitado + ', temPreco=' + !!d.temPreco + ', redes=' + v.redes.length;
+      } else {
+        diag = 'bras_pay_recusou: http ' + r.status + (d && (d.title || d.detail || d.erro) ? ' — ' + String(d.title || d.detail || d.erro).slice(0, 160) : '');
+      }
+    } catch (e) { diag = e && e.name === 'AbortError' ? 'sem_resposta_em_4s' : 'falha_de_rede'; }
   }
-  _usdtCache = { t: Date.now(), v: v };
+  // falha não fica guardada 10 min (só 1 min): a próxima consulta tenta de novo
+  _usdtCache = { t: diag.indexOf('bras_pay_respondeu') === 0 ? Date.now() : Date.now() - 540000, v: v, diag: diag };
   return v;
 }
 
@@ -330,6 +337,44 @@ async function criarUsdt(corpo, base, valor, key) {
 }
 
 // ══ v4: PIX ALTERNATIVO (QR fixo do portal + valor do pedido) ═══════════════════════
+// v4.2: o Netlify não aceita mais variável (limite de 4 KB somando todas). O "copia e cola" do QR fixo fica AQUI, CIFRADO (AES-256-GCM)
+// com uma chave tirada do BRASPAY_WEBHOOK_SECRET (que já existe e nunca sai do Netlify). No repositório só fica o texto cifrado.
+// Para trocar o QR fixo: o dono abre ?cartaz=1, cola o código novo, a função devolve o cifrado e o Claude põe aqui.
+// (A variável BRASPAY_CARTAZ_BRCODE, se existir, ainda vale — mas não deve existir: estoura o limite.)
+const CARTAZ_CIFRADO = '';
+function chaveCartaz() { return crypto.createHash('sha256').update('vitaflow-cartaz|' + (process.env.BRASPAY_WEBHOOK_SECRET || ''), 'utf8').digest(); }
+function cifrarCartaz(txt) {
+  const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', chaveCartaz(), iv);
+  const ct = Buffer.concat([c.update(String(txt), 'utf8'), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64');
+}
+function decifrarCartaz(b64) {
+  try {
+    const b = Buffer.from(String(b64 || ''), 'base64');
+    if (b.length < 30 || !process.env.BRASPAY_WEBHOOK_SECRET) return '';
+    const d = crypto.createDecipheriv('aes-256-gcm', chaveCartaz(), b.subarray(0, 12));
+    d.setAuthTag(b.subarray(12, 28));
+    return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8');
+  } catch (e) { return ''; }
+}
+function cartazAtual() {
+  const env = String(process.env.BRASPAY_CARTAZ_BRCODE || '').trim();
+  if (env) return env;
+  return CARTAZ_CIFRADO ? decifrarCartaz(CARTAZ_CIFRADO).trim() : '';
+}
+function paginaCartaz() {
+  return { statusCode: 200, headers: Object.assign({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, CORS), body:
+    '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>QR fixo — Pix alternativo</title>' +
+    '<body style="font-family:system-ui,sans-serif;padding:20px;max-width:560px;margin:auto"><h2>QR fixo do Pix alternativo</h2>' +
+    '<p>Cole aqui o <b>copia e cola</b> do seu QR Pix fixo da Bras Pay (começa com 000201) e toque em <b>Gerar</b>.</p>' +
+    '<textarea id="t" rows="5" style="width:100%"></textarea><p><button id="b" style="padding:10px 16px">Gerar</button></p>' +
+    '<p id="r"></p><textarea id="o" rows="4" style="width:100%;display:none" readonly></textarea>' +
+    '<script>document.getElementById("b").onclick=async function(){var r=document.getElementById("r"),o=document.getElementById("o");r.textContent="Gerando…";' +
+    'try{var d=await fetch(location.pathname,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({acao:"cifrar_cartaz",brcode:document.getElementById("t").value})}).then(function(x){return x.json()});' +
+    'if(d.ok){o.style.display="block";o.value=d.cifrado;r.innerHTML="✅ Pronto. Copie o código abaixo e mande para o Claude. <b>Ele é cifrado</b>: sem o segredo do Netlify não revela a chave.";}' +
+    'else{r.textContent="❌ "+(d.erro==="nao_e_brcode"?"Isso não parece um copia e cola de Pix. Confira e cole de novo.":d.erro);}}catch(e){r.textContent="❌ falhou: "+e.message;}};</script></body>' };
+}
+
 // BR Code (EMV): TLV "id(2) tamanho(2) valor". O 54 é o valor; o 63 é o CRC16-CCITT (0x1021, início 0xFFFF) de tudo + "6304".
 function crc16(txt) {
   let crc = 0xFFFF;
@@ -387,7 +432,7 @@ async function alternativosRecentes() {
 }
 
 async function alternativo(corpo, ip) {
-  const cartaz = String(process.env.BRASPAY_CARTAZ_BRCODE || '').trim();
+  const cartaz = cartazAtual();
   if (!cartaz || !brcodeValido(cartaz)) return resposta(200, { ok: false, erro: 'alternativo_indisponivel' });
   const pedido = String(corpo.referencia || '').trim().split('~')[0];
   const valor = Math.round(Number(corpo.valorCentavos || 0));
@@ -596,13 +641,15 @@ exports.handler = async function (event) {
     if (q.modo) {
       const par = await Promise.all([lerModo(), lerInfinitePay(), lerUsdt(), lerConfigUsdt()]);
       const m = par[0], inf = par[1], u = par[2], uc = par[3];
-      const cartaz = String(process.env.BRASPAY_CARTAZ_BRCODE || '').trim();
+      const cartaz = cartazAtual();
       return { statusCode: 200, headers: Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, CORS), body: JSON.stringify({
         ok: true, pix: inf.ligada ? m.pix : 'braspay', em: m.em, infinitepay: inf.ligada ? 'ligada' : 'desligada', infEm: inf.em,
         alternativo: !!(cartaz && brcodeValido(cartaz)), usdt: { habilitado: !!(u.habilitado && uc.ativo), redes: u.habilitado && uc.ativo ? u.redes : [] } }) };
     }
-    return resposta(200, { ok: true, servico: 'braspay', versao: 'v4', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
-                           alternativo: !!String(process.env.BRASPAY_CARTAZ_BRCODE || '').trim() });
+    if (q.cartaz) return paginaCartaz();
+    if (q.diag) { await lerUsdt(); return resposta(200, { ok: true, versao: 'v4.2', usdt: _usdtCache.diag, alternativo: brcodeValido(cartazAtual()) }); }
+    return resposta(200, { ok: true, servico: 'braspay', versao: 'v4.2', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
+                           alternativo: brcodeValido(cartazAtual()) });
   }
   if (event.httpMethod !== 'POST') return resposta(405, { ok: false, erro: 'metodo' });
 
@@ -613,6 +660,12 @@ exports.handler = async function (event) {
   } catch (e) { return resposta(400, { ok: false, erro: 'json' }); }
   if (corpo.acao === 'criar') return await criarCobranca(corpo);
   if (corpo.acao === 'status') return await status(String(corpo.referencia || ''), String(corpo.meio || '').toLowerCase());
+  if (corpo.acao === 'cifrar_cartaz') {
+    const b = String(corpo.brcode || '').replace(/[\r\n\t]+/g, '').trim();   // o nome do recebedor tem espaço: não tirar
+    if (!/^000201/.test(b) || !/br\.gov\.bcb\.pix/i.test(b) || !brcodeValido(b) || b.length > 600) return resposta(200, { ok: false, erro: 'nao_e_brcode' });
+    if (!process.env.BRASPAY_WEBHOOK_SECRET) return resposta(503, { ok: false, erro: 'sem_segredo' });
+    return resposta(200, { ok: true, cifrado: cifrarCartaz(b) });
+  }
   if (corpo.acao === 'alternativo') return await alternativo(corpo, h['x-nf-client-connection-ip'] || String(h['x-forwarded-for'] || '').split(',')[0]);
   return resposta(400, { ok: false, erro: 'acao' });
 };
