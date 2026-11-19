@@ -1,8 +1,8 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
-// v128 (19/11/2026 — Thiago: "além da athena não saber o que é 'varejo' ela não está sabendo da existência do atacado de PJC" · "quero a
+// v128 (18/11/2026, noite — Thiago: "além da athena não saber o que é 'varejo' ela não está sabendo da existência do atacado de PJC" · "quero a
 //   Athena vendendo PJC"). Caso real 18/11 22:28: cliente com lista/pedido de atacado aberto digitou "Varejo" e "Produto no varejo" e
-//   levou "Não encontrei *Varejo* na tabela de atacado". Opinião do GPT-6 ouvida (19/11).
+//   levou "Não encontrei *Varejo* na tabela de atacado". Opinião do GPT-6 ouvida (18/11).
 //   1) VAREJO DENTRO DO ATACADO: "varejo", "no varejo", "produto no varejo", "quero (comprar) no varejo"… (mensagem INTEIRA, nunca pedaço)
 //      saem do atacado em QUALQUER estado dele (antes só no estado ATACADO e só "varejo"/"no varejo"). O pedido de atacado fica guardado
 //      e o cliente é avisado; se a última busca do atacado não achou nada, o mesmo termo já é procurado no varejo (usado uma vez só).

@@ -1,4 +1,4 @@
-// v128 (19/11/2026): o texto do ATACADO ganha os DOIS ESTOQUES (Ciudad del Este e Pedro Juan Caballero; cada estoque é um pedido separado) — junto com a botconversa v128. Resto = v126.
+// v128 (18/11/2026, noite): o texto do ATACADO ganha os DOIS ESTOQUES (Ciudad del Este e Pedro Juan Caballero; cada estoque é um pedido separado) — junto com a botconversa v128. Resto = v126.
 // v126 (18/11/2026): CONFERENTE antes de devolver (conferirResposta) + modo de teste temporário. Resto = v125.
 // v125 (18/11/2026 — caso real 17/11): TRAVA DA BLACK FRIDAY na saída (travarBlackInventada): enquanto o quadro de promoções disser que ela
 //   AINDA NÃO FOI ANUNCIADA, resposta com data/benefício inventado é trocada pelo texto fixo. Prompt e resto = v124.2.
