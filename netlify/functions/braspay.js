@@ -1,6 +1,14 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 // BRAS PAY — Pix da VitaFlow (09/10/2026) · v2 (13/10/2026): INTERRUPTOR DO PIX · v3 (13/11/2026): INTERRUPTOR DA INFINITEPAY
 // v4 (18/11/2026): PIX ALTERNATIVO (QR fixo) + USDT
+// v5 (19/11/2026): CARTÃO PELA INFINITEPAY, PIX SEMPRE BRAS PAY
+//   Thiago: "a infinitepay aprovou a analise de segurança e liberou os valores… irei voltar a aceitar cartão. agora será o seguinte:
+//   chave pix permanece a da braspay. cartão de crédito será infinitepay."
+//   • Interruptor NOVO, só do cartão: vitaflow_sync/pagamento_cartao = {infinitepay:true|false, em, por} (Painel de Lucros / painel único).
+//     GET ?modo=1 passa a devolver cartao:'infinitepay'|'desligado' (+ cartaoEm). Nunca gravado ou leitura falhou = 'desligado'.
+//   • O Pix é SEMPRE Bras Pay: ?modo=1 responde sempre pix:'braspay' e a criação nunca mais recusa com 'pix_na_infinitepay'.
+//   • O campo antigo infinitepay passa a responder SEMPRE 'desligada': tela que ainda não foi atualizada continua só com o Pix da
+//     Bras Pay (nenhuma tela antiga religa o Pix reserva/checkout da InfinitePay). Os nós pagamento_pix e pagamento_infinitepay ficam sem uso.
 //   Thiago: "alguns clientes estão tendo dificuldade de pagar com a chave pix gerada na hora… quero deixar essa chave como uma segunda
 //   opção… não quero essa chave pix exposta" · "ele tem que conseguir resolver isso de forma simples e rapida" · USDT: "quero sim"
 //   (se não tiver taxa, receber em reais; se tiver, em USDT; preço igual ao do Pix).
@@ -123,6 +131,19 @@ async function lerInfinitePay() {
   }
 }
 
+// ── INTERRUPTOR DO CARTÃO (v5) ─────────────────────────────────────────────────────
+const CARTAO_PATH = '/vitaflow_sync/pagamento_cartao.json';
+async function lerCartao() {
+  try {
+    const r = await fetchT(fbUrl(CARTAO_PATH), { method: 'GET' }, 3000);
+    if (!r.ok) return { infinitepay: false, em: null, falhou: true };
+    const d = await r.json();
+    return { infinitepay: !!(d && d.infinitepay === true), em: (d && d.em) || null };   // nunca gravado = desligado
+  } catch (e) {
+    return { infinitepay: false, em: null, falhou: true };
+  }
+}
+
 function reais(cent) { return 'R$ ' + (Number(cent || 0) / 100).toFixed(2).replace('.', ','); }
 
 // número do pedido a partir da referência: "VF-0910-S123~kq2" → "VF-0910-S123"
@@ -140,13 +161,7 @@ async function criarCobranca(corpo) {
   if (!(valor >= 100)) return resposta(400, { ok: false, erro: 'valor_invalido' });
   if (String(corpo.meio || '').toLowerCase() === 'usdt') return await criarUsdt(corpo, base, valor, key);   // v4
   // v2: interruptor do Pix (o Orçamento, L-…, fica de fora)
-  if (!/^L-/i.test(base)) {
-    const m = await lerModo();
-    if (m.pix === 'infinitepay') {
-      const inf = await lerInfinitePay();                                           // v3: InfinitePay desligada → o Pix é Bras Pay
-      if (inf.ligada) return resposta(200, { ok: false, erro: 'pix_na_infinitepay' });
-    }
-  }
+  // v5: o Pix é sempre Bras Pay (o interruptor do Pix, v2, saiu de uso)
   let exp = Math.round(Number(corpo.expiraEmSegundos || 1800));
   if (!(exp > 0)) exp = 1800;
 
@@ -639,16 +654,17 @@ exports.handler = async function (event) {
     if (q.alt) return await statusAlternativo(String(q.alt).trim());
     if (q.ref) return await status(String(q.ref), String(q.meio || '').toLowerCase());
     if (q.modo) {
-      const par = await Promise.all([lerModo(), lerInfinitePay(), lerUsdt(), lerConfigUsdt()]);
-      const m = par[0], inf = par[1], u = par[2], uc = par[3];
+      const par = await Promise.all([lerCartao(), lerUsdt(), lerConfigUsdt()]);
+      const ct = par[0], u = par[1], uc = par[2];
       const cartaz = cartazAtual();
       return { statusCode: 200, headers: Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, CORS), body: JSON.stringify({
-        ok: true, pix: inf.ligada ? m.pix : 'braspay', em: m.em, infinitepay: inf.ligada ? 'ligada' : 'desligada', infEm: inf.em,
+        ok: true, pix: 'braspay', em: null, infinitepay: 'desligada', infEm: null,                       // v5: campos antigos, fixos
+        cartao: ct.infinitepay ? 'infinitepay' : 'desligado', cartaoEm: ct.em,
         alternativo: !!(cartaz && brcodeValido(cartaz)), usdt: { habilitado: !!(u.habilitado && uc.ativo), redes: u.habilitado && uc.ativo ? u.redes : [] } }) };
     }
     if (q.cartaz) return paginaCartaz();
-    if (q.diag) { await lerUsdt(); return resposta(200, { ok: true, versao: 'v4.3', usdt: _usdtCache.diag, alternativo: brcodeValido(cartazAtual()) }); }
-    return resposta(200, { ok: true, servico: 'braspay', versao: 'v4.3', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
+    if (q.diag) { await lerUsdt(); return resposta(200, { ok: true, versao: 'v5', usdt: _usdtCache.diag, alternativo: brcodeValido(cartazAtual()) }); }
+    return resposta(200, { ok: true, servico: 'braspay', versao: 'v5', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
                            alternativo: brcodeValido(cartazAtual()) });
   }
   if (event.httpMethod !== 'POST') return resposta(405, { ok: false, erro: 'metodo' });

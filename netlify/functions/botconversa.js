@@ -1,5 +1,12 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v129 (19/11/2026 — Thiago: "a infinitepay aprovou a analise de segurança… irei voltar a aceitar cartão. agora será o seguinte: chave pix
+//   permanece a da braspay. cartão de crédito será infinitepay" · "obviamente o aviso antigo não irá mais existir").
+//   • O interruptor que vale agora é o do CARTÃO (função braspay v5, ?modo=1 → cartao:'infinitepay'|'desligado'). Ligado: a Athena volta a
+//     gerar o link da InfinitePay para o cartão (junto do Pix da Bras Pay). Desligado/sem resposta: só o Pix, como estava.
+//   • O Pix é SEMPRE Bras Pay (pixModo() responde sempre 'braspay'; o texto do link não oferece mais "Pix pela InfinitePay").
+//   • Sai o aviso "cartão só pelo WhatsApp (+44…)": com o cartão desligado a Athena diz só que o cartão está temporariamente indisponível.
+
 // v128 (18/11/2026, noite — Thiago: "além da athena não saber o que é 'varejo' ela não está sabendo da existência do atacado de PJC" · "quero a
 //   Athena vendendo PJC"). Caso real 18/11 22:28: cliente com lista/pedido de atacado aberto digitou "Varejo" e "Produto no varejo" e
 //   levou "Não encontrei *Varejo* na tabela de atacado". Opinião do GPT-6 ouvida (18/11).
@@ -5474,7 +5481,7 @@ async function _lerModoPag() {
   try {
     const r = await fetchT(BRASPAY_FN + '?modo=1', { method:'GET' }, 3000);
     const d = await r.json();
-    if (d && d.ok) { inf = d.infinitepay === 'desligada'; v = (!inf && d.pix === 'infinitepay') ? 'infinitepay' : 'braspay'; }
+    if (d && d.ok) { inf = !(d.cartao === 'infinitepay'); v = 'braspay'; }   // v129: vale o interruptor do CARTÃO; o Pix é sempre Bras Pay
   } catch (e) { v = 'braspay'; inf = true; }
   _pixModoCache = { v: v, inf: inf, t: Date.now() };
   return _pixModoCache;
@@ -5484,9 +5491,9 @@ async function infDesligada() { return (await _lerModoPag()).inf; }
 // Link da InfinitePay só "vive" com ela ligada (usa a última leitura; quem chama garante a leitura antes).
 function _linkVivo(l) { return (!_pixModoCache.v || _pixModoCache.inf) ? '' : (l || ''); }   // v122: sem leitura = desligada
 // v121 (16/11/2026): cartão de crédito só pelo WhatsApp — o cliente manda o print do carrinho/pedido para o número abaixo.
-const CARTAO_WHATS = '+44 7537 155723';
-const MSG_CARTAO_WHATS = `💳 *Quer pagar no cartão de crédito?* As compras no cartão são feitas pelo nosso WhatsApp: tire um *print do seu carrinho* (ou deste pedido) e envie para *${CARTAO_WHATS}* — nossa equipe finaliza com você por lá. 😉`;
-const AVISO_CARTAO_OFF = '💳 _*Cartão de crédito:* as compras no cartão são feitas pelo nosso WhatsApp. Tire um print do seu carrinho (ou deste pedido) e envie para *' + CARTAO_WHATS + '*. No Pix é à vista, sem juros._';
+// v129: saiu o aviso "cartão só pelo WhatsApp". Com o cartão desligado no Painel de Lucros, é só "temporariamente indisponível".
+const MSG_CARTAO_WHATS = `💳 O pagamento no *cartão de crédito* está *temporariamente indisponível*.`;
+const AVISO_CARTAO_OFF = '💳 _*Cartão de crédito:* temporariamente indisponível. No Pix é à vista, sem juros._';
 function _dicaParcelar() { return `\n\n💳 _Quer parcelar? Digite *parcelar* que eu simulo em até 12x no cartão._`; }   // v121: ligada também com a InfinitePay desligada
 async function gerarPixBraspay(orderNsu, totalReais, novaRef) {
   const key = process.env.BRASPAY_API_KEY || '';
@@ -5537,7 +5544,7 @@ function blocoPagamento(pix, link, separado) {
   if (pix) {
     t += `⚡ *PIX (copia e cola)* — ${separado ? 'o código vai na *próxima mensagem*' : 'o código está *logo abaixo*'}. ` +
          `É só copiar e colar no app do seu banco: *Pix → Pix copia e cola*. No banco, o recebedor aparece como *Bras Serviços* (nossa intermediadora de pagamentos). _(Vale por 24 h.)_\n\n`;
-    if (link) t += `💳 *Prefere cartão em até 12x (ou Pix pela InfinitePay)?*\n${link}\n\n${AVISO_RECEBEDOR}\n\n`;
+    if (link) t += `💳 *Prefere pagar no cartão de crédito, em até 12x?*\n${link}\n\n${AVISO_RECEBEDOR}\n\n`;
     else if (_pixModoCache.inf) t += AVISO_CARTAO_OFF + '\n\n';   // v119
   } else if (link) {
     t += `💳 *Link de pagamento:*\n${link}\n\n${AVISO_RECEBEDOR}\n\n`;
