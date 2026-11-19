@@ -1,3 +1,4 @@
+// v128 (19/11/2026): o texto do ATACADO ganha os DOIS ESTOQUES (Ciudad del Este e Pedro Juan Caballero; cada estoque é um pedido separado) — junto com a botconversa v128. Resto = v126.
 // v126 (18/11/2026): CONFERENTE antes de devolver (conferirResposta) + modo de teste temporário. Resto = v125.
 // v125 (18/11/2026 — caso real 17/11): TRAVA DA BLACK FRIDAY na saída (travarBlackInventada): enquanto o quadro de promoções disser que ela
 //   AINDA NÃO FOI ANUNCIADA, resposta com data/benefício inventado é trocada pelo texto fixo. Prompt e resto = v124.2.
@@ -616,6 +617,7 @@ QUEM FECHA O PEDIDO É O SISTEMA, NÃO VOCÊ — e é AQUI no WhatsApp (NUNCA no
 
 ATACADO (modalidade à parte — quem CONDUZ é o SISTEMA, não você):
 - Existe a venda no ATACADO, com tabela e PREÇOS PRÓPRIOS, diferentes do catálogo acima (o catálogo acima é VAREJO). Regras do atacado: *pedido mínimo de R$ 3.000*, *FRETE GRÁTIS*, *NÃO* tem os 3%, *NÃO* aceita cupom, e *NÃO* pode misturar produtos de varejo e atacado no mesmo pedido.
+- O atacado tem DOIS ESTOQUES: *Estoque Ciudad del Este* e *Estoque Pedro Juan Caballero*. O SISTEMA procura nos dois quando o cliente digita o nome do produto dentro do atacado e mostra de qual estoque é cada um. CADA ESTOQUE É UM PEDIDO SEPARADO: mínimo de R$ 3.000 em cada, sem misturar produtos dos dois no mesmo pedido. Os dois catálogos completos estão em vitaflowoficial.com/pages/atacado. NUNCA diga que um produto "não tem no atacado" — você não vê os estoques; oriente a digitar *atacado* e o nome do produto.
 - Você NÃO tem os preços do atacado (o catálogo acima é varejo). Então NUNCA invente preço de atacado, NUNCA diga que algum preço acima "é o de atacado" e NUNCA monte um pedido de atacado na prosa.
 - Se o cliente quiser ATACADO (falar "atacado", "por atacado", "pedido grande", "quero comprar em grande quantidade"), NÃO use [[LISTA:]] (a lista é do varejo). Apenas oriente em UMA linha: "É só digitar *atacado* que eu abro a tabela de atacado pra você 👇" — o SISTEMA assume dali (mostra os produtos do atacado, monta o pedido com o mínimo de R$ 3.000 e frete grátis).
 - Diferença rápida que você PODE explicar: no *varejo* comigo tem *3% de desconto*; no *atacado* o *frete é grátis* (pedido mínimo de R$ 3.000).

@@ -1,5 +1,22 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v128 (19/11/2026 — Thiago: "além da athena não saber o que é 'varejo' ela não está sabendo da existência do atacado de PJC" · "quero a
+//   Athena vendendo PJC"). Caso real 18/11 22:28: cliente com lista/pedido de atacado aberto digitou "Varejo" e "Produto no varejo" e
+//   levou "Não encontrei *Varejo* na tabela de atacado". Opinião do GPT-6 ouvida (19/11).
+//   1) VAREJO DENTRO DO ATACADO: "varejo", "no varejo", "produto no varejo", "quero (comprar) no varejo"… (mensagem INTEIRA, nunca pedaço)
+//      saem do atacado em QUALQUER estado dele (antes só no estado ATACADO e só "varejo"/"no varejo"). O pedido de atacado fica guardado
+//      e o cliente é avisado; se a última busca do atacado não achou nada, o mesmo termo já é procurado no varejo (usado uma vez só).
+//      O "não encontrei" passa a ter opções: 1 tabela PDF · 2 menu · 3 procurar no varejo (o 3 só vale logo depois do "não encontrei").
+//   2) ATACADO PJC: a busca do atacado olha os DOIS estoques — Estoque Ciudad del Este (tabela de sempre) e Estoque Pedro Juan Caballero
+//      (catálogo da função atacado-pjc, o mesmo da página do atacado: respeita pausa, trava e indisponíveis). A lista mostra de qual
+//      estoque é cada produto. CADA ESTOQUE É UM PEDIDO SEPARADO (regra da página): o pedido fica com o estoque do 1º item; produto do
+//      outro estoque é avisado e não entra. Pedido do PJC sai com o número VF-DDMM-P### (numero-pedido tipo P), mínimo R$ 3.000, frete
+//      grátis, sem 3%/cupom — igual ao CDE. Antes de fechar, o pedido PJC é reconferido no catálogo (preço mudou / ficou indisponível →
+//      atualiza e mostra de novo). Catálogo PJC fora do ar: a busca segue só no CDE e o "não encontrei" avisa que não deu para ver o
+//      outro estoque (nunca vira "não temos"). Catálogo guardado 10 min em vitaflow_sync/atacado_pjc_cache_athena (a função leva ~3 s).
+//   3) VIGIA: o aviso do Telegram não promete mais ("A Ronda vai tentar responder") — diz que pediu e que a Ronda avisa se não conseguir.
+//   Resto = v127.
+
 // v127 (18/11/2026 — PIX ALTERNATIVO. Thiago: "alguns clientes estão tendo dificuldade de pagar com a chave pix gerada na hora… quando
 //   isso acontece eu mando a chave pix fixa… ele tem que conseguir resolver isso de forma simples e rapida" · "faça tudo"):
 //   com o pedido aberto (AGUARDAR_COMPROVANTE), se o cliente diz que o Pix/código deu erro, não vai, não aceita, ou que não consegue pagar,
@@ -1933,11 +1950,13 @@ Aqui é simples: você monta seu pedido do jeito que quiser comigo. 😊
 ✅ A única regra é o *total do pedido fechar em R$ 3.000 ou mais* (é o nosso pedido mínimo de atacado).
 ✅ *Frete grátis* pra todo o Brasil. 🚚
 ℹ️ No atacado não entram os 3% nem cupom — aqui o benefício é o frete grátis. E não dá pra misturar itens do varejo no mesmo pedido.
+📦 Temos *2 estoques* de atacado: *Ciudad del Este* e *Pedro Juan Caballero*. Eu procuro nos dois e te mostro de qual é cada produto — só que *cada estoque é um pedido separado* (mínimo de R$ 3.000 em cada).
 
 👉 Me diga o *nome do produto* que você quer (ex.: retatrutida, testosterona, bpc) que eu te mostro o preço e já vou montando seu pedido de atacado.
 
-_Ou digite *1* pra baixar a *tabela completa* em PDF, ou *2* pra voltar ao menu._`;
+_Ou digite *1* pra baixar a *tabela em PDF* (Ciudad del Este), ou *2* pra voltar ao menu. Os dois catálogos completos estão em vitaflowoficial.com/pages/atacado_`;
 const MSG_ATACADO = ATACADO_PAUSADO ? MSG_ATACADO_PAUSADO : MSG_ATACADO_ATIVO;   // v105
+const ATACADO_PJC_ATIVO = String(process.env.ATHENA_ATACADO_PJC || 'ativo').toLowerCase() !== 'desligado';   // v128: desligar sem publicar = variável ATHENA_ATACADO_PJC=desligado
 
 const MSG_ATACADO_CONTATOS = `*🏭 Consultores de Atacado — VitaFlow*
 
@@ -1956,6 +1975,84 @@ _Digite *menu* para voltar ao início._`;
 // (o mesmo valor do PDF que o cliente vê). A Athena lê SOMENTE `reais` — NÃO calcula nada.
 // Os outros sistemas continuam lendo `usd` do jeito que sempre foi.
 const ATACADO_MIN = 3000;
+// ── v128: ATACADO DO ESTOQUE PEDRO JUAN CABALLERO (PJC) ──────────────────────────────────────────────────────────────
+const ATK_PJC_URL = process.env.ATACADO_PJC_URL || 'https://vitaflow-radar.netlify.app/.netlify/functions/atacado-pjc';
+const ATK_PJC_CACHE = '/vitaflow_sync/atacado_pjc_cache_athena.json';
+const ATK_PAGINA_URL = 'https://vitaflowoficial.com/pages/atacado';
+const ATK_EST = { cde: 'Estoque Ciudad del Este', pjc: 'Estoque Pedro Juan Caballero' };   // os mesmos nomes da página do atacado
+let _pjcMem = null;   // { ts, v } — memória da função (enquanto ela fica quente)
+function _pjcMontar(lista, pausado, velho) {
+  return { ok: true, pausado: !!pausado, velho: !!velho, produtos: (Array.isArray(lista) ? lista : []).filter(function (p) {
+    return p && p.nome && p.status === 'disponivel' && Number(p.preco) > 0;
+  }).map(function (p) { return { nome: String(p.nome), preco: Number(p.preco), pid: String(p.id || p.pid || ''), est: 'pjc' }; }) };
+}
+// Catálogo PJC: memória (5 min) → cópia no Firebase (10 min) → função atacado-pjc (até 4,5 s, dentro do prazo da mensagem) → cópia de
+// até 1 h. Não conseguiu = { ok:false } (quem chama avisa "não consegui verificar o outro estoque"; nunca "não temos").
+async function lerCatalogoPjc() {
+  const agora = Date.now();
+  if (_pjcMem && (agora - _pjcMem.ts) < 5 * 60000) return _pjcMem.v;
+  let cache = null;
+  try { const r = await fetchT(fbUrl(ATK_PJC_CACHE), {}, 2000); cache = await r.json(); } catch (e) { cache = null; }
+  if (cache && cache.ts && (agora - cache.ts) < 10 * 60000) { const v = _pjcMontar(cache.produtos, cache.pausado, false); _pjcMem = { ts: cache.ts, v: v }; return v; }
+  const resta = PRAZO_TOTAL_MS - (Date.now() - (REQ_T0 || Date.now())) - 1800;
+  if (resta >= 1500) {
+    try {
+      const r = await fetchT(ATK_PJC_URL, { method: 'GET' }, Math.min(4500, resta));
+      const d = await r.json();
+      if (d && d.success) {
+        const enxuto = (Array.isArray(d.produtos) ? d.produtos : []).filter(function (p) { return p && p.nome && p.status === 'disponivel' && Number(p.preco) > 0; })
+          .map(function (p) { return { id: String(p.id || ''), nome: String(p.nome), preco: Number(p.preco), status: 'disponivel' }; });
+        const v = _pjcMontar(enxuto, d.pausado, false);
+        _pjcMem = { ts: Date.now(), v: v };
+        try { await fetchT(fbUrl(ATK_PJC_CACHE), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ts: Date.now(), pausado: !!d.pausado, produtos: enxuto }) }, 2000); } catch (e) {}
+        return v;
+      }
+    } catch (e) {}
+  }
+  if (cache && cache.ts && (agora - cache.ts) < 60 * 60000) return _pjcMontar(cache.produtos, cache.pausado, true);
+  return { ok: false, pausado: false, velho: false, produtos: [] };
+}
+// De qual estoque é o pedido de atacado: '' (vazio) · 'cde' · 'pjc'. Item sem a marca = CDE (pedidos guardados antes da v128).
+function estDoCarrinhoAtk(cart) { return (cart && cart.length) ? (cart[0].est === 'pjc' ? 'pjc' : 'cde') : ''; }
+function _brAtk(v) { return Number(v || 0).toFixed(2).replace('.', ','); }
+// Pedido PJC: reconfere preço e disponibilidade no catálogo antes de fechar. Devolve { cart, mudou:[linhas], pausado }.
+async function revalidarCarrinhoPjc(cart) {
+  const cat = await lerCatalogoPjc();
+  if (!cat.ok) return { cart: cart, mudou: [], pausado: false };            // sem catálogo agora: segue com o que o cliente viu (igual ao CDE)
+  if (cat.pausado) return { cart: cart, mudou: [], pausado: true };
+  const novo = [], mudou = [];
+  (cart || []).forEach(function (i) {
+    const p = cat.produtos.filter(function (x) { return (i.pid && x.pid === i.pid) || x.nome === i.nome; })[0];
+    if (!p) { mudou.push('❌ *' + i.nome + '* ficou *indisponível* e saiu do pedido'); return; }
+    if (Math.abs(p.preco - i.preco) >= 0.005) { mudou.push('🔄 *' + i.nome + '*: R$ ' + _brAtk(i.preco) + ' → *R$ ' + _brAtk(p.preco) + '*'); novo.push(Object.assign({}, i, { preco: p.preco })); return; }
+    novo.push(i);
+  });
+  return { cart: novo, mudou: mudou, pausado: false };
+}
+// Chamado antes do resumo/fechamento: devolve a resposta (pedido mudou / estoque pausado) ou null (pode seguir).
+async function _checarPjcAntesDeFechar(session, sid, respond) {
+  const cart = session.carrinhoAtk || [];
+  if (estDoCarrinhoAtk(cart) !== 'pjc') return null;
+  const rv = await revalidarCarrinhoPjc(cart);
+  if (rv.pausado) { await saveSession(sid, { ...session, state: 'ATK_CART' }); return respond('⏸️ O *' + ATK_EST.pjc + '* está em *atualização de preços* neste momento, então não consigo fechar esse pedido agora. 😕\n\nSeu pedido fica guardado — tenta de novo daqui a pouco digitando *atacado*.'); }
+  if (!rv.mudou.length) return null;
+  if (!rv.cart.length) { await saveSession(sid, { ...session, carrinhoAtk: [], state: 'ATACADO' }); return respond('⚠️ Antes de fechar, conferi seu pedido no estoque:\n\n' + rv.mudou.join('\n') + '\n\nSeu pedido de atacado ficou vazio. Me diga o *nome* de outro produto. 😊'); }
+  await saveSession(sid, { ...session, carrinhoAtk: rv.cart, state: 'ATK_CART' });
+  return respond('⚠️ Antes de fechar, conferi seu pedido no estoque e *atualizei*:\n\n' + rv.mudou.join('\n') + '\n\n' + msgCarrinhoAtk(rv.cart));
+}
+// Sai do atacado para o varejo. Pedido de atacado guardado; termo que o atacado não achou é procurado no varejo (uma vez só).
+async function atkIrVarejo(session, sid, respond) {
+  const cart = session.carrinhoAtk || [];
+  const na = session.atkNaoAchou || null;
+  const termo = (na && na.t && (Date.now() - (na.ts || 0)) < 30 * 60000) ? String(na.t) : '';
+  const s2 = { ...session, state: 'MENU', atkFila: [], atkNaoAchou: null };
+  await saveSession(sid, s2);
+  const pre = cart.length ? '👍 Seu pedido de *atacado* ficou salvo — pra voltar é só digitar *atacado*.\n\n' : '';
+  if (termo && reconhecerProduto(norm(termo))) {
+    return await tratarTextoLivre(s2, sid, norm(termo), buildMenuPrincipal(), function (r, r2, r3) { return respond(pre + '🛒 *Varejo* — procurando *' + termo + '*:\n\n' + r, r2 || '', r3 || ''); });
+  }
+  return respond(pre + 'Beleza, vamos de *varejo*! 😊 Me diga o *nome do produto* ou escolha uma categoria:\n\n' + buildMenuPrincipal());
+}
 async function lerTabelaAtacado() {
   try {
     const r = await fetch(fbUrl('/vitaflow_atacado/tabela_fornecedor.json'));
@@ -2177,15 +2274,18 @@ function _sinonimosAtacado(termo) {
   return out;
 }
 function formatarListaAtk(lista) {
+  var _ult = '';   // v128: cabeçalho do estoque quando o item traz a marca (só existe com o PJC ativo)
   return lista.map(function (p, i) {
-    return emojis(i) + ' *' + p.nome + '* — R$ ' + p.preco.toFixed(2).replace('.', ',');
+    var _cab = '';
+    if (p.est && p.est !== _ult) { _ult = p.est; _cab = (i ? '\n' : '') + '*📦 ' + (ATK_EST[p.est] || '') + '*\n'; }
+    return _cab + emojis(i) + ' *' + p.nome + '* — R$ ' + p.preco.toFixed(2).replace('.', ',');
   }).join('\n');
 }
 function faltaAtk(subtotal) { return Math.max(0, ATACADO_MIN - subtotal); }
 function msgCarrinhoAtk(cart) {
   const sub = totalCarrinho(cart);
   const falta = faltaAtk(sub);
-  let m = `*🛒 SEU PEDIDO DE ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n`;
+  let m = `*🛒 SEU PEDIDO DE ATACADO*${estDoCarrinhoAtk(cart) === 'pjc' ? '\n_' + ATK_EST.pjc + '_' : ''}\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n`;
   if (falta > 0) m += `\n⚠️ Faltam *R$ ${falta.toFixed(2).replace('.', ',')}* pra atingir o mínimo de *R$ 3.000*.\n`;
   else m += `\n✅ *Mínimo de R$ 3.000 atingido!* Frete *GRÁTIS* 🚚\n`;
   m += `\n1️⃣ Adicionar mais um produto\n2️⃣ Finalizar pedido${falta > 0 ? ' _(precisa atingir R$ 3.000)_' : ''}\n3️⃣ Remover um item\n\n_Ou me manda o *nome* de outro produto do atacado._`;
@@ -2224,6 +2324,8 @@ function _navegacaoAtacado(t) {
   if (/^(comprar|compra|compras) (no |por |pelo |de )?atacado$/.test(s)) return 'apresentacao';
   if (/^(a )?tabela (de|do) atacado$/.test(s)) return 'apresentacao';
   if (/^(a |me manda a |manda a |quero a |ver a )?(tabela|tabela completa|tabela em pdf|pdf|tabela pdf)( por favor| pf| pfv)?$/.test(s)) return 'pdf';
+  // v128: "varejo" como mensagem INTEIRA (nunca pedaço de frase nem nome de produto)
+  if (/^((e|o|um|esse|este|quero|queria|gostaria de|ver|comprar|procurar|buscar|tem|ir|vou|pode ser|so|apenas) )*((produto|produtos|ele|isso|esse|este) )?((no|pro|para o|pelo|do|em|de) )?varejo( mesmo| entao)?( por favor| pf| pfv)?$/.test(s)) return 'varejo';
   return '';
 }
 async function atkAbrirBusca(session, sid, termo, respond) {
@@ -2244,16 +2346,31 @@ async function atkAbrirBusca(session, sid, termo, respond) {
     await saveSession(sid, { ...session, state: 'MENU', atkFila: [] });
     return respond(((session.carrinhoAtk || []).length ? '👍 Seu pedido de atacado fica guardado — pra voltar é só digitar *atacado*.\n\n' : 'Sem problema! 😊\n\n') + buildMenuPrincipal());
   }
+  if (_navAtk === 'varejo') return await atkIrVarejo(session, sid, respond);   // v128
   if (_navAtk === 'pdf') {
     await saveSession(sid, { ...session, state: 'ATACADO' });
     return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`);
   }
   const tab = await lerTabelaAtacado();
-  if (!tab.produtos.length) {
+  // v128: os DOIS estoques. O pedido aberto manda: com itens de um estoque, a busca é só nele (o outro vira aviso).
+  const pjc = ATACADO_PJC_ATIVO ? await lerCatalogoPjc() : { ok: true, pausado: true, produtos: [] };
+  const _pjcNoAr = pjc.ok && !pjc.pausado && pjc.produtos.length > 0;
+  const _estPed = estDoCarrinhoAtk(session.carrinhoAtk || []);
+  if (!tab.produtos.length && !_pjcNoAr) {
     await saveSession(sid, { ...session, state: 'ATACADO' });
     return respond(`Não consegui carregar a tabela de atacado agora. 😕\n\nVocê pode baixar a tabela completa em PDF aqui:\n${TABELA_ATACADO_URL}\n\nTenta de novo daqui a pouco, ou me manda o *nome* do produto que você quer.`);
   }
-  const achados = buscarAtacado(tab.produtos, termo);
+  const _achCde = tab.produtos.length ? buscarAtacado(tab.produtos, termo).map(function (p) { return _pjcNoAr ? Object.assign({}, p, { est: 'cde' }) : p; }) : [];
+  const _achPjc = _pjcNoAr ? buscarAtacado(pjc.produtos, termo) : [];
+  const achados = _estPed === 'cde' ? _achCde : (_estPed === 'pjc' ? _achPjc
+    : ((_achCde.length && _achPjc.length) ? _achCde.slice(0, 15).concat(_achPjc.slice(0, 15)) : _achCde.concat(_achPjc)));
+  const _outro = _estPed === 'cde' ? _achPjc : (_estPed === 'pjc' ? _achCde : []);
+  if (!achados.length && _outro.length) {
+    // tem, mas no OUTRO estoque — cada estoque é um pedido separado (regra da página do atacado)
+    const _eO = _estPed === 'cde' ? 'pjc' : 'cde';
+    await saveSession(sid, { ...session, state: 'ATK_CART' });
+    return respond(`Achei *${termo}* no *${ATK_EST[_eO]}*:\n\n${_outro.slice(0, 5).map(function (p) { return '• *' + p.nome + '* — R$ ' + _brAtk(p.preco); }).join('\n')}\n\nSó que o seu pedido aberto é do *${ATK_EST[_estPed]}*, e *cada estoque é um pedido separado* (mínimo de R$ 3.000 em cada). 😊\n\n👉 Feche este pedido primeiro e depois é só digitar *atacado* pra montar o outro — ou me manda o *nome* de outro produto do ${ATK_EST[_estPed]}.\n\n_Digite *2* no seu pedido pra finalizar, ou *3* pra remover itens._`);
+  }
   if (!achados.length) {
     // Não é nome de produto, é PERGUNTA ("Protocolo", "como uso isso?"). Antes o cliente
     // levava "Não encontrei Protocolo na tabela de atacado" e sumia (caso real, 08/09).
@@ -2269,13 +2386,15 @@ async function atkAbrirBusca(session, sid, termo, respond) {
       await saveSession(sid, { ...session, state: 'ATACADO' });
       return await responderComIA(sid, termo, contextoLista(session), respond);
     }
-    await saveSession(sid, { ...session, state: 'ATACADO' });
-    return respond(`Não encontrei *${termo}* na nossa tabela de atacado de hoje. 🤔\n\nPode ser que ele esteja *esgotado* no momento ou com outro nome na tabela. Tenta o *nome do princípio ativo* (ex.: *oxandrolona* no lugar de *anavar*) ou baixe a tabela completa em PDF:\n${TABELA_ATACADO_URL}\n\n_Se você quer esse produto no *varejo*, digite *menu* — lá o catálogo é outro._`);
+    await saveSession(sid, { ...session, state: 'ATACADO', atkNaoAchou: { t: String(termo).slice(0, 80), ts: Date.now() } });   // v128: o "3" e o "varejo" usam este termo (uma vez)
+    const _semPjc = (ATACADO_PJC_ATIVO && !pjc.ok) ? `\n\n⚠️ _Não consegui verificar o *${ATK_EST.pjc}* agora — o catálogo dele está em ${ATK_PAGINA_URL}_` : '';
+    return respond(`Não encontrei *${termo}* no nosso atacado de hoje. 🤔${_semPjc}\n\nPode ser que ele esteja *esgotado* no momento ou com outro nome. Tenta o *nome do princípio ativo* (ex.: *oxandrolona* no lugar de *anavar*).\n\n1️⃣ Baixar a *tabela completa* (PDF)\n2️⃣ Voltar ao *menu*\n3️⃣ Procurar *${termo}* no *varejo*\n\n_Ou me manda outro *nome de produto*._`);
   }
   const lista = achados.slice(0, 30);
-  await saveSession(sid, { ...session, state: 'ATK_LISTA', atkLista: lista });
+  await saveSession(sid, { ...session, state: 'ATK_LISTA', atkLista: lista, atkNaoAchou: null });
   const mais = achados.length > 30 ? `\n\n_(Mostrei 30 de ${achados.length} resultados — me manda um nome mais específico se precisar.)_` : '';
-  return respond(`*🏭 Atacado — resultados para "${termo}":*\n\n${formatarListaAtk(lista)}${mais}\n\n*Digite o número do produto:* 👇`);
+  const _doisEst = lista.some(function (p) { return p.est === 'cde'; }) && lista.some(function (p) { return p.est === 'pjc'; });
+  return respond(`*🏭 Atacado — resultados para "${termo}":*\n\n${formatarListaAtk(lista)}${mais}${_doisEst ? '\n\n_Cada estoque é um *pedido separado* (mínimo de R$ 3.000 em cada)._' : ''}\n\n*Digite o número do produto:* 👇`);
 }
 
 const MSG_PRAZO_VAREJO = `*📦 PRAZO DE POSTAGEM E ENTREGA — Varejo*
@@ -5473,7 +5592,7 @@ function ehErroNoPix(n) {
 // Número de contingência no MESMO formato do GAS (VF-DDMM-AX<HHmm> / atacado VF-DDMM-WX<HHmm>, fuso de São Paulo).
 // Usado SÓ quando o GAS não responde — assim a InfinitePay NUNCA carimba um UUID no pedido.
 function numeroContingenciaAthena(tipo) {
-  const L = tipo === 'W' ? 'W' : 'A';
+  const L = (tipo === 'W' || tipo === 'P') ? tipo : 'A';   // v128: P
   try {
     const p = new Intl.DateTimeFormat('en-GB', { timeZone:'America/Sao_Paulo', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(new Date());
     const g = t => (p.find(x => x.type === t) || {}).value || '00';
@@ -5483,12 +5602,13 @@ function numeroContingenciaAthena(tipo) {
   }
 }
 // v79: tipo 'W' = pedido de ATACADO (sessão com atacado:true); 'A' = varejo da Athena.
-function tipoNumeroAthena(session) { return (session && session.atacado) ? 'W' : 'A'; }
+// v128: 'P' = atacado do Estoque Pedro Juan Caballero (o pedido de atacado já vem em session.carrinho, com a marca do estoque).
+function tipoNumeroAthena(session) { return (session && session.atacado) ? (estDoCarrinhoAtk(session.carrinho || []) === 'pjc' ? 'P' : 'W') : 'A'; }
 // v80: 1º a função numero-pedido (mesmo site Netlify): conta direto no Firebase (mesmo contador do GAS, com trava),
 // ~0,3 s, sem Apps Script. O GAS fica de reserva. Só aceita número VF com a letra pedida (A ou W).
 const NUMERO_PEDIDO_URL = 'https://vitaflow-proxy.netlify.app/.netlify/functions/numero-pedido';
 async function gerarNumeroPedido(tipo) {
-  const t = tipo === 'W' ? 'W' : 'A';
+  const t = (tipo === 'W' || tipo === 'P') ? tipo : 'A';   // v128: P
   const valido = n => new RegExp('^VF-\\d{4}-' + t + 'X?\\d{2,4}$', 'i').test(String(n || '').trim());
   try {
     const r = await fetchT(NUMERO_PEDIDO_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tipo: t }) }, 4000);
@@ -5546,6 +5666,8 @@ async function mostrarResumoPedido(session, sid, respond) {
 }
 // ── RESUMO DO PEDIDO (atacado): mostra o resumo e coloca em ATK_CONFIRMAR. Chamado após a pergunta de observação.
 async function mostrarResumoAtacado(session, sid, respond) {
+  const _rvP = await _checarPjcAntesDeFechar(session, sid, respond);   // v128
+  if (_rvP) return _rvP;
   const cart = session.carrinhoAtk || [];
   const sub = totalCarrinho(cart);
   // v115: cashback (atacado participa igual) — aqui só mostra; o desconto e a reserva saem no gerarLinkPedido
@@ -5553,12 +5675,14 @@ async function mostrarResumoAtacado(session, sid, respond) {
   if (CASHBACK.ativa) { const _c = await cashbackDoCliente(sid); if (_c && _c.saldo > 0) { if (session.cbEscolha === 'usar') _cbAtk = cashbackAbate(_c.saldo, sub); _lnCbAtk = linhaCashbackEscolha(_c.saldo, _cbAtk); } }   // v116
   const _totAtk = Math.round((sub - _cbAtk) * 100) / 100;
   await saveSession(sid, { ...session, state:'ATK_CONFIRMAR', cashbackReais: _cbAtk });   // v116: o gerarLinkPedido usa este valor
-  return respond(`*📋 RESUMO DO PEDIDO — ATACADO*\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n🚚 Frete: *GRÁTIS* 🎉\n${_lnCbAtk}\n💰 *Total: R$ ${_totAtk.toFixed(2).replace('.', ',')}*\n\n*Confirma?*\n1️⃣ Sim, gerar o link de pagamento\n2️⃣ Não, voltar`);
+  return respond(`*📋 RESUMO DO PEDIDO — ATACADO*${estDoCarrinhoAtk(cart) === 'pjc' ? '\n_' + ATK_EST.pjc + '_' : ''}\n\n${resumoCarrinho(cart)}\n\n    Subtotal: R$ ${sub.toFixed(2).replace('.', ',')}\n🚚 Frete: *GRÁTIS* 🎉\n${_lnCbAtk}\n💰 *Total: R$ ${_totAtk.toFixed(2).replace('.', ',')}*\n\n*Confirma?*\n1️⃣ Sim, gerar o link de pagamento\n2️⃣ Não, voltar`);
 }
 // Fecha o pedido de ATACADO direto, sem passar pelo resumo/observação. Usado quando o
 // cliente responde ao convite de 3h com uma palavra de intenção (_ehQueroFechar): ele já
 // viu o carrinho, então pedir pra confirmar de novo só atrasa a venda.
 async function fecharAtacadoDireto(session, sid, respond, assistente) {
+  const _rvP = await _checarPjcAntesDeFechar(session, sid, respond);   // v128
+  if (_rvP) return _rvP;
   const cart = session.carrinhoAtk || [];
   const sub = totalCarrinho(cart);
   const sessAtk = { ...session, carrinho: cart, freteSelecionado: { label: 'Grátis (atacado)', valor: 0 },
@@ -7305,9 +7429,10 @@ exports.handler = async (event) => {
       const _txtAtk = (mensagem || '').trim();
       if (num === 1) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`); }
       if (num === 2) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + buildMenuPrincipal()); }
+      if (num === 3 && /^3\D*$/.test(_txtAtk) && session.atkNaoAchou && (Date.now() - (session.atkNaoAchou.ts || 0)) < 30 * 60000) return await atkIrVarejo(session, sid, respond);   // v128: opção 3 do "não encontrei"
       if (!_txtAtk || _txtAtk.length < 2) return respond('Me diga o *nome do produto* do atacado (ex.: retatrutida, bpc, testosterona), ou digite *1* pra baixar a tabela em PDF, ou *2* pra voltar ao menu.');
       // v84: "varejo" sai do atacado (igual à opção 2); "finalizar pedido" fecha (igual à opção 2 do pedido de atacado) em vez de virar busca de produto.
-      if (/^(varejo|no varejo|quero varejo|comprar no varejo|ir (pro|para o) varejo)$/.test(n)) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + buildMenuPrincipal()); }
+      if (_navegacaoAtacado(_txtAtk) === 'varejo') return await atkIrVarejo(session, sid, respond);   // v128 (era só "varejo"/"no varejo")
       if (_ehFinalizarTxt(_txtAtk)) {
         const _cartF = session.carrinhoAtk || [];
         if (!_cartF.length && /^(encerr|fim|sair|cancel|parar|terminar)/.test(n.trim())) { await saveSession(sid, { ...session, state:'MENU', atkFila: [] }); return respond('Sem problema! 😊\n\n' + buildMenuPrincipal()); }   // v109: "Encerrar" sem pedido = sair
@@ -7331,7 +7456,7 @@ exports.handler = async (event) => {
       if (!num || num < 1 || num > lista.length) return respond(`Digite um número entre 1 e ${lista.length}, ou me manda outro *nome de produto* do atacado.`);
       const prod = lista[num - 1];
       await saveSession(sid, { ...session, state:'ATK_QTD', atkSel: prod });
-      return respond(`Você escolheu:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.', ',')} _(atacado)_\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
+      return respond(`Você escolheu:\n📦 *${prod.nome}*\n💰 R$ ${prod.preco.toFixed(2).replace('.', ',')} _(atacado${prod.est ? ' · ' + ATK_EST[prod.est] : ''})_\n\n*Quantas unidades você quer?*\n_(Digite o número)_`);
     }
 
     if (state === 'ATK_QTD') {
@@ -7344,8 +7469,13 @@ exports.handler = async (event) => {
       if (!num || num < 1 || num > 999) return respond('Informe uma quantidade válida (1 a 999):');
       const prod = session.atkSel || {};
       const cart = session.carrinhoAtk || [];
+      const _estP = prod.est === 'pjc' ? 'pjc' : 'cde';   // v128
+      if (cart.length && estDoCarrinhoAtk(cart) !== _estP) {
+        await saveSession(sid, { ...session, state:'ATK_CART', atkSel: null });
+        return respond(`*${prod.nome}* é do *${ATK_EST[_estP]}*, e o seu pedido aberto é do *${ATK_EST[estDoCarrinhoAtk(cart)]}*. *Cada estoque é um pedido separado* (mínimo de R$ 3.000 em cada). 😊\n\nFeche este pedido primeiro e depois é só digitar *atacado* pra montar o outro.\n\n${msgCarrinhoAtk(cart)}`);
+      }
       const ix = cart.findIndex(function (i) { return i.nome === prod.nome; });
-      if (ix >= 0) cart[ix].qtd += num; else cart.push({ nome: prod.nome, preco: prod.preco, qtd: num, atacado: true });
+      if (ix >= 0) cart[ix].qtd += num; else cart.push(_estP === 'pjc' ? { nome: prod.nome, preco: prod.preco, qtd: num, atacado: true, est: 'pjc', pid: prod.pid || '' } : { nome: prod.nome, preco: prod.preco, qtd: num, atacado: true });
       // v109: lista colada no atacado → já busca o PRÓXIMO item da lista
       const _filaAtk = session.atkFila || [];
       if (_filaAtk.length) {
@@ -8741,7 +8871,7 @@ async function vigiaAthena(event, res, marca) {
   _vigiaUltAlerta[idv] = agora;
   const quem = String(b.assistente || b.nome_assistente || 'Athena');
   await enviarTelegram('👁️ VIGIA ' + quem.toUpperCase() + ' — ' + motivo + '\n📱 ' + (fone || ('sub ' + sub)) + '\n💬 Cliente: ' + msg.slice(0, 200) + '\n🤖 Resposta: ' + resp.replace(/\s+/g, ' ').slice(0, 250) +
-    (socorro ? '\n🛟 A Ronda vai tentar responder por ela.' : ''));
+    (socorro ? '\n🛟 Pedi para a Ronda responder. Se ela não conseguir, você recebe um "Responda você".' : ''));
 }
 // v124.1: marcador gravado na CHEGADA da mensagem (antes de responder). Devolve o id gravado ou null (falhou = sem socorro para ela).
 function _marcarChegada(event) {
