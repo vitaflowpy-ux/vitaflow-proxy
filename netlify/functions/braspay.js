@@ -9,6 +9,8 @@
 //   • O Pix é SEMPRE Bras Pay: ?modo=1 responde sempre pix:'braspay' e a criação nunca mais recusa com 'pix_na_infinitepay'.
 //   • O campo antigo infinitepay passa a responder SEMPRE 'desligada': tela que ainda não foi atualizada continua só com o Pix da
 //     Bras Pay (nenhuma tela antiga religa o Pix reserva/checkout da InfinitePay). Os nós pagamento_pix e pagamento_infinitepay ficam sem uso.
+// v5.1 (19/11/2026): Thiago — "quero acrescentar a opção de mandar a chave pix fixa pelo sistema orçamento também": acao:'alternativo'
+//   aceita a referência L-… do Orçamento quando canal:'orcamento' (o pagamento cai como "LINK PAGO (Orçamento)", igual ao Pix gerado lá).
 //   Thiago: "alguns clientes estão tendo dificuldade de pagar com a chave pix gerada na hora… quero deixar essa chave como uma segunda
 //   opção… não quero essa chave pix exposta" · "ele tem que conseguir resolver isso de forma simples e rapida" · USDT: "quero sim"
 //   (se não tiver taxa, receber em reais; se tiver, em USDT; preço igual ao do Pix).
@@ -451,9 +453,9 @@ async function alternativo(corpo, ip) {
   if (!cartaz || !brcodeValido(cartaz)) return resposta(200, { ok: false, erro: 'alternativo_indisponivel' });
   const pedido = String(corpo.referencia || '').trim().split('~')[0];
   const valor = Math.round(Number(corpo.valorCentavos || 0));
-  if (!refValida(pedido) || /^L-/i.test(pedido)) return resposta(400, { ok: false, erro: 'referencia_invalida' });
+  if (!refValida(pedido) || (/^L-/i.test(pedido) && corpo.canal !== 'orcamento')) return resposta(400, { ok: false, erro: 'referencia_invalida' });   // v5.1: o Orçamento (L-…) também pede o Pix fixo
   if (!(valor >= 100 && valor <= 5000000)) return resposta(400, { ok: false, erro: 'valor_invalido' });
-  const canal = ['site', 'athena', 'portal'].indexOf(corpo.canal) >= 0 ? corpo.canal : 'site';
+  const canal = ['site', 'athena', 'portal', 'orcamento'].indexOf(corpo.canal) >= 0 ? corpo.canal : 'site';
   try {
     const lista = await alternativosRecentes();
     const agora = Date.now();
@@ -663,8 +665,8 @@ exports.handler = async function (event) {
         alternativo: !!(cartaz && brcodeValido(cartaz)), usdt: { habilitado: !!(u.habilitado && uc.ativo), redes: u.habilitado && uc.ativo ? u.redes : [] } }) };
     }
     if (q.cartaz) return paginaCartaz();
-    if (q.diag) { await lerUsdt(); return resposta(200, { ok: true, versao: 'v5', usdt: _usdtCache.diag, alternativo: brcodeValido(cartazAtual()) }); }
-    return resposta(200, { ok: true, servico: 'braspay', versao: 'v5', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
+    if (q.diag) { await lerUsdt(); return resposta(200, { ok: true, versao: 'v5.1', usdt: _usdtCache.diag, alternativo: brcodeValido(cartazAtual()) }); }
+    return resposta(200, { ok: true, servico: 'braspay', versao: 'v5.1', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
                            alternativo: brcodeValido(cartazAtual()) });
   }
   if (event.httpMethod !== 'POST') return resposta(405, { ok: false, erro: 'metodo' });
