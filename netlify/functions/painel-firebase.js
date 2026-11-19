@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   painel-firebase.js — O FIREBASE PARA O PAINEL ÚNICO (VitaFlow)  ·  v2  ·  17/11/2026 (v1 02/11/2026)
+   painel-firebase.js — O FIREBASE PARA O PAINEL ÚNICO (VitaFlow)  ·  v4  ·  19/11/2026 (v1 02/11/2026)
+   v4: + gravar vitaflow_sync/conferente (🔎 conferente de compras, Compras v80+) e vitaflow_sync/pjc_freteiro_msg (lista do freteiro para o
+       robô das 8h, Compras v88+) — o Compras v89 passa a rodar dentro do painel (v46). Só esses 2 nós; o resto = v3.
    v2: + gravar atacado_pjc_ajustes, vinculos_pjc, atacado_cde_pjc e precos_override (aba 🏭 Estoque PJC do Publicar dentro do painel)
    Netlify Function no repo vitaflow-proxy → netlify/functions/painel-firebase.js
    URL: https://vitaflow-proxy.netlify.app/.netlify/functions/painel-firebase
@@ -44,7 +46,10 @@ var GRAVAR = ['vitaflow_compras', 'vitaflow_compras_snapshots', 'vitaflow_compra
   /* v2 (17/11/2026): aba 🏭 Estoque PJC e ⚖️ CDE × PJC do Publicar Atacado dentro do painel (v40) — os mesmos nós que o conversor_publicar v-atk19 grava */
   'vitaflow_sync/atacado_pjc_ajustes', 'vitaflow_sync/vinculos_pjc', 'vitaflow_sync/atacado_cde_pjc', 'vitaflow_sync/precos_override',
   /* v3 (17/11/2026): chave do 🗃️ Aviso de estoque do Compras v76 (painel v41) — vale em todos os aparelhos */
-  'vitaflow_sync/compras_config'];
+  'vitaflow_sync/compras_config',
+  /* v4 (19/11/2026): Compras v89 no painel v46 — pares aprovados/exportações do 🔎 conferente e a lista do freteiro que o robô das 8h lê
+     (pjc_freteiro_msg_enviado NÃO entra: só o robô grava lá) */
+  'vitaflow_sync/conferente', 'vitaflow_sync/pjc_freteiro_msg'];
 var QUERY_OK = ['shallow', 'orderBy', 'startAt', 'endAt', 'equalTo', 'limitToFirst', 'limitToLast', 'print'];
 
 var CORS = {
