@@ -1,6 +1,18 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v12  ·  27/10/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v13  ·  18/11/2026
+   v13 (18/11, Thiago: "sim, pode" — destravar o bot; análise de 20 conversas, Claude + GPT-6):
+     (1) O BOT NÃO FICAVA CALADO quando a logística respondia à mão. Causa: o WhatsApp passou a mandar a mensagem enviada pelo
+         celular (fromMe) com o identificador novo da conversa ("…@lid") no lugar do telefone. O silêncio era gravado nessa chave e
+         a conversa do cliente fica na chave do TELEFONE — o bot nunca via o silêncio (nem o #bot, nem o #voltar). Agora:
+         · cada mensagem do cliente guarda a ligação lid → telefone em vitaflow_sync/logistica/lid/<lid>;
+         · a mensagem à mão que chega só com o lid é levada para a conversa certa;
+         · silêncio que ficou gravado na chave do lid (logística falou primeiro, ou é de antes da v13) é trazido para a conversa
+           na primeira mensagem do cliente.
+     (2) Agradecimento ou "ok" solto ("obrigada", "blz", "👍") com o pedido já aberto: o bot não responde mais "Não entendi".
+     (3) "Atendimento", "pode conversar comigo?", "preciso falar com você" e parecidas passam a ser entendidas como pedido de
+         atendente (texto `humano`), em vez de "Não entendi". A regra de quando abre protocolo NÃO mudou.
+   v12 · 27/10/2026:
    v12 (27/10, Thiago: atacado PJC com prefixo P): o número digitado aceita a letra P (VF-DDMM-P001). Bloco de identificação:
      [SMAVW] → [SMAVWP], igual à Athena v110 e à página de rastreio v10. Resto = v11.
    v11 (ordem do Thiago, 05/10: "quero que resolva e que fique simples pois não está funcionando" — a logística mandava #bot
@@ -98,7 +110,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v11';
+var VERSAO = 'v13';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -142,6 +154,28 @@ function chaveNumero(n) {
   var d = soDigitos(n);
   if (d.indexOf('55') === 0 && (d.length === 12 || d.length === 13)) return '55' + d.substr(2, 2) + d.slice(-8);
   return d;
+}
+/* v13: identificador novo da conversa no WhatsApp ("123…@lid"). Devolve a chave do Firebase ("123…_lid") ou ''. */
+function chaveLid(body) {
+  var c = String((body && body.chatLid) || '');
+  if (!/@lid$/i.test(c)) { var p = String((body && body.phone) || ''); c = /@lid$/i.test(p) ? p : ''; }
+  return (c && soDigitos(c)) ? chaveFb(c) : '';
+}
+/* v13: "obrigada", "ok", "blz", "👍"… sozinhos — não pedem resposta */
+var AGRADECE = ['obrigado', 'obrigada', 'obg', 'obgd', 'obgda', 'obgdo', 'brigado', 'brigada', 'brigadao', 'valeu', 'vlw', 'agradeco', 'grato', 'grata'];
+var CONCORDA = ['ok', 'okay', 'okk', 'blz', 'beleza', 'certo', 'certinho', 'perfeito', 'show', 'top', 'combinado', 'entendi', 'entendido', 'joia', 'otimo', 'tranquilo', 'amem'];
+var ENCHE = ['muito', 'mto', 'mt', 'muitissimo', 'ta', 'tudo', 'bom', 'bem', 'entao', 'por', 'tudo', 'eu', 'que', 'pela', 'pelo', 'atencao', 'retorno', 'ajuda', 'viu', 'dia', 'tarde', 'noite', 'boa', 'e', 'ate', 'mais', 'deus', 'abencoe', 'te', 'voce', 'vc', 'vcs', 'voces'];
+function soAgradecimento(texto) {
+  var bruto = String(texto || '');
+  if (!bruto.trim() || bruto.length > 60 || /[?0-9]/.test(bruto)) return false;
+  var pal = low(bruto).replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+  if (!pal.length) return true;                       /* só emoji / pontuação */
+  var temNucleo = false;
+  for (var i = 0; i < pal.length; i++) {
+    if (AGRADECE.indexOf(pal[i]) >= 0 || CONCORDA.indexOf(pal[i]) >= 0) { temNucleo = true; continue; }
+    if (ENCHE.indexOf(pal[i]) < 0 && !/^(k+|rs+|ha+)$/.test(pal[i])) return false;
+  }
+  return temNucleo;
 }
 function numeroNaLista(numero, lista) {
   var k = chaveNumero(numero);
@@ -1165,7 +1199,7 @@ function opcaoPorPalavra(t, snap) {
   if (/prazo|quando chega|quanto tempo|previsao/.test(s)) return 2;
   return 0;
 }
-function pedeHumano(t) { return /\b(atendente|humano|pessoa|alguem|falar com (a|o)? ?(ana|logistica|responsavel|gerente))\b/.test(low(t)); }
+function pedeHumano(t) { return /\b(atendente|atendimento|humano|pessoa|alguem|falar com (a |o )?(ana|logistica|responsavel|gerente|voce|vc|vcs|voces)|(conversar|falar) comigo|me (responde|responda|atende|atenda)|pode me responder|vc pode responder|voce pode responder)\b/.test(low(t)); }
 function ehForaAssunto(t) { return /\b(comprar|quero comprar|preco|precos|quanto custa|catalogo|cupom|promocao|promocoes|tabela de preco)\b/.test(low(t)); }
 
 /* ------------------------------------------------------------------ fluxo da conversa */
@@ -1521,23 +1555,63 @@ exports.handler = async function (event) {
   if (cfg.modo === 'desligado') return resp(200, 'bot desligado no painel');
   if (await ehExcecao(phone)) return resp(200, 'numero na lista de excecoes — ignorado');   /* v10: vale também para o fromMe */
 
-  if (body.fromMe) return resp(200, await tratarFromMe(body, cfg, k, phone));
+  var lidK = chaveLid(body);   /* v13 */
+  if (body.fromMe) {
+    /* v13: a mensagem à mão chegou só com o lid → acha a conversa de verdade (a do telefone) */
+    if (lidK && k === lidK) {
+      var mapa = null;
+      try { mapa = await fbGet(RAIZ + '/lid/' + lidK); } catch (eL) { mapa = null; }
+      if (mapa && mapa.k && mapa.telefone) {
+        k = String(mapa.k); phone = String(mapa.telefone);
+        if (await ehExcecao(phone)) return resp(200, 'numero na lista de excecoes — ignorado');
+      }
+    }
+    return resp(200, await tratarFromMe(body, cfg, k, phone));
+  }
 
   if (chaveNumero(phone) === chaveNumero(cfg.ana_whatsapp)) return resp(200, 'numero da Ana — ignorado');   /* v9: sem exceção da lista de teste */
 
   var trava = await pegarTrava(k);   /* v6: uma mensagem por vez nesta conversa */
-  try { return await atenderCliente(body, cfg, k, phone); }
+  try { return await atenderCliente(body, cfg, k, phone, lidK); }
   finally { await soltarTrava(k, trava); }
 };
 
-async function atenderCliente(body, cfg, k, phone) {
+async function atenderCliente(body, cfg, k, phone, lidK) {
   var agora = Date.now();
   var conv = await fbGet(RAIZ + '/conversas/' + k) || {};
   var mid = String(body.messageId || '');
+  /* v13: guarda a ligação lid → telefone e traz o silêncio que ficou gravado na chave do lid */
+  if (lidK && lidK !== k && conv.lid !== lidK) {
+    try {
+      await fbPut(RAIZ + '/lid/' + lidK, { k: k, telefone: phone, t: agora });
+      var orf = await fbGet(RAIZ + '/conversas/' + lidK);
+      var voltouDepois = orf && conv.bot_volta_ts && Number(orf.humano_ts || 0) < Number(conv.bot_volta_ts);
+      if (orf && Number(orf.silencio_ate) > agora && !voltouDepois) {
+        var tras = { silencio_ate: Number(orf.silencio_ate), silencio_desde: Number(orf.silencio_desde) || agora,
+          humano_ts: Math.max(Number(orf.humano_ts) || 0, Number(conv.humano_ts) || 0), telefone: phone };
+        await fbPatch(RAIZ + '/conversas/' + k, tras);
+        conv.silencio_ate = tras.silencio_ate; conv.silencio_desde = tras.silencio_desde; conv.humano_ts = tras.humano_ts;
+        try {
+          await fbPut(RAIZ + '/silencio/' + k, { ate: tras.silencio_ate, desde: tras.silencio_desde, telefone: phone,
+            nome: String(conv.nome_whatsapp || body.senderName || body.chatName || '').slice(0, 80),
+            pedido: (typeof conv.pedido === 'string') ? conv.pedido : '', protocolo: conv.protocolo ? String(conv.protocolo) : '' });
+          await fbDelete(RAIZ + '/silencio/' + lidK);
+        } catch (eM) { /* a lista do painel é só um espelho */ }
+        await fbPatch(RAIZ + '/conversas/' + lidK, { silencio_ate: 0, silencio_desde: 0, levado_para: k });
+      }
+      await fbPatch(RAIZ + '/conversas/' + k, { lid: lidK });
+      conv.lid = lidK;
+    } catch (eLid) { console.error('[logistica] lid: ' + eLid.message); }
+  }
   if (mid && (conv.ult_ids || []).indexOf(mid) >= 0) return resp(200, 'repetida');
   if (conv.silencio_ate && conv.silencio_ate > agora) {
     if (mid) await fbPatch(RAIZ + '/conversas/' + k, { ult_ids: (conv.ult_ids || []).concat([mid]).slice(-15) });
     return resp(200, 'silencio (humano atendendo)');
+  }
+  /* v13: "obrigada" / "ok" / "👍" soltos, com o pedido já aberto no menu → não responde nada */
+  if ((conv.estado === 'MENU' || conv.estado === 'VOLTA') && conv.pedido && body.text && body.text.message && soAgradecimento(body.text.message)) {
+    if (mid) await fbPatch(RAIZ + '/conversas/' + k, { ult_ids: (conv.ult_ids || []).concat([mid]).slice(-15) });
+    return resp(200, 'agradecimento — sem resposta');
   }
 
   /* v4: foto do ponto da conversa ANTES de processar — volta pra ela se nada for entregue */
@@ -1596,6 +1670,7 @@ async function atenderCliente(body, cfg, k, phone) {
 exports._t = {
   acharNumeroPedido: acharNumeroPedido, acharCPF: acharCPF, analisarCPF: analisarCPF,
   identificacaoIncompleta: identificacaoIncompleta, acharDiaMes: acharDiaMes, acharEmail: acharEmail, cpfValido: cpfValido,
+  chaveLid: chaveLid, soAgradecimento: soAgradecimento, pedeHumano: pedeHumano,
   chaveNumero: chaveNumero, numeroNaLista: numeroNaLista, dentroHorario: dentroHorario, proximaAbertura: proximaAbertura,
   textoAbertura: textoAbertura, categoria: categoria, jaPostado: jaPostado, entregaInfo: entregaInfo,
   impressao: impressao, opcaoPorPalavra: opcaoPorPalavra, T_PADRAO: T_PADRAO, CFG_PADRAO: CFG_PADRAO,
