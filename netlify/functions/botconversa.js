@@ -1,5 +1,16 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v130 (19/11/2026 — Thiago: "Black Week 20–22/11, desconto fixo por faixa… não precisará de cupom… os 3% de desconto da athena não estarão
+//   ligados durante essa promoção… vale para todo o site, exceto atacado e linha vitabeauty" · "frete grátis não existe durante essa promoção!
+//   o cliente escolhe uma caso ele tenha algum cupom de desconto"):
+//   • PROMO_SEMANA_CLIENTE (a mesma mecânica da Semana do Cliente) = BLACK WEEK, 20/11 00h a 22/11 23h59: R$ 500→50, 1.000→100, 1.500→250,
+//     2.000→300, 2.500→400, 3.000→500, sobre o valor em PRODUTOS do varejo. Fora (e sem contar para a faixa): VitaBeauty e preço promocional
+//     por quantidade. A lista "sem desconto" CONTA (só VitaBeauty e atacado ficam fora — Thiago).
+//   • pctAthena(): os 3% ficam em 0 enquanto a Black Week vale (voltam sozinhos em 23/11). FRETE_GRATIS_AUTO.pausas + 20 a 22/11.
+//   • Faixa × cupom: o resumo mostra A) Black Week e B) cupom e o cliente escolhe (A/B/trocar — o mesmo mecanismo do frete grátis).
+//   • Pedido fechado pela faixa sai com cupomCodigo BLACK50…BLACK500 (coluna do cupom da planilha — contagem por faixa), sem docId.
+//   • Opção 8 / "promo", menu, saudação e quadro da IA (que deixa de dizer "Black Week não anunciada" enquanto ela vale).
+//   ⚠️ A MESMA promoção existe no carrinho do site (main-cart-footer.liquid). Resto = v129.
 // v129 (19/11/2026 — Thiago: "a infinitepay aprovou a analise de segurança… irei voltar a aceitar cartão. agora será o seguinte: chave pix
 //   permanece a da braspay. cartão de crédito será infinitepay" · "obviamente o aviso antigo não irá mais existir").
 //   • O interruptor que vale agora é o do CARTÃO (função braspay v5, ?modo=1 → cartao:'infinitepay'|'desligado'). Ligado: a Athena volta a
@@ -933,6 +944,8 @@ function baseParcelamento(session, nMsg){
 
 // ── Desconto Athena e Cupons ──────────────────────────────────────────────────
 const DESCONTO_ATHENA_PCT = 3;
+// v130: durante a BLACK WEEK (PROMO_SEMANA_CLIENTE) os 3% ficam desligados (Thiago, 19/11). Volta sozinho no fim da promoção.
+function pctAthena(){ return semanaClienteAtiva() ? 0 : DESCONTO_ATHENA_PCT; }
 // ── PROMO DIA DOS PAIS: compre 2+ do MESMO produto → 10% off nessas unidades ──
 // Automática. NÃO acumula com o 3%/cupom: produto em dobro leva só os 10%; o 3%/cupom vale nos demais. Expira sozinha em PROMO_DOBRO.fim.
 // Pra desligar: ativa:false.
@@ -941,12 +954,17 @@ function promoDobroAtiva(){ return PROMO_DOBRO.ativa && Date.now() <= new Date(P
 
 // ── SEMANA DO CLIENTE (desconto por FAIXA do valor de PRODUTOS — varejo, automático) ──────────
 // Não acumula com 3%/cupom/promo: vale sempre o MAIOR. Atacado NÃO entra. Liga/desliga pela data.
-const PROMO_SEMANA_CLIENTE = {
-  ativa: true,
-  ini: '2026-09-13T00:00:00-03:00',
-  fim: '2026-09-20T23:59:59-03:00',   // 19/09: estendida até domingo 20/09 (Thiago)
-  faixas: [ { min: 500, desc: 50 }, { min: 1000, desc: 100 }, { min: 1500, desc: 225 }, { min: 2000, desc: 300 } ]  // R$
+const PROMO_SEMANA_CLIENTE = {   // v130: BLACK WEEK (20 a 22/11/2026)
+  ativa: true, nome: 'Black Week', marca: 'BLACK',
+  ini: '2026-11-20T00:00:00-03:00',
+  fim: '2026-11-22T23:59:59-03:00',
+  faixas: [ { min: 500, desc: 50 }, { min: 1000, desc: 100 }, { min: 1500, desc: 250 }, { min: 2000, desc: 300 }, { min: 2500, desc: 400 }, { min: 3000, desc: 500 } ]  // R$
 };
+function blackWeekTermina(){   // "termina domingo (22/11) às 23h59 (faltam X)" / último dia
+  const ult = new Date('2026-11-22T00:00:00-03:00').getTime();
+  return Date.now() >= ult ? `*ÚLTIMO DIA* — termina *hoje às 23h59* (faltam ${tempoRestanteTxt(PROMO_SEMANA_CLIENTE.fim)})` : `termina *domingo (22/11) às 23h59* (faltam ${tempoRestanteTxt(PROMO_SEMANA_CLIENTE.fim)})`;
+}
+function comBlackWeek(msg){ return semanaClienteAtiva() ? msgPromoBlackWeek() + `\n\n━━━━━━━━━━\n\n` + msg : msg; }
 function semanaClienteAtiva(){
   const p = PROMO_SEMANA_CLIENTE;
   if (!p.ativa) return false;
@@ -1489,13 +1507,15 @@ function ehIntencaoSorteio(n){
 async function contextoPromo(){
   const linhas = [];
   if (ATACADO_PAUSADO) linhas.push('ATACADO PAUSADO (desde 26/10/2026): o atacado está TEMPORARIAMENTE PAUSADO — estamos aguardando a estabilização do câmbio para atualizar as tabelas de atacado. NÃO ofereça, NÃO monte e NÃO passe preço de atacado; se perguntarem, diga exatamente isso e ofereça o varejo (digite menu). Não dê previsão de volta.');   // v105
-  linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
+  if (semanaClienteAtiva()) linhas.push(`ATENÇÃO — DURANTE A BLACK WEEK (20 a 22/11) o desconto Athena de ${DESCONTO_ATHENA_PCT}% e o FRETE GRÁTIS AUTOMÁTICO estão DESLIGADOS: NÃO ofereça nem mencione 3% nem frete grátis no varejo até domingo 22/11 23h59. O benefício do varejo nesses dias é o desconto por faixa da Black Week (abaixo).`);   // v130
+  else linhas.push(`Benefício padrão SEMPRE ativo: desconto Athena de ${DESCONTO_ATHENA_PCT}% em todos os produtos, aplicado no fechamento (vale o MAIOR entre esse ${DESCONTO_ATHENA_PCT}% e um cupom do cliente; não acumulam).`);
   linhas.push(`DEFINIÇÃO — "VAREJO": são os produtos NORMAIS da VitaFlow (os MESMOS que você oferece fora do modo atacado, iguais aos do site vitaflowoficial.com), vendidos em QUALQUER quantidade. Quando o cliente falar "varejo", é disso que ele fala — é o padrão de compra, NÃO é o atacado (que tem mínimo de R$ 3.000 e frete grátis). Os 3% e as promoções valem no varejo.`);
   try { linhas.push(contextoHistoricoMes()); } catch (e) {}   // v125 (no começo: a Athena 2.0 lê só os primeiros 6.000 caracteres do quadro)
-  if (!BLACK_FRIDAY.anunciada) linhas.push('BLACK FRIDAY (também Black Week e Cyber Monday): a VitaFlow AINDA NÃO ANUNCIOU a Black Friday — NÃO existe data, porcentagem, lista de produtos nem regra definida. Se o cliente perguntar (vai ter? quando? de quanto? quais produtos?), responda só: "' + MSG_BLACK_NAO_ANUNCIADA_IA + '" É PROIBIDO dizer qualquer data, dizer que "vai ter descontos especiais" ou "produtos selecionados", dizer que "a equipe libera perto da data" ou prometer qualquer benefício para a Black Friday. Depois disso, pode oferecer o que vale HOJE.');   // v125 (caso real 17/11)
+  if (!BLACK_FRIDAY.anunciada && semanaClienteAtiva()) linhas.push('BLACK FRIDAY (27/11) e Cyber Monday: AINDA NÃO ANUNCIADAS — não diga data, porcentagem nem regra para elas. O que existe e vale AGORA é a BLACK WEEK (20 a 22/11), descrita abaixo; se perguntarem de "Black Friday", explique a Black Week que está valendo e diga que para a sexta 27/11 ainda não há anúncio.');   // v130
+  else if (!BLACK_FRIDAY.anunciada) linhas.push('BLACK FRIDAY (também Black Week e Cyber Monday): a VitaFlow AINDA NÃO ANUNCIOU a Black Friday — NÃO existe data, porcentagem, lista de produtos nem regra definida. Se o cliente perguntar (vai ter? quando? de quanto? quais produtos?), responda só: "' + MSG_BLACK_NAO_ANUNCIADA_IA + '" É PROIBIDO dizer qualquer data, dizer que "vai ter descontos especiais" ou "produtos selecionados", dizer que "a equipe libera perto da data" ou prometer qualquer benefício para a Black Friday. Depois disso, pode oferecer o que vale HOJE.');   // v125 (caso real 17/11)
   if (semanaClienteAtiva()) {
-    const _fx = PROMO_SEMANA_CLIENTE.faixas.map(f => `acima de R$ ${f.min} ganha R$ ${f.desc} OFF`).join('; ');
-    linhas.push(`PROMOÇÃO ATIVA — SEMANA DO CLIENTE VitaFlow (13 a 20/09): desconto AUTOMÁTICO por faixa do valor em PRODUTOS (varejo): ${_fx}. É automático no fechamento — o cliente NÃO digita cupom. NÃO acumula com cupom nem com os ${DESCONTO_ATHENA_PCT}% (vale sempre o MAIOR). NÃO vale no atacado. SEMPRE que o cliente perguntar de promoção/desconto, ou estiver perto de uma faixa, DIVULGUE e incentive completar o valor pra subir de faixa.`);
+    const _fx = PROMO_SEMANA_CLIENTE.faixas.map(f => `a partir de R$ ${f.min} ganha R$ ${f.desc} OFF`).join('; ');
+    linhas.push(`PROMOÇÃO ATIVA — BLACK WEEK VitaFlow (sexta 20/11 00h a domingo 22/11 23h59): desconto AUTOMÁTICO e FIXO por faixa do valor em PRODUTOS do VAREJO: ${_fx}. É automático no fechamento (aqui e no site) — o cliente NÃO digita cupom. NÃO participam e NÃO contam para a faixa: a linha VitaBeauty e o ATACADO. NÃO acumula: se o cliente tiver um cupom de desconto, o resumo mostra as duas opções (A = Black Week, B = cupom) e ELE escolhe. Nesses dias NÃO existe frete grátis automático nem os ${DESCONTO_ATHENA_PCT}% da Athena. ESCASSEZ (verdadeira): o estoque é limitado e depende dos fornecedores — o desconto vale até domingo, mas o estoque pode acabar antes; NUNCA invente quantidade restante. SEMPRE que o cliente perguntar de promoção/desconto, ou estiver perto de uma faixa, DIVULGUE e incentive completar o valor pra subir de faixa.`);
   }
   // Promoções de PREÇO POR QUANTIDADE (config em cupons_vitaflow/_vfTipo:promo_preco) — pra a IA DIVULGAR.
   try {
@@ -1588,7 +1608,8 @@ const FRETE_GRATIS_AUTO = { ativo: true, min: 1000,
   pausas: [ { de: '2026-10-10T00:00:00-03:00', ate: '2026-10-12T23:59:59-03:00', motivo: 'DEZ10' },
             { de: '2026-10-15T00:00:00-03:00', ate: '2026-10-15T23:59:59-03:00', motivo: 'PROF15' },
             { de: '2026-10-31T00:00:00-03:00', ate: '2026-10-31T23:59:59-03:00', motivo: 'HALLOWEEN15' },   // v113
-            { de: '2026-11-11T00:00:00-03:00', ate: '2026-11-11T23:59:59-03:00', motivo: 'DUPLO11' } ] };   // v118
+            { de: '2026-11-11T00:00:00-03:00', ate: '2026-11-11T23:59:59-03:00', motivo: 'DUPLO11' },   // v118
+            { de: '2026-11-20T00:00:00-03:00', ate: '2026-11-22T23:59:59-03:00', motivo: 'BLACKWEEK' } ] };   // v130
 function freteGratisAutoPausa(){
   const agora = Date.now();
   return (FRETE_GRATIS_AUTO.pausas || []).find(p => agora >= new Date(p.de).getTime() && agora <= new Date(p.ate).getTime()) || null;
@@ -1748,18 +1769,19 @@ ${dez10UltimoDia() ? `⏰ *HOJE É O ÚLTIMO DIA!* Termina *hoje às 23h59* — 
 _Alguns produtos já saem com preço especial — nesses o cupom não é necessário. Não acumula com outros cupons nem promoções._`;
 }
 // ── SEMANA DO CLIENTE: mensagem da opção "promoções" (auto-liga 13/09, desliga depois de 20/09) ──
-const MSG_PROMO_SEMANA = `🧡 *SEMANA DO CLIENTE VITAFLOW!* 🧡
+function msgPromoBlackWeek(){
+  const _n = v => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `🖤 *BLACK WEEK VITAFLOW!* 🖤
 
-Uma semana inteira pra retribuir a sua confiança — e *quanto maior o pedido, maior o presente!* O desconto é *automático no carrinho* (sem cupom, sem complicação):
+*Quanto maior o pedido, maior o desconto* — e é *automático* (sem cupom), aqui comigo e no site:
 
-🛒 Acima de *R$ 500* → *R$ 50 OFF*
-🛒 Acima de *R$ 1.000* → *R$ 100 OFF*
-🛒 Acima de *R$ 1.500* → *R$ 225 OFF*
-🛒 Acima de *R$ 2.000* → *R$ 300 OFF*
+` + PROMO_SEMANA_CLIENTE.faixas.map(f => `🛒 A partir de *R$ ${_n(f.min)}* → *R$ ${f.desc} OFF*`).join('\n') + `
 
-⏳ Só de *13 a 20 de setembro!* 🔥
+⏳ De *sexta (20/11) a domingo (22/11)* — ${blackWeekTermina()}.
+📦 *Estoque limitado:* o desconto vale até domingo, mas o estoque pode não durar até lá.
 
-_Desconto nos produtos (varejo), aplicado sozinho no fechamento. Não acumula com outros cupons ou promoções — vale sempre o MAIOR. Não vale no atacado._`;
+_Vale sobre o valor em produtos do varejo. A linha VitaBeauty e o atacado não participam nem contam para a faixa. Não acumula: se você tiver um cupom de desconto, eu mostro as duas opções e você escolhe. Nesses dias o frete grátis automático e os 3% da Athena ficam pausados._`;
+}
 // ⚠️ REGRA PERMANENTE (Thiago, 13/09/2026): TODA promoção nova TEM que aparecer AQUI, na parte de
 // "promoções" da Stella/Athena (opção 8 / comando "promo"). NÃO basta pôr só no contextoPromo da IA.
 // Se a promoção tiver data, adicione também o aviso no buildMenuPrincipal(). Isso vale SEMPRE.
@@ -1769,11 +1791,12 @@ function msgPromoAtual(){
   // v92: promoção relâmpago (com hora de fim) — normalmente a opção 8 já abre a lista dela (abrirPromo); aqui é a reserva.
   const _rel = promoAtiva();
   if (_rel) {
-    return comDuplo11(``) + `⚡ *${_rel.titulo}*${_rel.validade ? ' — ' + _rel.validade : ''}! 🔥\n\n` +
+    return comBlackWeek(comDuplo11(``)) + `⚡ *${_rel.titulo}*${_rel.validade ? ' — ' + _rel.validade : ''}! 🔥\n\n` +
       _rel.produtos.map(p => `• *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`).join('\n') +
       (_rel.obs ? `\n\n_${_rel.obs}_` : '') +   // v114
       `\n\n👉 ${_rel.link}`;
   }
+  if (semanaClienteAtiva()) return msgPromoBlackWeek();   // v130: Black Week primeiro
   if (promoDuplo11Ativa()) {   // v118
     return msgPromoDuplo11() + (SORTEIO.ativa ? `\n\n━━━━━━━━━━\n\n` + msgSorteio() : '');
   }
@@ -1786,9 +1809,7 @@ function msgPromoAtual(){
   if (promoDez10Ativa()) {
     return msgPromoDez10() + (SORTEIO.ativa ? `\n\n━━━━━━━━━━\n\n` + msgSorteio() : '');
   }
-  if (semanaClienteAtiva()) {
-    return MSG_PROMO_SEMANA;
-  }
+
   if (promoIndepAtiva()) {
     return MSG_PROMO_INDEP;
   }
@@ -2499,7 +2520,7 @@ function buildMenuPrincipal() {
   if (semanaClienteAtiva()) {
     menu += `
 
-🧡 *SEMANA DO CLIENTE ATIVA!* Desconto automático que cresce com o seu pedido — digite *promo* ou escolha a *opção 8*. 🔥`;
+🖤 *BLACK WEEK: desconto automático de R$ 50 a R$ 500* conforme o valor do pedido (sem cupom) — ${blackWeekTermina()}. Estoque limitado. Não vale na linha VitaBeauty nem no atacado. Digite *promo* ou escolha a *opção 8*.`;
   }
   if (promoFreteAtiva()) {
     menu += `
@@ -2544,7 +2565,7 @@ function buildMenuPrincipal() {
   } else {
     menu += `
 
-🎁 *Sabia que comprando comigo você já ganha 3% de desconto em todos os produtos?* É um benefício exclusivo meu! _(Não acumula com cupom ou promoção — vale sempre o MAIOR desconto pra você 😉)_
+${semanaClienteAtiva() ? '🖤 *Black Week:* o desconto por faixa entra sozinho no fechamento, aqui comigo ou no site.' : '🎁 *Sabia que comprando comigo você já ganha 3% de desconto em todos os produtos?* É um benefício exclusivo meu! _(Não acumula com cupom ou promoção — vale sempre o MAIOR desconto pra você 😉)_'}
 🏭 E no *atacado* (opção *9*), o *frete é grátis* — pedido mínimo de R$ 3.000.`;
   }
   menu += `
@@ -2580,7 +2601,8 @@ function buildTriagem() {
   if (promoDez10Ativa()) m += `\n\n🔥 *DEZ10: 15% OFF em todo o site* com o cupom *DEZ10* — ${dez10Termina()}! _(não vale no atacado)_`;
   // v89: frete grátis automático também na saudação (é a primeira tela que o cliente vê)
   if (freteGratisAutoAtivo()) m += `\n\n🚚 *FRETE GRÁTIS* em pedidos a partir de *R$ ${reais(FRETE_GRATIS_AUTO.min)}* — automático, sem cupom. 🎉`;
-  m += `\n\n🎁 *No varejo comigo você tem 3% de desconto — e no atacado o frete é grátis!* 🏭`;
+  if (semanaClienteAtiva()) m += `\n\n🖤 *BLACK WEEK: de R$ 50 a R$ 500 OFF* automático conforme o valor do pedido, sem cupom — ${blackWeekTermina()}! _(não vale na linha VitaBeauty nem no atacado)_`;   // v130
+  else m += `\n\n🎁 *No varejo comigo você tem 3% de desconto — e no atacado o frete é grátis!* 🏭`;
   m += `\n\n_Digite *1*, *2* ou *3*. E se já sabe o que quer, é só mandar o *nome do produto* que eu já te mostro! 😉_`;
   return m;
 }
@@ -4156,7 +4178,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
         return await responderComIA(sid, nMsg, contextoLista(session), respond);
       }
       const _mRel = await abrirPromo(session, sid);
-      if (_mRel) return respond(_citaRel ? _mRel : comDuplo11(_mRel));   // v118: pediu "promo" sem citar o produto da relâmpago → DUPLO11 antes
+      if (_mRel) return respond(_citaRel ? _mRel : comBlackWeek(comDuplo11(_mRel)));   // v118: pediu "promo" sem citar o produto da relâmpago → DUPLO11 antes
     }
   }
   // Dúvida/pergunta (protocolo, como usar, dose, "?"...) → a IA RESPONDE, mesmo que cite um
@@ -5047,6 +5069,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   // Candidatos por produto: promo Dia dos Pais (10% se comprado em 2+), cupom, e o benefício
   // Athena de 3%. Cada item fica com o MAIOR que se aplica a ele.
   const _promoAtiva = promoDobroAtiva();
+  const _pctAth = session.atacado ? DESCONTO_ATHENA_PCT : pctAthena();   // v130: 0 durante a Black Week
   const _cupomOk = !!(cupomResultado && cupomResultado.ok);
   const _cupomPct = (_cupomOk && cupomResultado.tipo === 'pct') ? (cupomResultado.pct || 0) : 0;
   const _cupomVale = (_cupomOk && cupomResultado.tipo === 'vale') ? (cupomResultado.valorVale || cupomResultado.valorFixo || 0) : 0;
@@ -5070,23 +5093,24 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   }
   carrinho.forEach(i => {
     const linha = (i.preco || 0) * (i.qtd || 0);
-    if (produtoBloqueado(i.nome, _semDesc) || _vbSet[_normNomeProd(String(i.nome || ''))]) { _nomesSemDesc.push(i.nome); return; }        // sem desconto: não leva 3%/cupom (v117: + VitaBeauty)
+    if (_vbSet[_normNomeProd(String(i.nome || ''))]) { _nomesSemDesc.push(i.nome); return; }        // VitaBeauty: fora de tudo (não conta nem para a faixa da Black Week)
+    if (produtoBloqueado(i.nome, _semDesc)) { _nomesSemDesc.push(i.nome); if (!grupoPromoDoItem(i.nome, _promoP)) baseSemana += linha; return; }   // v130: "sem desconto" não leva 3%/cupom, mas CONTA para a faixa da Black Week        // sem desconto: não leva 3%/cupom (v117: + VitaBeauty)
     if (grupoPromoDoItem(i.nome, _promoP))  { _nomesPromoPreco.push(i.nome); return; }     // preço de promo: idem
     baseSemana += linha;                                         // elegível p/ Semana do Cliente (varejo, fora bloqueados/promo)
     const ehPromo = _promoAtiva && i && i.qtd >= PROMO_DOBRO.qtdMin;
     if (!ehPromo) baseFora += linha;
     const pPromo = ehPromo ? PROMO_DOBRO.pct : 0;                 // 10 ou 0
-    const melhorPct = Math.max(pPromo, _cupomPct, DESCONTO_ATHENA_PCT);
+    const melhorPct = Math.max(pPromo, _cupomPct, _pctAth);
     if (melhorPct === pPromo && pPromo > 0) descPromo += linha * pPromo / 100;
     else if (melhorPct === _cupomPct && _cupomPct > 0) descCupomAcc += linha * _cupomPct / 100;
-    else descAthenaAcc += linha * DESCONTO_ATHENA_PCT / 100;
+    else descAthenaAcc += linha * _pctAth / 100;
   });
 
   // Cupom de VALOR FIXO (R$): não compete por produto com a promo — vale só nos itens FORA da promo
   // (os em dobro ficam com os 10%), e ainda assim vale o MAIOR entre ele e os 3% Athena.
   if (_cupomFixo > 0) {
     const descFixo = Math.min(_cupomFixo, baseFora);
-    const descAthenaFora = baseFora * DESCONTO_ATHENA_PCT / 100;
+    const descAthenaFora = baseFora * _pctAth / 100;
     descCupomAcc = 0; descAthenaAcc = 0;
     if (descFixo > descAthenaFora) descCupomAcc = descFixo; else descAthenaAcc = descAthenaFora;
   }
@@ -5105,7 +5129,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
     cupomCodigo = cupomResultado.codigo;
   } else {
     descNormais = descAthenaAcc;
-    labelNormais = `Desconto Athena (-${DESCONTO_ATHENA_PCT}%)`;
+    labelNormais = descAthenaAcc > 0 ? `Desconto Athena (-${DESCONTO_ATHENA_PCT}%)` : '';
   }
 
   // Frete grátis via cupom
@@ -5213,13 +5237,32 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   // ── SEMANA DO CLIENTE: desconto por FAIXA do valor de produtos (varejo). Não acumula — vale o
   //    MAIOR entre a faixa e o que já apliquei (3%/cupom/promo). Vale-compras e atacado não entram.
   let semanaVenceu = false, descSemana = 0;
-  if (_cupomVale === 0) {
+  if (_cupomVale === 0 && fgModo !== 'frete' && !session.atacado) {   // atacado não participa (revisão GPT-6, 19/11)
     descSemana = descontoSemanaCliente(baseSemana);
-    if (descSemana > (descNormais + descPromo)) {
+    const _descOutro = descNormais + descPromo;
+    let _faixaVence = descSemana > _descOutro;
+    // v130 (Thiago, 19/11): com CUPOM de desconto valendo, o cliente ESCOLHE entre a faixa e o cupom (A/B/trocar — mesmo mecanismo do frete grátis).
+    if (descSemana > 0 && cupomCodigo && descNormais > 0 && !fgTemEscolha) {
+      const _codAgoraBw = String(cupomResultado.codigo || '');
+      const _codAntesBw = (session.cupomUlt && session.cupomUlt.codigo) ? String(session.cupomUlt.codigo) : '';
+      const _escBw = (_codAgoraBw === _codAntesBw) ? session.fgEscolha : '';
+      const _escolheuBw = (_escBw === 'frete' || _escBw === 'desconto');   // 'frete' = opção A (faixa) · 'desconto' = opção B (cupom)
+      if (_escolheuBw) _faixaVence = (_escBw === 'frete');
+      fgTemEscolha = true; fgModo = _faixaVence ? 'frete' : 'desconto'; fgEscolhaSalvar = _escolheuBw ? _escBw : '';
+      const _mBw = v => `R$ ${v.toFixed(2).replace('.',',')}`;
+      const _baseTot = totalProd + freteValorFinal;
+      fgLinhaOpcoes =
+        `\n\n🎁 *Seu pedido tem 2 descontos — você escolhe* _(não acumulam)_:\n` +
+        `*A)* 🖤 Black Week (automático) — economiza ${_mBw(descSemana)} → total *${_mBw(Math.max(0, _baseTot - descSemana))}*${_faixaVence ? ' ✅' : ''}\n` +
+        `*B)* 🏷️ Cupom ${cupomResultado.codigo} — economiza ${_mBw(_descOutro)} → total *${_mBw(Math.max(0, _baseTot - _descOutro))}*${_faixaVence ? '' : ' ✅'}\n` +
+        (_escolheuBw ? `_Apliquei a opção que você escolheu (✅).` : `_Já deixei marcada a que mais economiza pra você (✅).`) +
+        ` Pra trocar, digite *${_faixaVence ? 'B' : 'A'}*. Ficando com a Black Week, seu cupom não é gasto._`;
+    }
+    if (_faixaVence) {
       semanaVenceu = true;
-      descNormais = descSemana; labelNormais = 'Semana do Cliente 🧡';
+      descNormais = descSemana; labelNormais = 'Black Week 🖤 (desconto automático)';
       descPromo = 0; descCupomAcc = 0;
-      cupomDocId = null; cupomCodigo = null;   // a faixa venceu: não consome o cupom digitado
+      cupomDocId = null; cupomCodigo = PROMO_SEMANA_CLIENTE.marca + Math.round(descSemana);   // v130: BLACK50…BLACK500 na coluna do cupom (contagem por faixa); sem docId = nenhum cupom é gasto
     }
   }
   const descontoReais = descNormais;
@@ -5315,10 +5358,10 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
   if (semanaClienteAtiva() && baseSemana > 0) {
     const _prox = PROMO_SEMANA_CLIENTE.faixas.find(f => f.min > baseSemana && f.desc > descSemana);
     if (semanaVenceu) {
-      linhaSemana = `\n\n🧡🎉 *SEMANA DO CLIENTE!* Você ganhou *R$ ${descSemana.toFixed(2).replace('.',',')}* de desconto nos produtos!`;
+      linhaSemana = `\n\n🖤🎉 *BLACK WEEK!* Você ganhou *R$ ${descSemana.toFixed(2).replace('.',',')}* de desconto nos produtos! _(${blackWeekTermina()} · estoque limitado)_`;
       if (_prox) linhaSemana += `\n_Falta R$ ${(_prox.min - baseSemana).toFixed(2).replace('.',',')} pra subir pra *R$ ${_prox.desc} OFF*! 😉_`;
     } else if (_prox) {
-      linhaSemana = `\n\n🧡 _*Semana do Cliente:* falta R$ ${(_prox.min - baseSemana).toFixed(2).replace('.',',')} em produtos pra ganhar *R$ ${_prox.desc} OFF* automático!_`;
+      linhaSemana = `\n\n🖤 _*Black Week:* falta R$ ${(_prox.min - baseSemana).toFixed(2).replace('.',',')} em produtos pra ganhar *R$ ${_prox.desc} OFF* automático!_`;
     }
   }
   const resumo =
@@ -7080,7 +7123,7 @@ exports.handler = async (event) => {
     if (ehPromo && !emCheckout) {
       if (PROMO_GENESIS.ativa) return await anunciarGenesis(session, sid, respond);
       const msg = await abrirPromo(session, sid);     // se a Relâmpago for reativada, ela tem prioridade
-      if (msg) return respond(comDuplo11(msg));   // v118
+      if (msg) return respond(comBlackWeek(comDuplo11(msg)));   // v118 · v130
       if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
       await saveSession(sid, { ...session, state:'MENU' });
       return respond(msgPromoAtual() + '\n\n0️⃣ Voltar ao menu');
@@ -7196,7 +7239,7 @@ exports.handler = async (event) => {
     const palavrasNegoc = ['caro','ta caro','muito caro','salgado','ta salgado','preco alto','mais barato','abaixa','abaixar','baixa o preco','desconto','condicao','melhora o preco','faz por menos','ta puxado','pesado no bolso','sem condicao'];
     if (palavrasNegoc.some(p => n.includes(p)) && state !== 'COLETA_DADOS' && !(await lerAguardandoDados(sid))) {
       const pend = await lerPending(sid);
-      if (pend && pend.descontoTipo === 'athena' && !pend.negociado) {
+      if (pend && pend.descontoTipo === 'athena' && !pend.negociado && !semanaClienteAtiva()) {   // v130: sem negociação de 5% durante a Black Week (não acumula)
         const carrinho = pend.carrinho || [];
         const frete = pend.freteSelecionado || {};
         const totalProd = carrinho.reduce((s,i)=>s + i.preco*i.qtd, 0);
@@ -7369,7 +7412,7 @@ exports.handler = async (event) => {
     const ehVarejo = n.includes('varejo');
     if (ehVarejo && !emCheckout) {
       await saveSession(sid, { ...session, state:'MENU' });
-      return respond(`Sim! 😊 No *varejo* você leva *qualquer quantidade* — são os mesmos produtos do nosso site (*vitaflowoficial.com*), com os *${DESCONTO_ATHENA_PCT}% de desconto* e as promoções ativas. _(O *atacado* é o outro caminho: pedido mínimo de R$ 3.000, com frete grátis.)_\n\n` + buildMenuPrincipal());
+      return respond(`Sim! 😊 No *varejo* você leva *qualquer quantidade* — são os mesmos produtos do nosso site (*vitaflowoficial.com*), ${semanaClienteAtiva() ? 'com o desconto automático da *Black Week*' : `com os *${DESCONTO_ATHENA_PCT}% de desconto* e as promoções ativas`}. _(O *atacado* é o outro caminho: pedido mínimo de R$ 3.000, com frete grátis.)_\n\n` + buildMenuPrincipal());
     }
 
     if (ehFraseCancelamento(n) && !emCheckout) {   // v122: "quero cancelar o pedido de atacado" abria o atacado
@@ -7656,7 +7699,7 @@ exports.handler = async (event) => {
       if (num === 8) {
         if (PROMO_GENESIS.ativa) return await anunciarGenesis(session, sid, respond);
         const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
-        if (msg) return respond(comDuplo11(msg));   // v118
+        if (msg) return respond(comBlackWeek(comDuplo11(msg)));   // v118 · v130
         if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
         return respond(msgPromoAtual() + '\n\n0️⃣ Voltar ao menu');
       }
@@ -8116,7 +8159,7 @@ exports.handler = async (event) => {
       const resultado = await validarCupom(mensagem, totalProd);
       if (!resultado.ok && resultado.erroTecnico) {
         await enviarTelegram(`⚠️ *CUPOM: falha técnica na consulta*\n🏷️ ${(mensagem||'').trim()}\n📱 ${sid}\nO cliente digitou um cupom e o Firestore não respondeu (cota/rede).`);
-        return respond(`Tive um problema pra consultar esse cupom agora. 😕 *Não é você* — é do nosso lado.\n\nTenta de novo em uns minutinhos, ou digite *2* pra seguir sem cupom (seu desconto de ${DESCONTO_ATHENA_PCT}% continua valendo). Se for cupom de promoção, me chama que eu resolvo. 💚`);
+        return respond(`Tive um problema pra consultar esse cupom agora. 😕 *Não é você* — é do nosso lado.\n\nTenta de novo em uns minutinhos, ou digite *2* pra seguir sem cupom (${semanaClienteAtiva() ? 'o desconto da Black Week continua valendo' : `seu desconto de ${DESCONTO_ATHENA_PCT}% continua valendo`}). Se for cupom de promoção, me chama que eu resolvo. 💚`);
       }
       if (!resultado.ok) return respond(`❌ ${resultado.motivo}\n\nDigite outro código ou *menu* para recomeçar.\n_Ou digite *2* para seguir sem cupom._`);
       if (resultado.travaCpf && session.cupomCpfCod !== resultado.codigo) return await pedirCpfCupomPessoal(session, sid, resultado.codigo, respond);   // v111
@@ -8363,7 +8406,7 @@ exports.handler = async (event) => {
         // pode estar certíssimo. Aconteceu em 08/09 com o INDEPENDENCIA99.
         if (resultado.erroTecnico) {
           await enviarTelegram(`⚠️ *CUPOM: falha técnica na consulta*\n🏷️ ${_txt}\n📱 ${sid}\nO cliente digitou um cupom e o Firestore não respondeu (cota/rede).`);
-          return respond(`Tive um problema pra consultar o cupom *${_txt}* agora. 😕 *Não é você* — é do nosso lado.\n\nTenta de novo em uns minutinhos, ou digite *1* pra *confirmar a compra* (seu desconto de ${DESCONTO_ATHENA_PCT}% já está aplicado) ou *2* pra voltar ao menu. Se o cupom for de promoção, me chama que eu resolvo. 💚`);
+          return respond(`Tive um problema pra consultar o cupom *${_txt}* agora. 😕 *Não é você* — é do nosso lado.\n\nTenta de novo em uns minutinhos, ou digite *1* pra *confirmar a compra* (${semanaClienteAtiva() ? 'o desconto da Black Week já está aplicado, se o pedido alcançou a faixa' : `seu desconto de ${DESCONTO_ATHENA_PCT}% já está aplicado`}) ou *2* pra voltar ao menu. Se o cupom for de promoção, me chama que eu resolvo. 💚`);
         }
         if (session.simulouParcela) await saveSession(sid, { ...session, simulouParcela: false });   // v109: o "2" daqui é voltar
         return respond(`Não reconheci *${_txt}* como cupom. 😊 Mas seu *pedido está pronto*!\n\nDigite *1* para *confirmar a compra* ou *2* para voltar ao menu.`);
