@@ -1,6 +1,12 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v13  ·  18/11/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v14  ·  20/11/2026
+   v14 (20/11, Thiago: "o bot da logística" — IA no estilo humano, só para a logística; nome: Artemis; regras = respostas dele ao questionário):
+     a IA roda no servidor (artemis.py). Aqui: config ia {modo: desligada|sombra|teste|ligada, numeros}; depois do silêncio, a mensagem do cliente
+     vai para vitaflow_sync/logistica/ia_fila (modo ligada, ou teste para os números da lista) e o bot NÃO responde; em sombra o bot responde
+     como sempre e a Artemis só anota o que responderia. Sem o sinal de vida da Artemis (ia_viva) há mais de 3 min, o bot de sempre responde.
+     POST {ia_acao:'protocolo', secret} = a Artemis passando o caso para a atendente pela MESMA abrirProtocolo (um protocolo por pedido).
+     Mensagem à mão da atendente também vai para a fila (só contexto). Com ia.modo = desligada (padrão), tudo igual à v13.
    v13 (18/11, Thiago: "sim, pode" — destravar o bot; análise de 20 conversas, Claude + GPT-6):
      (1) O BOT NÃO FICAVA CALADO quando a logística respondia à mão. Causa: o WhatsApp passou a mandar a mensagem enviada pelo
          celular (fromMe) com o identificador novo da conversa ("…@lid") no lugar do telefone. O silêncio era gravado nessa chave e
@@ -110,7 +116,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v13';
+var VERSAO = 'v14';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -137,6 +143,7 @@ var CFG_PADRAO = {
   painel_url: '',                      /* link do painel da logística (vai no aviso) */
   silencio_horas: 6,                   /* bot calado depois de resposta humana */
   espera_entregue_horas: 48,           /* "consta entregue": espera antes de abrir protocolo */
+  ia: { modo: 'desligada', numeros: '' },   /* v14: IA da logística (Artemis): 'desligada' | 'sombra' | 'teste' | 'ligada' */
   fornecedores_flex: 'DANIEL',         /* troca de produto até POSTAR (os outros: só no dia da compra) */
   horario: { semana: { de: '08:00', ate: '18:00' }, sabado: { de: '09:00', ate: '14:00' } }
 };
@@ -1523,6 +1530,64 @@ function tipoDaMensagem(body) {
 
 function resp(code, txt) { return { statusCode: code, body: txt }; }
 
+/* ------------------------------------------------------------------ v14: IA da logística (Artemis)
+   A Artemis roda no SERVIDOR (artemis.py). Aqui só: (1) decidir se a mensagem do cliente vai para ela; (2) pôr na fila
+   vitaflow_sync/logistica/ia_fila; (3) abrir o protocolo quando ela passa o caso para a atendente (mesma abrirProtocolo de sempre).
+   Trava de segurança: a Artemis grava um sinal de vida (ia_viva) a cada 30 s. Sem sinal há mais de 3 min, o bot de sempre responde.
+   O silêncio (atendente respondeu à mão, #bot) vem ANTES: com a conversa em silêncio nem o bot nem a Artemis respondem.          */
+var IA_VIVA_MAX = 3 * MIN;
+function iaModo(cfg) {
+  var m = cfg && cfg.ia && String(cfg.ia.modo || '');
+  return (m === 'sombra' || m === 'teste' || m === 'ligada') ? m : 'desligada';
+}
+function iaNumeros(cfg) {
+  var n = cfg && cfg.ia && cfg.ia.numeros;
+  var l = Array.isArray(n) ? n : String(n || '').split(/[,;\n]+/);
+  return l.map(function (x) { var d = soDigitos(x); return (d.length === 10 || d.length === 11) ? '55' + d : d; }).filter(function (d) { return d.length >= 12; });
+}
+/* 'ia' = a Artemis responde · 'sombra' = o bot responde e a Artemis só anota o que responderia · '' = só o bot */
+async function iaDestino(cfg, phone) {
+  var modo = iaModo(cfg);
+  if (modo === 'desligada') return '';
+  var viva = 0;
+  try { viva = Number(await fbGet(RAIZ + '/ia_viva')) || 0; } catch (e) { viva = 0; }
+  if (!viva || Date.now() - viva > IA_VIVA_MAX) return '';
+  if (modo === 'ligada') return 'ia';
+  if (modo === 'teste') return numeroNaLista(phone, iaNumeros(cfg)) ? 'ia' : '';
+  return 'sombra';
+}
+async function iaEnfileirar(body, k, phone, lidK, agora, sombra, conv) {
+  var m = tipoDaMensagem(body);
+  var sufixo = chaveFb(String(body.messageId || '')).slice(-8) || String(Math.floor(Math.random() * 1e6));
+  await fbPut(RAIZ + '/ia_fila/' + agora + '_' + k + '_' + sufixo, {
+    t: agora, k: k, telefone: phone, lid: lidK || '', mid: String(body.messageId || ''), sombra: !!sombra,
+    nome: String(body.senderName || body.chatName || '').slice(0, 80),
+    tipo: m.tipo, texto: String(m.texto || m.legenda || '').slice(0, 4000), url: m.url || '',
+    pedido: (conv && typeof conv.pedido === 'string') ? conv.pedido : '', protocolo: (conv && conv.protocolo) ? String(conv.protocolo) : ''
+  });
+}
+/* chamado pela Artemis (servidor) com o CRON_SECRET: abre o protocolo com a mesma função do bot (um só por pedido) */
+async function iaAcao(d) {
+  var cfg = await carregarCfg(), agora = Date.now();
+  if (d.ia_acao === 'protocolo') {
+    var phone = String(d.telefone || ''), k = chaveFb(phone), pedido = String(d.pedido || '').trim();
+    var motivo = MOTIVO_NOME[d.motivo] ? String(d.motivo) : 'excecao';
+    if (!phone || !pedido) return { ok: false, erro: 'faltou telefone ou pedido' };
+    var r = await consultar(pedido), it = null;
+    for (var i = 0; r.ok && i < r.pedidos.length; i++) if (up(r.pedidos[i].pedido) === up(pedido)) it = r.pedidos[i];
+    if (!it) return { ok: false, erro: r.ok ? 'pedido nao encontrado' : 'consulta fora do ar' };
+    var conv = (await fbGet(RAIZ + '/conversas/' + k)) || {};
+    conv.snap = resumo(it); conv.pedido = conv.snap.pedido;
+    var ctx = { cfg: cfg, T: await carregarTextos(), conv: conv, agora: agora, phone: phone, senderName: String(d.nome || ''), msgs: [], depois: [] };
+    var out = await abrirProtocolo(ctx, motivo, { detalhe: '[Artemis] ' + String(d.detalhe || '').slice(0, 1200), texto: String(d.texto || '').slice(0, 1500), video: String(d.video || '') });
+    await fbPatch(RAIZ + '/conversas/' + k, { estado: conv.estado || 'AGUARDANDO', pedido: conv.pedido, snap: conv.snap, protocolo: conv.protocolo || null, ts: agora, telefone: phone });
+    for (var j = 0; j < ctx.depois.length; j++) { try { await ctx.depois[j](); } catch (e) { console.error('[logistica] ia depois: ' + e.message); } }
+    var pr = conv.protocolo ? await fbGet(RAIZ + '/protocolos/' + conv.protocolo) : null;
+    return { ok: true, novo: !!ctx.protocoloNovo, protocolo: (pr && pr.id) || '', chave: conv.protocolo || '', fora_horario: !dentroHorario(agora, cfg), horario: textoHorario(cfg) };
+  }
+  return { ok: false, erro: 'acao desconhecida' };
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
     var q = event.queryStringParameters || {};
@@ -1544,6 +1609,11 @@ exports.handler = async function (event) {
 
   var body;
   try { body = JSON.parse(event.body || '{}'); } catch (e) { return resp(200, 'json invalido'); }
+  if (body.ia_acao) {   /* v14: a Artemis (servidor) pedindo para abrir protocolo */
+    if (!CRON_SECRET || body.secret !== CRON_SECRET) return resp(403, 'secret');
+    var ra; try { ra = await iaAcao(body); } catch (eIa) { ra = { ok: false, erro: String(eIa && eIa.message || eIa).slice(0, 200) }; }
+    return { statusCode: 200, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(ra) };
+  }
   if (body.type && body.type !== 'ReceivedCallback') return resp(200, 'tipo ' + body.type);
   if (body.isGroup || body.isNewsletter || body.isStatusReply || body.broadcast) return resp(200, 'ignorado');
   if (body.isEdit) return resp(200, 'edicao — ignorada');
@@ -1566,7 +1636,11 @@ exports.handler = async function (event) {
         if (await ehExcecao(phone)) return resp(200, 'numero na lista de excecoes — ignorado');
       }
     }
-    return resp(200, await tratarFromMe(body, cfg, k, phone));
+    var rfm = await tratarFromMe(body, cfg, k, phone);
+    if (/^silencio /.test(rfm) && iaModo(cfg) !== 'desligada' && body.text && body.text.message) {   /* v14: contexto para a Artemis */
+      try { await fbPut(RAIZ + '/ia_fila/' + Date.now() + '_' + k + '_h', { t: Date.now(), k: k, telefone: phone, humano: true, tipo: 'texto', texto: String(body.text.message).slice(0, 4000) }); } catch (eH) {}
+    }
+    return resp(200, rfm);
   }
 
   if (chaveNumero(phone) === chaveNumero(cfg.ana_whatsapp)) return resp(200, 'numero da Ana — ignorado');   /* v9: sem exceção da lista de teste */
@@ -1607,6 +1681,18 @@ async function atenderCliente(body, cfg, k, phone, lidK) {
   if (conv.silencio_ate && conv.silencio_ate > agora) {
     if (mid) await fbPatch(RAIZ + '/conversas/' + k, { ult_ids: (conv.ult_ids || []).concat([mid]).slice(-15) });
     return resp(200, 'silencio (humano atendendo)');
+  }
+  /* v14: IA da logística — 'ia': a Artemis responde (o bot não); 'sombra': o bot segue e a Artemis só anota */
+  var iaD = '';
+  try { iaD = await iaDestino(cfg, phone); } catch (eD) { iaD = ''; }
+  if (iaD) {
+    var filaOk = true;
+    try { await iaEnfileirar(body, k, phone, lidK, agora, iaD === 'sombra', conv); } catch (eF) { filaOk = false; console.error('[logistica] ia_fila: ' + eF.message); }
+    if (iaD === 'ia' && filaOk) {
+      await fbPatch(RAIZ + '/conversas/' + k, { ult_ids: (conv.ult_ids || []).concat(mid ? [mid] : []).slice(-15), ts: agora, telefone: phone, ia_ts: agora,
+        nome_whatsapp: String(body.senderName || body.chatName || '').slice(0, 80) });
+      return resp(200, 'ia — na fila da Artemis');
+    }
   }
   /* v13: "obrigada" / "ok" / "👍" soltos, com o pedido já aberto no menu → não responde nada */
   if ((conv.estado === 'MENU' || conv.estado === 'VOLTA') && conv.pedido && body.text && body.text.message && soAgradecimento(body.text.message)) {
@@ -1675,5 +1761,6 @@ exports._t = {
   textoAbertura: textoAbertura, categoria: categoria, jaPostado: jaPostado, entregaInfo: entregaInfo,
   impressao: impressao, opcaoPorPalavra: opcaoPorPalavra, T_PADRAO: T_PADRAO, CFG_PADRAO: CFG_PADRAO,
   _cache: _cache, regraAlteracao: regraAlteracao, partesBR: partesBR,
-  cartao: cartao, textoRastreio: textoRastreio, avisoWhats: avisoWhats, resumo: resumo   /* v8 */
+  cartao: cartao, textoRastreio: textoRastreio, avisoWhats: avisoWhats, resumo: resumo,   /* v8 */
+  iaModo: iaModo, iaNumeros: iaNumeros   /* v14 */
 };
