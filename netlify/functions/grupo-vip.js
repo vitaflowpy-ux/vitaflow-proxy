@@ -1,6 +1,15 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v12  ·  17/11/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v13  ·  21/11/2026
+   v13 (21/11/2026, Thiago: "todas essas informações devem ser transmitidas para a Stella (bot dos grupos) e as respostas dela devem
+       ser atualizadas e acrescentadas"): textos com o Seguro de Envio oficial (cobre extravio, apreensão e roubo; reenvio OU estorno
+       UMA vez, só com a comunicação oficial da transportadora; não cobre endereço errado, ausência nem recusa; basta escolher
+       Transportadora; transportadora que saiu pelos Correios continua coberta; todo atacado coberto; vídeo de abertura obrigatório),
+       logística pela Artemis (wa.me/447537155718), página vitaflowoficial.com/pages/seguro-vitaflow e a FAQ.
+       Respostas NOVAS: reclamacao (prazo de 30 dias do recebimento + vídeo obrigatório), remetente (pacote devolvido ao remetente
+       = extraviado, remetente fictício), originais (produtos originais de marcas consolidadas; sem réplica/2ª linha) e grupos
+       (os 3 grupos com link: VIP #1, VIP #2 e Telegram; promoção não sai primeiro no grupo, mas a notificação chega na hora).
+       Comandos novos: !reclamar !troca · !remetente · !originais · !grupos.
    v12 (17/11/2026, Thiago: "quero uma forma de que os robôs leiam os 3 grupos… vejam as principais dúvidas, vejam formas de melhorar
        o bot dos grupos, vejam oportunidades de venda!"): guarda o TEXTO de cada mensagem dos 2 grupos (VIP #1 e #2) em
        vitaflow_sync/grupo_vip/mensagens/<dia>/<messageId> = {g, a, n, t, ts}, por 14 dias. A Ronda do servidor (script 85) lê,
@@ -418,9 +427,11 @@ var T = {
   transportadora:
 '🚚 *COMO ENVIAMOS*\n⠀\n' +
 'No fechamento do pedido você escolhe:\n' +
-'🚛 *Transportadora* (Jadlog, Loggi, J&T Express ou Total Express) — com *seguro grátis* contra apreensão e extravio\n' +
+'🚛 *Transportadora* (Jadlog, Loggi, J&T Express ou Total Express) — com *Seguro de Envio grátis* contra extravio, apreensão e roubo da carga\n' +
 '📮 *PAC* ou ⚡ *SEDEX* (Correios) — *sem* seguro\n⠀\n' +
-'👉 A gente recomenda a *Transportadora*: é a única opção com seguro.',
+'Escolheu Transportadora e, por estratégia de logística, o pedido saiu pelos Correios? *Continua coberto* pelo seguro.\n⠀\n' +
+'👉 A gente recomenda a *Transportadora*: é a única opção com seguro.\n' +
+'🛡️ Regras do seguro: *vitaflowoficial.com/pages/seguro-vitaflow*',
 
   atacado:
 '🏭 *ATACADO VITAFLOW*\n⠀\n' +
@@ -429,7 +440,7 @@ var T = {
 '✅ *Frete grátis* para todo o Brasil\n' +
 '✅ Pedido mínimo de *R$ 3.000 por estoque* (pode misturar produtos do mesmo estoque)\n' +
 '✅ *Pix* ou *cartão em até 12x*\n' +
-'✅ *Seguro grátis* contra apreensão e extravio\n⠀\n' +
+'✅ *Seguro de Envio* incluso em todo pedido de atacado (vitaflowoficial.com/pages/seguro-vitaflow)\n⠀\n' +
 'Cada estoque é um pedido separado. Prefere pelo WhatsApp? A *Athena* também fecha o seu atacado:\n🤖 wa.me/5511926100192\n⠀\n' +
 '_Atacado não entra em cupom nem promoção — o benefício é o frete grátis._',
 
@@ -440,11 +451,16 @@ var T = {
 'Frete grátis e pedido mínimo de *R$ 3.000 por estoque*.',
 
   seguro:
-'🛡️ *SEGURO GRÁTIS*\n⠀\n' +
-'Cobre *apreensão e extravio*, sem custo nenhum, nos envios por *Transportadora* — no varejo e no atacado.\n⠀\n' +
-'Se acontecer, você não fica no prejuízo: o pedido é *reenviado ou reembolsado*. É só falar com a nossa logística:\n' +
-'💬 wa.me/447537155718 (seg a sex 8h–18h · sáb 9h–14h)\n⠀\n' +
-'⚠️ *PAC e SEDEX (Correios) não têm o seguro.* Na hora de fechar, escolha *Transportadora*.',
+'🛡️ *SEGURO DE ENVIO GRÁTIS*\n⠀\n' +
+'✅ *Como ter:* basta escolher *Transportadora* no fechamento do pedido. Todo pedido de *atacado* também tem.\n⠀\n' +
+'🟢 *Cobre:* extravio, apreensão e roubo da carga durante o transporte — com *reenvio sem custo* ou *estorno integral*, sempre que aplicável.\n' +
+'🔴 *Não cobre:* endereço informado errado, ausência do destinatário e recusa da entrega.\n⠀\n' +
+'1️⃣ Vale *uma única vez* por pedido: um novo problema no reenvio não é coberto.\n⠀\n' +
+'⚠️ *MUITO IMPORTANTE:* o reenvio ou o estorno só acontecem depois da *comunicação oficial da transportadora* confirmando extravio, apreensão ou roubo.\n⠀\n' +
+'🎥 Para acionar depois de receber, o *vídeo da abertura* (desde antes de abrir, sem cortes) é obrigatório.\n⠀\n' +
+'📮 PAC e SEDEX escolhidos na compra *não têm* o seguro.\n⠀\n' +
+'📖 Regras completas: *vitaflowoficial.com/pages/seguro-vitaflow*\n' +
+'💬 wa.me/447537155718 — *Artemis*, assistente virtual da logística (a equipe atende seg a sex 8h–18h · sáb 9h–14h)',
 
   frete_gratis:
 '🚚 *FRETE GRÁTIS*\n⠀\n' +
@@ -459,7 +475,7 @@ var T = {
 '👉 *vitaflowoficial.com/pages/rastrear-pedido*\n' +
 '👉 ou na sua *Minha Conta*: vitaflowoficial.com/pages/minha-conta\n⠀\n' +
 'Quando o pedido é postado, você também recebe um e-mail com o rastreio.\n⠀\n' +
-'Algo diferente do esperado? Fale com a logística:\n💬 wa.me/447537155718 (seg a sex 8h–18h · sáb 9h–14h)',
+'Atrasou ou algo diferente do esperado? Fale com a logística — a *Artemis* consulta o seu pedido na hora:\n💬 wa.me/447537155718 — *Artemis*, assistente virtual da logística (a equipe atende seg a sex 8h–18h · sáb 9h–14h)',
 
   comprar:
 '🛒 *COMO COMPRAR NA VITAFLOW*\n⠀\n' +
@@ -482,8 +498,8 @@ var T = {
 
   confianca:
 '💙 *SOBRE A VITAFLOW*\n⠀\n' +
-'São *8 anos* de mercado. Se algo der errado com o seu pedido, a gente resolve: *reenvio, troca ou reembolso*.\n⠀\n' +
-'🛡️ Escolha *Transportadora* no fechamento — tem seguro grátis contra apreensão e extravio.\n' +
+'São *8 anos* de mercado. Todos os produtos são *originais*, de *marcas consolidadas* — nada de réplica ou 2ª linha.\n⠀\n' +
+'🛡️ Escolha *Transportadora* no fechamento — tem *Seguro de Envio grátis* contra extravio, apreensão e roubo (vitaflowoficial.com/pages/seguro-vitaflow).\n' +
 '🔎 Acompanhe o pedido em *vitaflowoficial.com/pages/rastrear-pedido*\n⠀\n' +
 'E aqui no grupo você vê, todo dia, gente mostrando o pedido que chegou. 📦',
 
@@ -493,8 +509,11 @@ var T = {
 '🧮 Calculadora de Peptídeos → *vitaflowoficial.com/pages/calculadora-de-peptideos*\n' +
 '📋 Gerador de Protocolos → *vitaflowoficial.com/pages/gerador-de-protocolo*\n' +
 '🏭 Atacado → *vitaflowoficial.com/pages/atacado*\n' +
-'👤 Minha Conta (pedidos e rastreio) → *vitaflowoficial.com/pages/minha-conta*\n⠀\n' +
-'🤖 Athena, consultora 24h → wa.me/5511926100192\n⠀\n' +
+'👤 Minha Conta (pedidos e rastreio) → *vitaflowoficial.com/pages/minha-conta*\n' +
+'🛡️ Seguro VitaFlow → *vitaflowoficial.com/pages/seguro-vitaflow*\n' +
+'❓ Perguntas frequentes → *vitaflowoficial.com/pages/faq*\n⠀\n' +
+'🤖 Athena, consultora 24h → wa.me/5511926100192\n' +
+'📦 Logística (pedidos, entregas e seguro) → wa.me/447537155718 — com a *Artemis*\n⠀\n' +
 '💬 *Atendimento:*\n• (11) 91133-8515 → wa.me/5511911338515\n• +44 7537 155723 → wa.me/447537155723\n⠀\n' +
 '📧 *E-mail:* contato@vitaflowoficial.com\n⠀\n' +
 '✈️ *Tem Telegram?* Entre também no nosso grupo de lá:\n👉 *t.me/referencias_vitaflow*\n⠀\n' +
@@ -514,6 +533,33 @@ var T = {
 'No varejo, cada produto sai de *SP* ou de *MS*, conforme a disponibilidade do momento.\n⠀\n' +
 'Por isso uma mesma compra pode chegar em *até 3 envios separados*, em dias diferentes. Você recebe *um número para cada envio* e acompanha todos no mesmo lugar:\n🔎 *vitaflowoficial.com/pages/rastrear-pedido*\n⠀\n' +
 '✅ *E você paga UM frete só.* A logística dos envios fica por nossa conta.',
+
+  reclamacao:   /* v13 */
+'📦 *PROBLEMA COM O PEDIDO QUE CHEGOU?*\n⠀\n' +
+'Item errado, faltando ou danificado:\n' +
+'🎥 o *vídeo da abertura* da embalagem é *obrigatório* — gravado desde antes de abrir, *sem cortes ou edições*, com a caixa e o conteúdo visíveis.\n' +
+'⏳ O prazo para reclamar é de *30 dias a partir da data de recebimento*.\n⠀\n' +
+'Sem o vídeo não é possível analisar a solicitação.\n⠀\n' +
+'Para reclamar, fale com a logística:\n💬 wa.me/447537155718 — *Artemis*, assistente virtual da logística (a equipe atende seg a sex 8h–18h · sáb 9h–14h)',
+
+  remetente:    /* v13 */
+'↩️ *PACOTE DEVOLVIDO AO REMETENTE*\n⠀\n' +
+'Por segurança, todos os pacotes saem com *remetente fictício*. Por isso, pacote que volta ao remetente é considerado *extraviado* — o endereço de origem não existe.\n⠀\n' +
+'O seguro *não cobre* devolução causada por endereço errado, ausência do destinatário ou recusa da entrega.\n⠀\n' +
+'Fale com a logística para a equipe analisar:\n💬 wa.me/447537155718 — *Artemis*, assistente virtual da logística (a equipe atende seg a sex 8h–18h · sáb 9h–14h)',
+
+  originais:    /* v13 */
+'✅ *PRODUTOS ORIGINAIS*\n⠀\n' +
+'Todos os produtos vendidos pela VitaFlow são *originais* e de *marcas consolidadas no mercado*.\n⠀\n' +
+'*Não trabalhamos com réplicas, 2ª linha ou nada do gênero.*',
+
+  grupos:       /* v13 */
+'👥 *GRUPOS DA VITAFLOW*\n⠀\n' +
+'São *3 grupos*, todos gratuitos:\n' +
+'💎 *VIP #1 (WhatsApp)* → chat.whatsapp.com/BNa4tPKWjaZ1cTP4XwXtgM\n' +
+'💎 *VIP #2 (WhatsApp)* → chat.whatsapp.com/Bcw7hkVR3ITE5RQtnYzdD7\n' +
+'✈️ *Telegram* → t.me/referencias_vitaflow\n⠀\n' +
+'As promoções não saem primeiro nos grupos — mas, com a *notificação* chegando na hora, quem está nos grupos costuma ficar sabendo antes. 😉',
 
   sorteio:   /* v11: o sorteio foi encerrado em 16/11/2026 — este texto só avisa */
 '🎲 *O Sorteio Quinzenal foi encerrado.*\n⠀\n' +
@@ -685,7 +731,11 @@ var GATILHOS = [
   { chave: 'calculadora',    cmd: ['!calculadora', '!diluicao'] },
   { chave: 'protocolo',      cmd: ['!protocolo', '!gerador'] },
   { chave: 'confianca',      cmd: ['!confianca'] },
-  { chave: 'site',           cmd: ['!site', '!links', '!ajuda'] }
+  { chave: 'site',           cmd: ['!site', '!links', '!ajuda'] },
+  { chave: 'reclamacao',     cmd: ['!reclamar', '!reclamacao', '!troca'] },   /* v13 */
+  { chave: 'remetente',      cmd: ['!remetente'] },
+  { chave: 'originais',      cmd: ['!originais', '!original'] },
+  { chave: 'grupos',         cmd: ['!grupos', '!grupo'] }
 ];
 
 /* "é pergunta?" — ? em qualquer lugar, começa com palavra de pergunta, ou chama a Stella/bot */
@@ -716,7 +766,11 @@ var RX = {
   transportadora: /\b(qual|quais|que) (a |as |e a |sao as )?(transportadora|transportadoras)\b|\bquem (faz a |que )?entrega\b|\b(envia|enviam|manda|mandam|vem|vai) (por|pelos?|pela) (correios|transportadora|sedex|pac)\b|\b(pac ou sedex|sedex ou pac|transportadora ou (pac|sedex|correios)|(pac|sedex|correios) ou transportadora)\b|\bmelhor (forma de |opcao de )?envio\b/,
   rastreio:     /\b(rastre\w*|codigo de rastreio|meu pedido|minha encomenda|meu pacote|nao chegou|nao recebi|ainda nao chegou|cade (o )?meu|status do (meu )?pedido|foi postado|em separacao|pedido feito|atualizar o pedido)\b/,
   origem:       /\b(de onde sai|de onde vem|onde fica o estoque|sai de onde|vem de onde|sao enviados de onde)\b/,
-  sorteio:      /\b(sorteio|numero da sorte|numeros da sorte)\b/,   // v11: só o pedido claro (sorteio encerrado)
+  sorteio:      /\b(sorteio|numero da sorte|numeros da sorte)\b/,
+  remetente:    /\bremetente\b/,   // v13
+  reclamacao:   /\b(veio (errado|trocado|faltando|quebrad\w*|danificad\w*|violad\w*|aberto)|(produto|item) (errado|trocado|faltando)|faltou (um|uma|o|a|produto|item)|chegou (errado|trocado|quebrad\w*|danificad\w*|violad\w*)|reclamar|reclamacao|prazo (pra|para|de) reclama\w*|video (da|de) abertura|filmar (a )?(abertura|caixa)|troca de produto|trocar (o|um|meu) produto)\b/,
+  originais:    /\b(original|originais|replica|replicas|falsificad\w*|segunda linha|2a linha|2 linha)\b/,
+  grupos:       /\b(link do grupo|link dos grupos|links dos grupos|outro grupo|grupo 2|vip 2|vip #2|grupo vip 2|grupo novo|quais (sao )?os grupos|tem (outro )?grupo|entrar no grupo|grupo do whats\w*)\b/,   // v11: só o pedido claro (sorteio encerrado)
   telegram:     /\btelegram\b/,
   comprar:      /\b(como (eu )?(compro|comprar|faco (o |um )?pedido|faco pra comprar)|onde (eu )?(compro|comprar)|vende direto|vendem direto|como faz pra comprar|qual (e )?o site|link do site|links oficiais)\b/,
   calculadora:  /\b(diluir|diluo|dilua|diluicao|diluiu|dilui em|reconstituir|reconstituo|quantas ui|quantos ui|quantas unidades|quantos tracinhos|quantas marcacoes|quanto de agua|quanta agua|quantos ml|ml de agua)\b/,
@@ -742,7 +796,10 @@ function rotear(texto, soComando) {
 
   /* ordem importa: o mais específico primeiro */
   if (RX.confianca.test(t) && (RX.seguroCompra.test(t) || !RX.seguro.test(t))) return 'confianca';
+  if (RX.remetente.test(t)) return 'remetente';      // v13
+  if (RX.reclamacao.test(t)) return 'reclamacao';    // v13
   if (RX.seguro.test(t)) return 'seguro';
+  if (RX.originais.test(t)) return 'originais';      // v13
   if (RX.sorteio.test(t)) return 'sorteio';   // v11: "cotas" + atacado não é mais sorteio
   if (RX.rastreio.test(t) && /\b(meu|minha|um) pedido\b|\bpedido (feito|na conta)\b/.test(t)) return 'rastreio';
   if (RX.atacado.test(t)) return RX.pagamento.test(t) ? 'atacado_pagamento' : 'atacado';
@@ -752,6 +809,7 @@ function rotear(texto, soComando) {
   if ((RX.prazoDireto.test(t) || (RX.prazoTempo.test(t) && RX.prazoEntrega.test(t))) && !RX.naoEntrega.test(t)) return 'prazo';
   if (RX.transportadora.test(t)) return 'transportadora';
   if (RX.origem.test(t)) return 'origem';
+  if (RX.grupos.test(t)) return 'grupos';            // v13
   if (RX.telegram.test(t)) return 'telegram';
   if (RX.comprar.test(t)) return 'comprar';
   if (RX.calculadora.test(t) && !RX.calcNao.test(t)) return 'calculadora';
