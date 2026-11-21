@@ -1,6 +1,8 @@
 'use strict';
 /* =============================================================================
-   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v14  ·  20/11/2026
+   logistica-bot.js — BOT DA LOGÍSTICA NO WHATSAPP (VitaFlow)  ·  v14.1  ·  21/11/2026
+   v14.1 (21/11): o pedido de protocolo da Artemis também vale ASSINADO (HMAC-SHA256 com a FIREBASE_SECRET, que o servidor já tem), com
+     validade de 5 min — o servidor não tem o CRON_SECRET (variável secreta do Netlify) e nada de segredo trafega. CRON_SECRET continua aceito.
    v14 (20/11, Thiago: "o bot da logística" — IA no estilo humano, só para a logística; nome: Artemis; regras = respostas dele ao questionário):
      a IA roda no servidor (artemis.py). Aqui: config ia {modo: desligada|sombra|teste|ligada, numeros}; depois do silêncio, a mensagem do cliente
      vai para vitaflow_sync/logistica/ia_fila (modo ligada, ou teste para os números da lista) e o bot NÃO responde; em sombra o bot responde
@@ -116,7 +118,7 @@
      CRON_SECRET         (já existe)     cron-job.org a cada 15 min: GET ?acao=abertura&secret=<CRON_SECRET>
    ============================================================================= */
 
-var VERSAO = 'v14';
+var VERSAO = 'v14.1';
 var FB_BASE = 'https://pricehub-f0236-default-rtdb.firebaseio.com';
 var RAIZ = 'vitaflow_sync/logistica';
 
@@ -1566,7 +1568,17 @@ async function iaEnfileirar(body, k, phone, lidK, agora, sombra, conv) {
     pedido: (conv && typeof conv.pedido === 'string') ? conv.pedido : '', protocolo: (conv && conv.protocolo) ? String(conv.protocolo) : ''
   });
 }
-/* chamado pela Artemis (servidor) com o CRON_SECRET: abre o protocolo com a mesma função do bot (um só por pedido) */
+var _crypto = require('crypto');
+/* v14.1: assinatura da Artemis = HMAC-SHA256(FIREBASE_SECRET, ts|acao|telefone|pedido|motivo), ts em ms, vale 5 min */
+function iaAssinaturaOk(b) {
+  if (!FB_SECRET || !b || typeof b.sig !== 'string' || !/^[0-9a-f]{64}$/.test(b.sig)) return false;
+  var ts = Number(b.ts) || 0;
+  if (!ts || Math.abs(Date.now() - ts) > 5 * MIN) return false;
+  var msg = [String(ts), String(b.ia_acao || ''), String(b.telefone || ''), String(b.pedido || ''), String(b.motivo || '')].join('|');
+  var esperado = _crypto.createHmac('sha256', FB_SECRET).update(msg, 'utf8').digest('hex');
+  try { return _crypto.timingSafeEqual(Buffer.from(esperado, 'hex'), Buffer.from(b.sig, 'hex')); } catch (e) { return false; }
+}
+/* chamado pela Artemis (servidor) com o CRON_SECRET ou assinado: abre o protocolo com a mesma função do bot (um só por pedido) */
 async function iaAcao(d) {
   var cfg = await carregarCfg(), agora = Date.now();
   if (d.ia_acao === 'protocolo') {
@@ -1610,7 +1622,7 @@ exports.handler = async function (event) {
   var body;
   try { body = JSON.parse(event.body || '{}'); } catch (e) { return resp(200, 'json invalido'); }
   if (body.ia_acao) {   /* v14: a Artemis (servidor) pedindo para abrir protocolo */
-    if (!CRON_SECRET || body.secret !== CRON_SECRET) return resp(403, 'secret');
+    if (!((CRON_SECRET && body.secret === CRON_SECRET) || iaAssinaturaOk(body))) return resp(403, 'secret');
     var ra; try { ra = await iaAcao(body); } catch (eIa) { ra = { ok: false, erro: String(eIa && eIa.message || eIa).slice(0, 200) }; }
     return { statusCode: 200, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(ra) };
   }
