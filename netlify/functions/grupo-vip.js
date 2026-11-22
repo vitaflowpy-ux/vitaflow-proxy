@@ -1,11 +1,12 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v14  ·  22/11/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v14.1  ·  22/11/2026
    v14 (22/11/2026, Thiago: "todo conhecimento passado pode e deve ser difundido para todos os bots"): respostas NOVAS iguais às da
        Artemis — consta_entregue (vizinhos, portaria e caixa de correio; a transportadora às vezes registra a entrega antes; chega no dia
        útil seguinte ou no próximo; em paralelo a VitaFlow abre chamado na transportadora) e transportadora_escolha (reclamou de uma,
        prefere outra ou pergunta a melhor/mais rápida → mais de 5.000 cidades, cada uma com virtudes e defeitos em locais diferentes).
        transportadora ganha a lista com Total Express (já tinha). Comandos novos: !entregue · !transportadoras.
+   v14.1 (22/11): + produto_estraga (texto oficial "o produto estraga no transporte?", o mesmo da Artemis e da Athena; !estraga · !gelo).
    v13 (21/11/2026, Thiago: "todas essas informações devem ser transmitidas para a Stella (bot dos grupos) e as respostas dela devem
        ser atualizadas e acrescentadas"): textos com o Seguro de Envio oficial (cobre extravio, apreensão e roubo; reenvio OU estorno
        UMA vez, só com a comunicação oficial da transportadora; não cobre endereço errado, ausência nem recusa; basta escolher
@@ -557,6 +558,14 @@ var T = {
 '🚚 *QUAL TRANSPORTADORA É MELHOR?*\n⠀\n' +
 'Enviamos para *mais de 5.000 cidades no Brasil*, e cada transportadora tem suas virtudes e seus defeitos em locais diferentes — por isso não dá para apontar uma melhor ou uma pior.',
 
+  produto_estraga: /* v14 — texto oficial do dono (22/11), o mesmo da Artemis e da Athena */
+'🧊 *O PRODUTO ESTRAGA NO TRANSPORTE?*\n⠀\n' +
+'Agradeço por compartilhar essa questão, entendo que a refrigeração chame a atenção, mas gostaria de te tranquilizar quanto à integridade do produto.\n⠀\n' +
+'A Tirzepatida, assim como diversas outras substâncias, mesmo após a reconstituição, possui uma estabilidade térmica comprovada que permite que ela permaneça em temperatura ambiente por um período de 21 até 30 dias sem perder sua potência ou segurança. O transporte sem refrigeração por curtos períodos não compromete a eficácia biológica do peptídeo, desde que ele não seja exposto a calor extremo ou luz solar direta.\n⠀\n' +
+'O uso do gelo no armazenamento prolongado serve para garantir que o prazo de validade total seja mantido, mas para o trânsito e o uso imediato, o produto permanece 100% íntegro.\n⠀\n' +
+'Essa informação pode ser confirmada no site da Eli Lilly, fabricante do Mounjaro ou na própria embalagem deste produto.\n⠀\n' +
+'Outro tipo de produto (hormônio em óleo, GH) ou algo diferente disso? Fale com a logística:\n💬 wa.me/447537155718 — *Artemis*, assistente virtual da logística (a equipe atende seg a sex 8h–18h · sáb 9h–14h)',
+
   remetente:    /* v13 */
 '↩️ *PACOTE DEVOLVIDO AO REMETENTE*\n⠀\n' +
 'Por segurança, todos os pacotes saem com *remetente fictício*. Por isso, pacote que volta ao remetente é considerado *extraviado* — o endereço de origem não existe.\n⠀\n' +
@@ -750,6 +759,7 @@ var GATILHOS = [
   { chave: 'reclamacao',     cmd: ['!reclamar', '!reclamacao', '!troca'] },   /* v13 */
   { chave: 'consta_entregue', cmd: ['!entregue'] },                          /* v14 */
   { chave: 'transportadora_escolha', cmd: ['!transportadoras'] },            /* v14 */
+  { chave: 'produto_estraga', cmd: ['!estraga', '!gelo'] },                  /* v14 */
   { chave: 'remetente',      cmd: ['!remetente'] },
   { chave: 'originais',      cmd: ['!originais', '!original'] },
   { chave: 'grupos',         cmd: ['!grupos', '!grupo'] }
@@ -786,6 +796,9 @@ var RX = {
   sorteio:      /\b(sorteio|numero da sorte|numeros da sorte)\b/,
   remetente:    /\bremetente\b/,   // v13
   constaEntregue: /\b(consta|consta como|diz que foi|diz|aparece|aparece como|marcou|marcou como|deu|deu como|mostra|mostra como|esta|ta|ficou|ficou como|colocaram|botaram) ("|')?entregue\b/,   // v14
+  estraga:      /\b(estrag\w*|perde (o )?efeito|perdeu (o )?efeito|perder (o )?efeito|perde (a )?potencia|estragado)\b/,   // v14
+  estragaCtx:   /\b(gelo|geladeira|refrigera\w*|calor|quente|atras\w*|demor\w*|transporte|viagem|correio\w*|transportadora|chegou|veio|entrega)\b/,   // v14
+  semGelo:      /\b(veio|chegou|vem|vieram|chegaram) sem (gelo|refrigera\w*)|\bfora da geladeira\b[^.?!]{0,40}\b(estrag\w*|problema|tem problema|faz mal|perde)\b/,   // v14
   naoRecebi:    /\bnao (chegou|chegaram|recebi|recebemos|recebeu|veio|vieram|esta aqui|ta aqui|apareceu|encontr\w*|achei|achamos)\b|\bsumiu\b|\bcade\b/,   // v14
   transpEscolha: /\b(transportadora|transportadoras|jadlog|loggi|j ?& ?t|jt express|total express|correios)\b[^.?!]{0,40}\b(mais rapida|mais rapido|melhor|pior|ruim|pessima|horrivel|lixo|lenta|demora demais)\b|\b(qual|que) (e a |a )?(transportadora )?(mais rapida|melhor)\b[^.?!]{0,25}\btransportadora|\b(prefiro|preferia|quero que (venha|mande|envie)|manda|envia) (pela|pelos?|por|na|no) (jadlog|loggi|j ?& ?t|jt|total express|correios|sedex|pac)\b|\bnao (gosto|quero)( d[ao])? (jadlog|loggi|j ?& ?t|jt|total express|correios)\b/,   // v14
   reclamacao:   /\b(veio (errado|trocado|faltando|quebrad\w*|danificad\w*|violad\w*|aberto)|(produto|item) (errado|trocado|faltando)|faltou (um|uma|o|a|produto|item)|chegou (errado|trocado|quebrad\w*|danificad\w*|violad\w*)|reclamar|reclamacao|prazo (pra|para|de) reclama\w*|video (da|de) abertura|filmar (a )?(abertura|caixa)|troca de produto|trocar (o|um|meu) produto)\b/,
@@ -816,6 +829,7 @@ function rotear(texto, soComando) {
 
   /* ordem importa: o mais específico primeiro */
   if (RX.confianca.test(t) && (RX.seguroCompra.test(t) || !RX.seguro.test(t))) return 'confianca';
+  if ((RX.estraga.test(t) && RX.estragaCtx.test(t)) || RX.semGelo.test(t)) return 'produto_estraga';   // v14
   if (RX.remetente.test(t)) return 'remetente';      // v13
   if (RX.constaEntregue.test(t) && (/\bconsta\b/.test(t) || RX.naoRecebi.test(t))) return 'consta_entregue';   // v14: só quando o cliente diz que NÃO recebeu
   if (RX.reclamacao.test(t)) return 'reclamacao';    // v13
