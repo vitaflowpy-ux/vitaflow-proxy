@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v13  ·  21/11/2026
+   grupo-vip.js — BOT DO GRUPO VIP (VitaFlow)  ·  v14  ·  22/11/2026
+   v14 (22/11/2026, Thiago: "todo conhecimento passado pode e deve ser difundido para todos os bots"): respostas NOVAS iguais às da
+       Artemis — consta_entregue (vizinhos, portaria e caixa de correio; a transportadora às vezes registra a entrega antes; chega no dia
+       útil seguinte ou no próximo; em paralelo a VitaFlow abre chamado na transportadora) e transportadora_escolha (reclamou de uma,
+       prefere outra ou pergunta a melhor/mais rápida → mais de 5.000 cidades, cada uma com virtudes e defeitos em locais diferentes).
+       transportadora ganha a lista com Total Express (já tinha). Comandos novos: !entregue · !transportadoras.
    v13 (21/11/2026, Thiago: "todas essas informações devem ser transmitidas para a Stella (bot dos grupos) e as respostas dela devem
        ser atualizadas e acrescentadas"): textos com o Seguro de Envio oficial (cobre extravio, apreensão e roubo; reenvio OU estorno
        UMA vez, só com a comunicação oficial da transportadora; não cobre endereço errado, ausência nem recusa; basta escolher
@@ -542,6 +547,16 @@ var T = {
 'Sem o vídeo não é possível analisar a solicitação.\n⠀\n' +
 'Para reclamar, fale com a logística:\n💬 wa.me/447537155718 — *Artemis*, assistente virtual da logística (a equipe atende seg a sex 8h–18h · sáb 9h–14h)',
 
+  consta_entregue: /* v14 */
+'📦 *CONSTA "ENTREGUE", MAS NÃO CHEGOU?*\n⠀\n' +
+'Confira com *vizinhos*, *portaria* e *caixa de correio*.\n⠀\n' +
+'Muitas vezes, por motivos desconhecidos, a transportadora registra a entrega *antes* de o pacote chegar. Normalmente, quando isso acontece, a encomenda chega no *dia útil seguinte* ou no próximo.\n⠀\n' +
+'Em paralelo, a VitaFlow abre um *chamado na transportadora* pedindo explicações. Para isso, fale com a logística:\n💬 wa.me/447537155718 — *Artemis*, assistente virtual da logística (a equipe atende seg a sex 8h–18h · sáb 9h–14h)',
+
+  transportadora_escolha: /* v14 */
+'🚚 *QUAL TRANSPORTADORA É MELHOR?*\n⠀\n' +
+'Enviamos para *mais de 5.000 cidades no Brasil*, e cada transportadora tem suas virtudes e seus defeitos em locais diferentes — por isso não dá para apontar uma melhor ou uma pior.',
+
   remetente:    /* v13 */
 '↩️ *PACOTE DEVOLVIDO AO REMETENTE*\n⠀\n' +
 'Por segurança, todos os pacotes saem com *remetente fictício*. Por isso, pacote que volta ao remetente é considerado *extraviado* — o endereço de origem não existe.\n⠀\n' +
@@ -733,6 +748,8 @@ var GATILHOS = [
   { chave: 'confianca',      cmd: ['!confianca'] },
   { chave: 'site',           cmd: ['!site', '!links', '!ajuda'] },
   { chave: 'reclamacao',     cmd: ['!reclamar', '!reclamacao', '!troca'] },   /* v13 */
+  { chave: 'consta_entregue', cmd: ['!entregue'] },                          /* v14 */
+  { chave: 'transportadora_escolha', cmd: ['!transportadoras'] },            /* v14 */
   { chave: 'remetente',      cmd: ['!remetente'] },
   { chave: 'originais',      cmd: ['!originais', '!original'] },
   { chave: 'grupos',         cmd: ['!grupos', '!grupo'] }
@@ -768,6 +785,9 @@ var RX = {
   origem:       /\b(de onde sai|de onde vem|onde fica o estoque|sai de onde|vem de onde|sao enviados de onde)\b/,
   sorteio:      /\b(sorteio|numero da sorte|numeros da sorte)\b/,
   remetente:    /\bremetente\b/,   // v13
+  constaEntregue: /\b(consta|consta como|diz que foi|diz|aparece|aparece como|marcou|marcou como|deu|deu como|mostra|mostra como|esta|ta|ficou|ficou como|colocaram|botaram) ("|')?entregue\b/,   // v14
+  naoRecebi:    /\bnao (chegou|chegaram|recebi|recebemos|recebeu|veio|vieram|esta aqui|ta aqui|apareceu|encontr\w*|achei|achamos)\b|\bsumiu\b|\bcade\b/,   // v14
+  transpEscolha: /\b(transportadora|transportadoras|jadlog|loggi|j ?& ?t|jt express|total express|correios)\b[^.?!]{0,40}\b(mais rapida|mais rapido|melhor|pior|ruim|pessima|horrivel|lixo|lenta|demora demais)\b|\b(qual|que) (e a |a )?(transportadora )?(mais rapida|melhor)\b[^.?!]{0,25}\btransportadora|\b(prefiro|preferia|quero que (venha|mande|envie)|manda|envia) (pela|pelos?|por|na|no) (jadlog|loggi|j ?& ?t|jt|total express|correios|sedex|pac)\b|\bnao (gosto|quero)( d[ao])? (jadlog|loggi|j ?& ?t|jt|total express|correios)\b/,   // v14
   reclamacao:   /\b(veio (errado|trocado|faltando|quebrad\w*|danificad\w*|violad\w*|aberto)|(produto|item) (errado|trocado|faltando)|faltou (um|uma|o|a|produto|item)|chegou (errado|trocado|quebrad\w*|danificad\w*|violad\w*)|reclamar|reclamacao|prazo (pra|para|de) reclama\w*|video (da|de) abertura|filmar (a )?(abertura|caixa)|troca de produto|trocar (o|um|meu) produto)\b/,
   originais:    /\b(original|originais|replica|replicas|falsificad\w*|segunda linha|2a linha|2 linha)\b/,
   grupos:       /\b(link do grupo|link dos grupos|links dos grupos|outro grupo|grupo 2|vip 2|vip #2|grupo vip 2|grupo novo|quais (sao )?os grupos|tem (outro )?grupo|entrar no grupo|grupo do whats\w*)\b/,   // v11: só o pedido claro (sorteio encerrado)
@@ -797,9 +817,11 @@ function rotear(texto, soComando) {
   /* ordem importa: o mais específico primeiro */
   if (RX.confianca.test(t) && (RX.seguroCompra.test(t) || !RX.seguro.test(t))) return 'confianca';
   if (RX.remetente.test(t)) return 'remetente';      // v13
+  if (RX.constaEntregue.test(t) && (/\bconsta\b/.test(t) || RX.naoRecebi.test(t))) return 'consta_entregue';   // v14: só quando o cliente diz que NÃO recebeu
   if (RX.reclamacao.test(t)) return 'reclamacao';    // v13
   if (RX.seguro.test(t)) return 'seguro';
   if (RX.originais.test(t)) return 'originais';      // v13
+  if (RX.transpEscolha.test(t)) return 'transportadora_escolha';     // v14
   if (RX.sorteio.test(t)) return 'sorteio';   // v11: "cotas" + atacado não é mais sorteio
   if (RX.rastreio.test(t) && /\b(meu|minha|um) pedido\b|\bpedido (feito|na conta)\b/.test(t)) return 'rastreio';
   if (RX.atacado.test(t)) return RX.pagamento.test(t) ? 'atacado_pagamento' : 'atacado';
