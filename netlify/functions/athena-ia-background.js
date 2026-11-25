@@ -1,3 +1,4 @@
+// v129 (21/11/2026, noite — Thiago: "pode pegar tudo que tem na artemis e na stella e passar para a athena"): SYSTEM ganha o bloco ENTREGA, SEGURO E PÓS-VENDA (Seguro VitaFlow, reclamação 30 dias + vídeo, remetente fictício, "consta entregue", transportadoras/5.000 cidades, originais, 3 grupos, FAQ, sem Instagram) e a Black Friday deixa de dizer "sai primeiro no Grupo VIP". Idêntico nos 2 arquivos. Resto = v128.
 // v128 (18/11/2026, noite): o texto do ATACADO ganha os DOIS ESTOQUES (Ciudad del Este e Pedro Juan Caballero; cada estoque é um pedido separado) — junto com a botconversa v128. Resto = v126.
 // v126 (18/11/2026): CONFERENTE antes de enviar (conferirResposta) + registro em vitaflow_sync/athena_conferente. Resto = v125.
 // v125 (18/11/2026 — caso real 17/11): TRAVA DA BLACK FRIDAY na saída (travarBlackInventada): enquanto o quadro de promoções disser que ela
@@ -35,15 +36,11 @@
 //       como LISTA_PRODUTOS (pro botconversa.js continuar o fluxo: número → carrinho → pagamento)
 //       e manda a fala + a lista numerada. O cliente só escolhe o número.
 
-const BOTCONVERSA_KEY  = '8c9e69c3-3c9f-4f23-b480-be4a0de29640'; // confere com a chave do painel BotConversa
+const BOTCONVERSA_KEY = process.env.BOTCONVERSA_API_KEY || '';
 // Cada COMPANHIA do BotConversa tem sua PRÓPRIA API key. A Stella (VitaMK) usa uma key
 // diferente da Athena; sem a key certa, a resposta da IA sai pela companhia errada e NÃO
 // chega na conversa. O botconversa.js manda body.assistente ("Athena" ou "Stella").
-const BOTCONVERSA_KEYS = {
-  'Athena': '8c9e69c3-3c9f-4f23-b480-be4a0de29640',
-  'Stella': 'ccad05d4-c30e-493c-89b6-74ae04480e53'
-};
-function keyDoAssistente(a){ return (a && BOTCONVERSA_KEYS[a]) ? BOTCONVERSA_KEYS[a] : BOTCONVERSA_KEY; }
+function keyDoAssistente(a){ return a === 'Stella' ? process.env.STELLA_BOTCONVERSA_API_KEY : BOTCONVERSA_KEY; }
 // Troca "Athena" por "Stella" (ou outro nome) SÓ no texto que vai pro cliente, quando o
 // assistente não é a Athena. As regras internas do prompt continuam falando "Athena".
 function aplicarNomeAssistente(t, assistente){
@@ -58,7 +55,7 @@ const ANTHROPIC_KEY    = process.env.ANTHROPIC_API_KEY;
 // ── DESCRIÇÃO DE PRODUTO SOB DEMANDA (Athena/Stella leem a descrição da página só
 // quando o cliente PERGUNTA um detalhe do produto — ex.: "quantos comprimidos vem?").
 // Usa a Storefront API pública da loja (mesmo token do site). NÃO mexe no cache/proxy.
-const STOREFRONT_TOKEN = 'b4b46a09460b7277f5d4625b9019daef';
+const STOREFRONT_TOKEN = process.env.SHOPIFY_STOREFRONT_TOKEN || '';
 const SHOP_GRAPHQL     = 'https://vitaflowoficial.com/api/2023-10/graphql.json';
 
 // ── MEMÓRIA DE CONVERSA (ajuste fino aqui) ────────────────────────────────────
@@ -626,7 +623,8 @@ function normalizarMarkdownWhats(t){
 // Retorna { ok, etapa, status, detalhe } pra gente saber EXATAMENTE onde travou.
 // apiKey: key da companhia certa (Athena ou Stella). Sem ela, cai na key padrão (Athena).
 async function enviarBotConversa(phone, message, apiKey){
-  const KEY = apiKey || BOTCONVERSA_KEY;
+  if (!apiKey) throw new Error('Credencial da companhia ausente');
+  const KEY = apiKey;
   message = normalizarMarkdownWhats(message);   // **negrito** do Markdown -> *negrito* do WhatsApp
   const phoneNorm = normalizarPhone(phone);
   console.log('[IA] enviarBotConversa -> phone bruto:', phone, '| normalizado:', phoneNorm);
@@ -701,6 +699,7 @@ REGRAS DE OURO (NUNCA viole):
 - Seja BREVE (é WhatsApp): 2 a 6 linhas. Use *negrito* (um asterisco de cada lado). NUNCA use ## nem ###.
 - Mantenha COERÊNCIA com o que você já disse (o histórico está acima). Nunca se contradiga.
 - 🩺 SAÚDE INDIVIDUAL (v122 — revisão do GPT-6 de 16/11; caso real: a IA garantiu segurança cardiovascular e sugeriu somar hormônios): se o cliente contar um PROBLEMA DE SAÚDE, sintoma, doença (coração, pressão, rim, fígado, diabetes, tireoide, gravidez, câncer etc.), REMÉDIO que já toma ou resultado de EXAME, ou perguntar se é seguro/faz mal PRA ELE: é PROIBIDO dizer que é seguro, garantir qualquer coisa sobre coração/pressão/órgãos, sugerir AUMENTAR dose ou SOMAR outro hormônio/produto por causa disso. Responda em 1-2 linhas, com carinho, que isso precisa ser avaliado pelo médico que acompanha ele (com exames), e siga ajudando com produto/compra só se ele quiser. Nunca invente estudo, dado ou garantia.
+- CONSERVAÇÃO NO TRANSPORTE: quando a pessoa perguntar sobre perda de efeito, atraso, falta de gelo ou exposição a temperatura inadequada no transporte, use exatamente esta resposta aprovada, com prioridade sobre outras orientações de armazenamento: «Para conferir a conservação do seu produto, preciso identificar a apresentação e entender o que aconteceu durante a entrega. Guarde a embalagem e fale com a Artemis para registrar o caso. Se houver dúvida sobre a temperatura de conservação, consulte um farmacêutico antes de usar.»
 - 🚫 VALIDADE/CONSERVAÇÃO (Regra nº 5 da VitaFlow — vale pra TODO produto): NUNCA fale de prazo de validade nem de quantos dias/semanas/meses o produto dura depois de reconstituído, liofilizado guardado, aberto ou na geladeira, nem compare água bacteriostática × CAG. PODE dizer só: como reconstituir, que depois de reconstituído vai pra geladeira, proteger da luz, e a conta mg → mL → UI. Se perguntarem o prazo, diga em 1 linha que esse dado você não passa e siga.
 - EMBALAGEM/ENVIO: NUNCA afirme detalhe que não está aqui — gelo/gelo gel, caixa térmica, refrigeração no transporte, código de barras, lote, data de validade. Se perguntarem, diga em 1 frase que essa informação você não tem aqui e que a equipe responde — é só digitar *atendente*.
 - Só diga "não encontrei esse produto" quando o cliente tiver escrito um NOME DE PRODUTO. Se a mensagem for outra coisa ("Q", "quero saber mais a respeito", "data de validade", "vende menos?"), responda ao que ele disse — NUNCA abra com "não encontrei nenhum produto com esse nome".
@@ -782,7 +781,22 @@ DILUÍDO (AQ / líquido / pronto pra usar) x LIOFILIZADO (em pó): fale MUITO BE
 - O LIOFILIZADO (em pó) também é excelente: rende bem, você reconstitui na hora com água bacteriostática, e é ótimo pra quem quer estocar por mais tempo antes de diluir.
 - Resumo pra passar ao cliente: as duas entregam o mesmo resultado; diluído = praticidade e modernidade, liofilizado = flexibilidade de estoque. A escolha é preferência, não qualidade. Recomende com confiança a que fizer sentido pro cliente (e temos ótimas opções diluídas).
 
-PRAZOS OFICIAIS (use sempre "prazo estimado"): postagem em até 3 dias úteis após o pagamento (atacado: até 6 dias úteis); entrega estimada depois da postagem, em dias úteis — SP e RJ 1 a 6, MG 2 a 6, ES 2 a 8, PR 2 a 6, SC 2 a 7, RS 2 a 5, DF 3 a 6, GO 2 a 6, MS 4 a 8, MT 4 a 9, BA 3 a 10, demais estados do Nordeste 5 a 11, Norte 7 a 11. A Transportadora inclui seguro grátis; Correios (PAC/SEDEX) não têm seguro.`;
+PRAZOS OFICIAIS (use sempre "prazo estimado"): postagem em até 3 dias úteis após o pagamento (atacado: até 6 dias úteis); entrega estimada depois da postagem, em dias úteis — SP e RJ 1 a 6, MG 2 a 6, ES 2 a 8, PR 2 a 6, SC 2 a 7, RS 2 a 5, DF 3 a 6, GO 2 a 6, MS 4 a 8, MT 4 a 9, BA 3 a 10, demais estados do Nordeste 5 a 11, Norte 7 a 11. A Transportadora inclui seguro grátis; Correios (PAC/SEDEX) não têm seguro.
+
+ENTREGA, SEGURO E PÓS-VENDA — as MESMAS regras da Artemis (IA da logística) e da Stella (bot dos grupos); fonte: dono, 21–22/11/2026:
+- Pós-venda (rastreio, atraso, extravio, apreensão, reclamação, seguro, endereço errado) é com a LOGÍSTICA: a *Artemis*, assistente virtual da logística, no wa.me/447537155718 — ela consulta o pedido na hora; a equipe humana atende seg a sex 8h–18h e sáb 9h–14h. Você explica a regra em 1 a 3 linhas e indica a Artemis; você NÃO abre protocolo e NÃO promete reenvio, estorno, cupom nem data.
+- *Seguro VitaFlow* (grátis, sem custo adicional): basta escolher *Transportadora* no fechamento do pedido. Todo pedido de *atacado* também tem (no atacado a única forma de envio é a Transportadora; não existe envio pelos Correios (PAC ou SEDEX) no atacado — nunca diga "seja qual for a forma de envio"). Se o cliente escolheu Transportadora e a VitaFlow, por estratégia de logística, enviou pelos Correios, continua coberto. PAC ou SEDEX escolhidos na compra NÃO têm seguro.
+- O seguro cobre *extravio, apreensão e roubo da carga* durante o transporte, com reenvio sem custo ou estorno, *uma única vez por pedido* (um novo problema no reenvio não é coberto). MUITO IMPORTANTE: o reenvio ou o estorno só acontecem depois da *comunicação oficial da transportadora* confirmando o caso. Não cobre: endereço informado errado, ausência do destinatário e recusa da entrega. Informar o endereço completo e correto é responsabilidade do cliente. Regras completas: vitaflowoficial.com/pages/seguro-vitaflow
+- Por segurança, todo pacote sai com *remetente fictício*: pacote devolvido ao remetente é considerado extraviado (o endereço de origem não existe). Devolução causada por endereço errado, ausência ou recusa não é coberta.
+- Reclamação de pedido recebido (item errado, faltando ou danificado): o *vídeo da abertura* é obrigatório — gravado desde antes de abrir, sem cortes nem edições, com a caixa e o conteúdo visíveis. Prazo para reclamar: *30 dias a partir da data de recebimento*. Sem o vídeo não é possível analisar. Item errado: a VitaFlow reenvia o item certo primeiro e o cliente devolve o errado por PAC (o frete dessa devolução é reembolsado por Pix). Só se troca produto fechado. A VitaFlow não trabalha com cancelamento de pedido. Quem conduz tudo isso é a logística (Artemis).
+- Consta "entregue" e o cliente não recebeu: peça para conferir com vizinhos, portaria e caixa de correio; explique que muitas vezes, por motivos desconhecidos, a transportadora registra a entrega antes de o pacote chegar e que normalmente ele chega no dia útil seguinte ou no próximo; em paralelo, a VitaFlow abre um chamado na transportadora pedindo explicações — para isso, o cliente fala com a Artemis.
+- Destinatário ausente: haverá nova tentativa no próximo dia útil. Não temos contato com o entregador nem como marcar horário de entrega.
+- SMS ou WhatsApp cobrando taxa para liberar a entrega é GOLPE: a VitaFlow e a transportadora não cobram taxa — não pague e não responda.
+- Transportadoras: Jadlog, Loggi, J&T Express e Total Express, além dos Correios (PAC e SEDEX). NÃO compare transportadoras nem diga qual é mais rápida ou melhor. Se o cliente reclamar de uma transportadora, disser que prefere outra ou perguntar qual é a melhor/mais rápida, explique que enviamos para *mais de 5.000 cidades no Brasil* e que cada transportadora tem suas virtudes e seus defeitos em locais diferentes, por isso não dá para apontar uma melhor ou uma pior.
+- Uma compra pode sair em até 3 envios, de origens diferentes (São Paulo, Mato Grosso do Sul; o atacado sai do Paraguai — Ciudad del Este e Pedro Juan Caballero), cada envio com o seu código; o frete cobrado é um só. O cliente acompanha tudo em vitaflowoficial.com/pages/rastrear-pedido (ou na Minha Conta).
+- PRODUTOS ORIGINAIS: todos os produtos vendidos pela VitaFlow são originais e de marcas consolidadas no mercado. Não trabalhamos com réplicas, 2ª linha ou nada do gênero. São 8 anos de mercado.
+- GRUPOS DA VITAFLOW (3, todos gratuitos): VIP #1 (WhatsApp) chat.whatsapp.com/BNa4tPKWjaZ1cTP4XwXtgM · VIP #2 (WhatsApp) chat.whatsapp.com/Bcw7hkVR3ITE5RQtnYzdD7 · Telegram t.me/referencias_vitaflow. As promoções NÃO saem primeiro nos grupos; mas, com a notificação chegando na hora, quem está nos grupos costuma ficar sabendo antes.
+- Links oficiais: Perguntas frequentes vitaflowoficial.com/pages/faq · Seguro VitaFlow vitaflowoficial.com/pages/seguro-vitaflow · Rastrear pedido vitaflowoficial.com/pages/rastrear-pedido. A VitaFlow NÃO tem Instagram — nunca cite Instagram.`;
 
 // Pergunta pra própria API da Anthropic QUAIS modelos essa chave pode usar (resolve o 404 de vez).
 async function modelosDisponiveis(){
@@ -948,7 +962,7 @@ const MSG_FRETE_SISTEMA = 'Pra te passar o frete certinho, é só digitar *frete
 // TRAVA DA BLACK FRIDAY. Enquanto o quadro de promoções do botconversa.js disser "AINDA NÃO ANUNCIOU a Black Friday", resposta que fala de
 // Black Friday / Black Week / Cyber Monday com data, "descontos especiais", "produtos selecionados", "a equipe libera/divulga", "está chegando",
 // ou sem dizer que ainda não foi anunciada, é TROCADA pelo texto fixo. Quando a Black Friday for anunciada, a frase sai do quadro e a trava desliga.
-const MSG_BLACK_NAO_ANUNCIADA = 'A *Black Friday* da VitaFlow ainda não foi anunciada: datas e descontos ainda não foram divulgados. 📣 O anúncio sai primeiro no nosso *Grupo VIP* e no site — fica de olho por lá!\n\nEnquanto isso, posso te ajudar a montar um pedido com o que vale hoje? 😊';
+const MSG_BLACK_NAO_ANUNCIADA = 'A *Black Friday* da VitaFlow ainda não foi anunciada: datas e descontos ainda não foram divulgados. 📣 O anúncio sai no site e nos nossos grupos (com a notificação, quem está nos grupos costuma saber antes) — fica de olho por lá!\n\nEnquanto isso, posso te ajudar a montar um pedido com o que vale hoje? 😊';
 function travarBlackInventada(txt, promoContext){
   if (!txt) return txt;
   if (!/AINDA NÃO ANUNCIOU a Black Friday/.test(String(promoContext || ''))) return txt;
