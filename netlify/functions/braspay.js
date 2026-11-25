@@ -9,6 +9,11 @@
 //   • O Pix é SEMPRE Bras Pay: ?modo=1 responde sempre pix:'braspay' e a criação nunca mais recusa com 'pix_na_infinitepay'.
 //   • O campo antigo infinitepay passa a responder SEMPRE 'desligada': tela que ainda não foi atualizada continua só com o Pix da
 //     Bras Pay (nenhuma tela antiga religa o Pix reserva/checkout da InfinitePay). Os nós pagamento_pix e pagamento_infinitepay ficam sem uso.
+// v5.2 (25/11/2026 — migração para o servidor; achado do teste de "resposta perdida", combinado com o Codex na issue #2):
+//   "Gerar um novo Pix" (nova:true) agora aceita acaoId — um identificador que a TELA cria no clique do cliente e repete nas duas
+//   tentativas (servidor e Netlify). A referência vira <pedido>~a<acaoId> em vez de <pedido>~<hora>: como a Bras Pay usa a referência
+//   como chave, repetir a MESMA ação devolve a MESMA cobrança (antes cada lado inventava o próprio sufixo e nasciam 2 cobranças).
+//   Sem acaoId tudo fica como era (bots e telas antigas). acaoId fora do formato → 400 acao_invalida. Outra ação = outro acaoId = outro Pix.
 // v5.1 (19/11/2026): Thiago — "quero acrescentar a opção de mandar a chave pix fixa pelo sistema orçamento também": acao:'alternativo'
 //   aceita a referência L-… do Orçamento quando canal:'orcamento' (o pagamento cai como "LINK PAGO (Orçamento)", igual ao Pix gerado lá).
 //   Thiago: "alguns clientes estão tendo dificuldade de pagar com a chave pix gerada na hora… quero deixar essa chave como uma segunda
@@ -166,6 +171,9 @@ async function criarCobranca(corpo) {
   // v5: o Pix é sempre Bras Pay (o interruptor do Pix, v2, saiu de uso)
   let exp = Math.round(Number(corpo.expiraEmSegundos || 1800));
   if (!(exp > 0)) exp = 1800;
+  // v5.2: identificador da ação "Gerar um novo Pix" (só vale com nova:true; fica preso ao pedido porque entra DEPOIS do número, na referência)
+  const acao = (corpo.acaoId === undefined || corpo.acaoId === null || corpo.acaoId === '') ? '' : String(corpo.acaoId).toLowerCase();
+  if (acao && !/^[a-z0-9]{8,20}$/.test(acao)) return resposta(400, { ok: false, erro: 'acao_invalida' });
 
   async function tentar(ref) {
     const r = await fetchT(BRASPAY_API, {
@@ -185,7 +193,7 @@ async function criarCobranca(corpo) {
   }
 
   try {
-    let ref = corpo.nova ? base + '~' + Date.now().toString(36) : base;
+    let ref = corpo.nova ? base + '~' + (acao ? 'a' + acao : Date.now().toString(36)) : base;   // v5.2
     let t = await tentar(ref);
     // 409 = a referência já foi usada (Pix vencido/pago) ou está pendente com OUTRO valor → referência nova
     if (t.status === 409) {
@@ -665,8 +673,8 @@ exports.handler = async function (event) {
         alternativo: !!(cartaz && brcodeValido(cartaz)), usdt: { habilitado: !!(u.habilitado && uc.ativo), redes: u.habilitado && uc.ativo ? u.redes : [] } }) };
     }
     if (q.cartaz) return paginaCartaz();
-    if (q.diag) { await lerUsdt(); return resposta(200, { ok: true, versao: 'v5.1', usdt: _usdtCache.diag, alternativo: brcodeValido(cartazAtual()) }); }
-    return resposta(200, { ok: true, servico: 'braspay', versao: 'v5.1', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
+    if (q.diag) { await lerUsdt(); return resposta(200, { ok: true, versao: 'v5.2', usdt: _usdtCache.diag, alternativo: brcodeValido(cartazAtual()) }); }
+    return resposta(200, { ok: true, servico: 'braspay', versao: 'v5.2', pronto: !!process.env.BRASPAY_API_KEY, webhook: !!process.env.BRASPAY_WEBHOOK_SECRET,
                            alternativo: brcodeValido(cartazAtual()) });
   }
   if (event.httpMethod !== 'POST') return resposta(405, { ok: false, erro: 'metodo' });
