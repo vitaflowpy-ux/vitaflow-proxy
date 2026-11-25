@@ -14,6 +14,7 @@
 //   tentativas (servidor e Netlify). A referência vira <pedido>~a<acaoId> em vez de <pedido>~<hora>: como a Bras Pay usa a referência
 //   como chave, repetir a MESMA ação devolve a MESMA cobrança (antes cada lado inventava o próprio sufixo e nasciam 2 cobranças).
 //   Sem acaoId tudo fica como era (bots e telas antigas). acaoId fora do formato → 400 acao_invalida. Outra ação = outro acaoId = outro Pix.
+//   Sem nova:true o campo nem é lido. Com acaoId, um 409 da Bras Pay NÃO vira referência nova: responde acao_em_conflito (revisão do Codex).
 // v5.1 (19/11/2026): Thiago — "quero acrescentar a opção de mandar a chave pix fixa pelo sistema orçamento também": acao:'alternativo'
 //   aceita a referência L-… do Orçamento quando canal:'orcamento' (o pagamento cai como "LINK PAGO (Orçamento)", igual ao Pix gerado lá).
 //   Thiago: "alguns clientes estão tendo dificuldade de pagar com a chave pix gerada na hora… quero deixar essa chave como uma segunda
@@ -172,7 +173,8 @@ async function criarCobranca(corpo) {
   let exp = Math.round(Number(corpo.expiraEmSegundos || 1800));
   if (!(exp > 0)) exp = 1800;
   // v5.2: identificador da ação "Gerar um novo Pix" (só vale com nova:true; fica preso ao pedido porque entra DEPOIS do número, na referência)
-  const acao = (corpo.acaoId === undefined || corpo.acaoId === null || corpo.acaoId === '') ? '' : String(corpo.acaoId).toLowerCase();
+  // Sem nova:true o campo nem é lido (revisão do Codex no PR #3): um acaoId qualquer não atrapalha a criação comum.
+  const acao = (!corpo.nova || corpo.acaoId === undefined || corpo.acaoId === null || corpo.acaoId === '') ? '' : String(corpo.acaoId).toLowerCase();
   if (acao && !/^[a-z0-9]{8,20}$/.test(acao)) return resposta(400, { ok: false, erro: 'acao_invalida' });
 
   async function tentar(ref) {
@@ -197,6 +199,9 @@ async function criarCobranca(corpo) {
     let t = await tentar(ref);
     // 409 = a referência já foi usada (Pix vencido/pago) ou está pendente com OUTRO valor → referência nova
     if (t.status === 409) {
+      // v5.2 (revisão do Codex no PR #3): com acaoId a referência É a ação. Se ela já foi usada (paga, vencida ou com outro valor),
+      // NÃO se inventa outra em silêncio — isso criaria um 2º Pix para o mesmo toque. A tela avisa e o próximo toque traz outro acaoId.
+      if (acao) return resposta(200, { ok: false, erro: 'acao_em_conflito', status: 409 });
       ref = base + '~' + Date.now().toString(36);
       t = await tentar(ref);
     }
