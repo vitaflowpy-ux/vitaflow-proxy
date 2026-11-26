@@ -1923,7 +1923,7 @@ function msgGrupoVip() {
 //  quem escreve "diamond" cai na busca normal do catálogo.)
 
 // ── Atacado ───────────────────────────────────────────────────────────────────
-const TABELA_ATACADO_URL = 'https://drive.google.com/file/d/1olhYj0OW1cL0Wk0kk6-fct89EJff_1Ip/view';
+const TABELA_ATACADO_URL = 'https://vitaflowoficial.com/pages/atacado';
 const WHATSAPP_ATACADO_1 = 'wa.me/5521998367319';
 const WHATSAPP_ATACADO_2 = 'wa.me/447537155723';
 
@@ -1962,15 +1962,15 @@ const MSG_ATACADO_ATIVO = `*🏭 ATACADO VitaFlow* — pedido mínimo *R$ 3.000*
 
 Aqui é simples: você monta seu pedido do jeito que quiser comigo. 😊
 
-✅ Pode levar *qualquer produto* da tabela de atacado, na *quantidade que quiser* — um só ou vários, misturando à vontade.
-✅ A única regra é o *total do pedido fechar em R$ 3.000 ou mais* (é o nosso pedido mínimo de atacado).
+✅ Você pode combinar produtos do *mesmo estoque*, na quantidade que quiser.
+✅ O pedido mínimo de atacado é de *R$ 3.000 por estoque*. Para comprar de Ciudad del Este e de Pedro Juan Caballero, faça um pedido de cada estoque.
 ✅ *Frete grátis* pra todo o Brasil. 🚚
 ℹ️ No atacado não entram os 3% nem cupom — aqui o benefício é o frete grátis. E não dá pra misturar itens do varejo no mesmo pedido.
 📦 Temos *2 estoques* de atacado: *Ciudad del Este* e *Pedro Juan Caballero*. Eu procuro nos dois e te mostro de qual é cada produto — só que *cada estoque é um pedido separado* (mínimo de R$ 3.000 em cada).
 
 👉 Me diga o *nome do produto* que você quer (ex.: retatrutida, testosterona, bpc) que eu te mostro o preço e já vou montando seu pedido de atacado.
 
-_Ou digite *1* pra baixar a *tabela em PDF* (Ciudad del Este), ou *2* pra voltar ao menu. Os dois catálogos completos estão em vitaflowoficial.com/pages/atacado_`;
+_Ou digite *1* pra abrir a página dos catálogos de atacado, ou *2* pra voltar ao menu. Os dois catálogos completos estão em vitaflowoficial.com/pages/atacado_`;
 const MSG_ATACADO = ATACADO_PAUSADO ? MSG_ATACADO_PAUSADO : MSG_ATACADO_ATIVO;   // v105
 const ATACADO_PJC_ATIVO = String(process.env.ATHENA_ATACADO_PJC || 'ativo').toLowerCase() !== 'desligado';   // v128: desligar sem publicar = variável ATHENA_ATACADO_PJC=desligado
 
@@ -2368,7 +2368,7 @@ async function atkAbrirBusca(session, sid, termo, respond) {
   if (_navAtk === 'varejo') return await atkIrVarejo(session, sid, respond);   // v128
   if (_navAtk === 'pdf') {
     await saveSession(sid, { ...session, state: 'ATACADO' });
-    return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`);
+    return respond(`📥 *Catálogos de atacado:* escolha o estoque na página. Para salvar a tabela atual, toque em *Baixar esta tabela em PDF*.\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`);
   }
   const tab = await lerTabelaAtacado();
   // v128: os DOIS estoques. O pedido aberto manda: com itens de um estoque, a busca é só nele (o outro vira aviso).
@@ -2377,7 +2377,7 @@ async function atkAbrirBusca(session, sid, termo, respond) {
   const _estPed = estDoCarrinhoAtk(session.carrinhoAtk || []);
   if (!tab.produtos.length && !_pjcNoAr) {
     await saveSession(sid, { ...session, state: 'ATACADO' });
-    return respond(`Não consegui carregar a tabela de atacado agora. 😕\n\nVocê pode baixar a tabela completa em PDF aqui:\n${TABELA_ATACADO_URL}\n\nTenta de novo daqui a pouco, ou me manda o *nome* do produto que você quer.`);
+    return respond(`Não consegui carregar a tabela de atacado agora. 😕\n\nConsulte os catálogos na página de atacado. Lá você também pode baixar a tabela atual em PDF:\n${TABELA_ATACADO_URL}\n\nTenta de novo daqui a pouco, ou me manda o *nome* do produto que você quer.`);
   }
   const _achCde = tab.produtos.length ? buscarAtacado(tab.produtos, termo).map(function (p) { return _pjcNoAr ? Object.assign({}, p, { est: 'cde' }) : p; }) : [];
   const _achPjc = _pjcNoAr ? buscarAtacado(pjc.produtos, termo) : [];
@@ -2398,7 +2398,7 @@ async function atkAbrirBusca(session, sid, termo, respond) {
     const _tTab = norm(termo || '').replace(/[!?.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
     if (/\b(tabela|tabelas|catalogo|lista de precos?|pdf)\b/.test(_tTab) && _tTab.split(' ').length <= 16) {
       await saveSession(sid, { ...session, state: 'ATACADO' });
-      return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`);
+      return respond(`📥 *Catálogos de atacado:* escolha o estoque na página. Para salvar a tabela atual, toque em *Baixar esta tabela em PDF*.\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`);
     }
     // v95: frase de 4+ palavras também vai para a IA (nunca "Não encontrei *<frase inteira>*").
     if (ehDuvida(norm(termo)) || ehPedidoProtocoloCompleto(norm(termo)) || _tTab.split(' ').length >= 4) {
@@ -7502,10 +7502,10 @@ exports.handler = async (event) => {
 
     if (state === 'ATACADO') {
       const _txtAtk = (mensagem || '').trim();
-      if (num === 1) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond(`📥 *Tabela completa de atacado (PDF):*\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`); }
+      if (num === 1) { await saveSession(sid, { ...session, state:'ATACADO' }); return respond(`📥 *Catálogos de atacado:* escolha o estoque na página. Para salvar a tabela atual, toque em *Baixar esta tabela em PDF*.\n${TABELA_ATACADO_URL}\n\nQuando escolher, me diga o *nome do produto* que você quer que eu monto seu pedido de atacado aqui mesmo. 😊`); }
       if (num === 2) { await saveSession(sid, { ...session, state:'MENU' }); return respond('Sem problema! 😊\n\n' + buildMenuPrincipal()); }
       if (num === 3 && /^3\D*$/.test(_txtAtk) && session.atkNaoAchou && (Date.now() - (session.atkNaoAchou.ts || 0)) < 30 * 60000) return await atkIrVarejo(session, sid, respond);   // v128: opção 3 do "não encontrei"
-      if (!_txtAtk || _txtAtk.length < 2) return respond('Me diga o *nome do produto* do atacado (ex.: retatrutida, bpc, testosterona), ou digite *1* pra baixar a tabela em PDF, ou *2* pra voltar ao menu.');
+      if (!_txtAtk || _txtAtk.length < 2) return respond('Me diga o *nome do produto* do atacado (ex.: retatrutida, bpc, testosterona), ou digite *1* pra abrir a página dos catálogos de atacado, ou *2* pra voltar ao menu.');
       // v84: "varejo" sai do atacado (igual à opção 2); "finalizar pedido" fecha (igual à opção 2 do pedido de atacado) em vez de virar busca de produto.
       if (_navegacaoAtacado(_txtAtk) === 'varejo') return await atkIrVarejo(session, sid, respond);   // v128 (era só "varejo"/"no varejo")
       if (_ehFinalizarTxt(_txtAtk)) {
