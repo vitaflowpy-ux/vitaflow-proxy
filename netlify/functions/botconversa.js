@@ -629,6 +629,10 @@ async function iaSincrona(phone, mensagem, contexto){
 //  - Athena  → caminho assíncrono de sempre (👀 + resposta empurrada pela API).
 //  - Stella  → tenta responder na hora; se não der, cai no caminho antigo.
 async function responderComIA(sid, mensagem, contexto, respond){
+  if (respond.consultarAthena2) {
+    const resultado = await respond.consultarAthena2(mensagem, contexto);
+    if (resultado) return resultado;
+  }
   if (IA_SYNC_ATIVA && ASSISTENTE_ATUAL !== 'Athena') {
     const texto = await iaSincrona(sid, mensagem, contexto);
     if (texto && texto.trim()) return respond(texto);
@@ -5415,10 +5419,11 @@ async function enviarTelegram(texto) {
   const tk = process.env.TELEGRAM_TOKEN || '';
   if (!tk) return;                       // env vazia: nao avisa, mas nao quebra o fluxo
   try {
-    await fetchT('https://api.telegram.org/bot' + tk + '/sendMessage', {
+    const r = await fetchT('https://api.telegram.org/bot' + tk + '/sendMessage', {
       method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chat_id:'8660563352', text: texto })
     }, 4000);
-  } catch {}
+    return r.ok && (await r.json()).ok === true;
+  } catch { return false; }
 }
 // ── ENVIO DIRETO PELA API DO BOTCONVERSA ──────────────────────────────────────
 // Canal INDEPENDENTE da resposta síncrona do webhook. É o MESMO que o GAS usa pra mandar o
@@ -6675,6 +6680,36 @@ exports.handler = async (event) => {
     if (body.type || body.mediaUrl || body.media_url || body.url || body.fileUrl) console.log('MIDIA DETECTADA:', JSON.stringify(body));
 
     const session = await getSession(sid);
+    if (nomeAssistente === 'Athena' && body.phone && process.env.ATHENA2_ATIVA === 'true') {
+      respond.consultarAthena2 = async function (pergunta, contexto) {
+        if (!process.env.BOTCONVERSA_API_KEY) return null;
+        const payload = JSON.stringify({phone: String(body.phone), mensagem: pergunta, contexto,
+          promoContext: await contextoPromo(), assistente: 'Athena', estado_fluxo: session.state || '',
+          nome: body.nome || '', subscriber_id: body.subscriber_id || '', usarAthena2: true,
+          despachoId: require('node:crypto').randomUUID()});
+        const instante = String(Date.now());
+        const mac = require('node:crypto').createHmac('sha256', process.env.BOTCONVERSA_API_KEY)
+          .update('despacho.' + instante + '.' + payload).digest('hex');
+        const opcoes = {method: 'POST', redirect: 'error', body: payload,
+          headers: {'Content-Type': 'application/json', 'x-vf-despacho-ts': instante, 'x-vf-despacho-mac': mac}};
+        for (let tentativa = 0; tentativa < 2; tentativa++) {
+          const prazo = Math.min(3000, msRestantes() - 1000);
+          if (prazo <= 0) {
+            if (tentativa === 0) return null;
+            break;
+          }
+          try {
+            const r = await fetchT(ATHENA_IA_URL, opcoes, prazo);
+            if (r.ok) return respond('');
+            if (r.status < 500) return tentativa === 0 ? null : respond('');
+          } catch {
+            // Uma reentrega usa a mesma reserva no worker.
+          }
+        }
+        console.warn('[Athena2] recebimento do disparo não confirmado');
+        return respond('');
+      };
+    }
 
     // v122: 🔕 parar de receber / 🔔 voltar a receber — antes de qualquer outra coisa (não mexe no carrinho nem no pedido)
     if (mensagem && ehPedidoOptout(n)) {
@@ -8950,3 +8985,5 @@ exports.handler = async (event) => {
 };
 exports._vigia = { vigiaMotivo, _ehTransferencia, registrarConversa, vigiaAthena, _marcarChegada, _logIA };
 
+
+exports.ponteAthena = { enviarTelegram, msgCarrinhoMenu, ehLinhaGenesis };
