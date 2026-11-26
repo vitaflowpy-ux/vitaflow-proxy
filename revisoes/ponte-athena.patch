@@ -1,0 +1,115 @@
+diff --git a/netlify/functions/athena-ia-background.js b/netlify/functions/athena-ia-background.js
+index 182007c..7d6debf 100644
+--- a/netlify/functions/athena-ia-background.js
++++ b/netlify/functions/athena-ia-background.js
+@@ -1600,0 +1601,40 @@ async function blocoAprendido() {
++async function consultarAthena2(dados, prazoMs) {
++  const chave = process.env.BOTCONVERSA_API_KEY;
++  if (!chave || !(prazoMs > 0)) return null;
++  const corpo = JSON.stringify(dados);
++  const ts = String(Date.now());
++  const assinatura = require('node:crypto').createHmac('sha256', chave).update(ts + '.' + corpo).digest('hex');
++  const controle = new AbortController();
++  const timer = setTimeout(() => controle.abort(), prazoMs);
++  try {
++    const r = await fetch('https://painel.vitaflowoficial.com/api/athena2/responder', {
++      method: 'POST', redirect: 'error', signal: controle.signal, body: corpo,
++      headers: {'Content-Type': 'application/json', 'x-vf-ts': ts, 'x-vf-assinatura': assinatura}
++    });
++    if (!r.ok) return null;
++    const d = await r.json();
++    if (!d || d.ok !== true || !['responder', 'transferir', 'ficar_quieta'].includes(d.acao)) return null;
++    if (d.intencao === 'comprar') return null;
++    if (d.acao !== 'ficar_quieta' && (typeof d.resposta !== 'string' || !d.resposta.trim())) return null;
++    return d;
++  } catch {
++    return null;
++  } finally {
++    clearTimeout(timer);
++  }
++}
++
++function despachoValido(event) {
++  const headers = event.headers || {};
++  const ts = headers['x-vf-despacho-ts'] || '';
++  const mac = headers['x-vf-despacho-mac'] || '';
++  if (!BOTCONVERSA_KEY || !/^\d{13}$/.test(ts) || !/^[0-9a-f]{64}$/.test(mac)) return false;
++  const crypto = require('node:crypto');
++  const esperado = crypto.createHmac('sha256', BOTCONVERSA_KEY).update('despacho.' + ts + '.' + event.body).digest();
++  if (!crypto.timingSafeEqual(esperado, Buffer.from(mac, 'hex'))) return false;
++  const idadeMs = Date.now() - Number(ts);
++  if (Math.abs(idadeMs) <= 300000) return true;
++  console.warn('[Athena] despacho autenticado fora da janela', {idadeMs});
++  return false;
++}
++
+@@ -1603,0 +1644,18 @@ exports.handler = async (event) => {
++    if (body.usarAthena2 === true) {
++      if (!despachoValido(event)) return {statusCode: 403, body: 'despacho recusado'};
++      // Versões antigas não enviavam UUID. Usar a impressão do despacho assinado durante a transição.
++      const crypto = require('node:crypto');
++      const id = crypto.createHash('sha256').update(body.despachoId || event.headers['x-vf-despacho-mac']).digest('hex');
++      const dia = new Date(Number(event.headers['x-vf-despacho-ts'])).toISOString().slice(0, 10);
++      let reserva;
++      try {
++        reserva = await fetch(fbUrl('/vitaflow_sync/athena_despachos/' + dia + '/' + id + '.json'), {
++          method: 'PUT', headers: {'Content-Type': 'application/json', 'if-match': 'null_etag'},
++          body: JSON.stringify({reservadoEm: Date.now()}), ..._optTimeout(4000)
++        });
++      } catch {
++        return {statusCode: 503, body: 'reserva não confirmada'};
++      }
++      if (reserva.status === 412) return {statusCode: 200, body: 'despacho já reservado'};
++      if (!reserva.ok) return {statusCode: 503, body: 'reserva não confirmada'};
++    }
+@@ -1617,0 +1676,10 @@ exports.handler = async (event) => {
++    if (assistente === 'Athena' && body.usarAthena2 === true && process.env.ATHENA2_ATIVA === 'true') {
++      const resultado = await consultarAthena2({telefone: phone, nome: body.nome || '',
++        mensagem, subscriber_id: body.subscriber_id || '', estado_fluxo: body.estado_fluxo || ''}, 22000);
++      if (resultado && resultado.acao === 'ficar_quieta') return {statusCode: 200, body: 'silêncio solicitado'};
++      if (resultado && resultado.acao === 'responder') {
++        const envio = await enviarLongo(phone, resultado.resposta, apiKey, {assistente, mensagem, origem: 'Athena-2.0'});
++        return {statusCode: 200, body: envio.ok ? 'resposta aceita' : 'envio não confirmado'};
++      }
++    }
++
+diff --git a/netlify/functions/botconversa.js b/netlify/functions/botconversa.js
+index b588666..5e212d9 100644
+--- a/netlify/functions/botconversa.js
++++ b/netlify/functions/botconversa.js
+@@ -631,0 +632,4 @@ async function responderComIA(sid, mensagem, contexto, respond){
++  if (respond.consultarAthena2) {
++    const resultado = await respond.consultarAthena2(mensagem, contexto);
++    if (resultado) return resultado;
++  }
+@@ -6673,0 +6678,30 @@ exports.handler = async (event) => {
++    if (nomeAssistente === 'Athena' && body.phone && process.env.ATHENA2_ATIVA === 'true') {
++      respond.consultarAthena2 = async function (pergunta, contexto) {
++        if (!process.env.BOTCONVERSA_API_KEY) return null;
++        const payload = JSON.stringify({phone: String(body.phone), mensagem: pergunta, contexto,
++          promoContext: await contextoPromo(), assistente: 'Athena', estado_fluxo: session.state || '',
++          nome: body.nome || '', subscriber_id: body.subscriber_id || '', usarAthena2: true,
++          despachoId: require('node:crypto').randomUUID()});
++        const instante = String(Date.now());
++        const mac = require('node:crypto').createHmac('sha256', process.env.BOTCONVERSA_API_KEY)
++          .update('despacho.' + instante + '.' + payload).digest('hex');
++        const opcoes = {method: 'POST', redirect: 'error', body: payload,
++          headers: {'Content-Type': 'application/json', 'x-vf-despacho-ts': instante, 'x-vf-despacho-mac': mac}};
++        for (let tentativa = 0; tentativa < 2; tentativa++) {
++          const prazo = Math.min(3000, msRestantes() - 1000);
++          if (prazo <= 0) {
++            if (tentativa === 0) return null;
++            break;
++          }
++          try {
++            const r = await fetchT(ATHENA_IA_URL, opcoes, prazo);
++            if (r.ok) return respond('');
++            if (r.status < 500) return tentativa === 0 ? null : respond('');
++          } catch {
++            // Uma reentrega usa a mesma reserva no worker.
++          }
++        }
++        console.warn('[Athena2] recebimento do disparo não confirmado');
++        return respond('');
++      };
++    }
