@@ -1,5 +1,16 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v131 (+ 21/11/2026, noite — Thiago: "pode pegar tudo que tem na artemis e na stella e passar para a athena"): seguro "contra extravio, apreensão e
+//   roubo" nos textos do frete/resumo; prompt do fluxo com Total Express e a resposta das 5.000 cidades; Black Friday sem "sai primeiro no Grupo VIP".
+//   + 22/11 (Thiago): bloco do lançamento Diamond REMOVIDO ("diamond" cai na busca normal — hoje é produto normal da Landerlan); resposta de
+//   grupos com os 3 grupos (VIP #1, VIP #2, Telegram); nenhum texto diz mais que promoção sai "em primeira mão"/"primeiro" nos grupos.
+// v131 (20/11/2026 — autocorreção da Athena, casos "fluxo: compra sem resumo real" e "menu e começar do zero"; revisado com o GPT-6):
+//   no fechamento (estado CONFIRMAR), quando o cliente NÃO digita 1/2/cupom/parcelas:
+//   • pergunta de valor/total/frete/desconto/cashback/resumo → mostra o RESUMO do pedido de novo (antes: só "pedido pronto pra fechar",
+//     sem valor nenhum — conversa real de 18/11: "vc não me disse o valor, frete, se posso usar o cashback");
+//   • "começar do zero / nova compra / essa compra não" → pergunta se continua ou esvazia o carrinho (a mesma tela de quem volta com
+//     carrinho guardado); antes ficava preso no "digite 1 ou 2";
+//   • o aviso genérico passa a ensinar a palavra *resumo*. Nada muda em preço, desconto, frete, cupom ou Black Week.
 // v130 (19/11/2026 — Thiago: "Black Week 20–22/11, desconto fixo por faixa… não precisará de cupom… os 3% de desconto da athena não estarão
 //   ligados durante essa promoção… vale para todo o site, exceto atacado e linha vitabeauty" · "frete grátis não existe durante essa promoção!
 //   o cliente escolhe uma caso ele tenha algum cupom de desconto"):
@@ -924,6 +935,20 @@ function simularParcelas(valor){
   return txt;
 }
 // Detecta interesse em PARCELAR. (não confunde com rastreio/cupom)
+// v131: no fechamento (CONFIRMAR), o que o cliente quis dizer quando não digitou 1/2/cupom. 'resumo' = quer ver valor/frete/desconto/cashback
+// de novo · 'zerar' = quer começar outra compra · '' = outra coisa (segue para cupom / aviso de sempre).
+function intencaoNoFechamento(msg){
+  const t = String(msg || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  // revisão do GPT-6: reiniciar só com intenção EXPLÍCITA ("zerar o frete" e "usei o cupom em outra compra" não podem cair aqui)
+  if (/\b(comecar do zero|comecar de novo|recomecar|(iniciar|fazer|comecar|quero) (uma )?(nova|outra) compra|(limpar|esvaziar|zerar) (o |meu )?carrinho|essa compra nao|nao quero essa compra)\b/.test(t)) return 'zerar';
+  if (t.indexOf(' ') < 0) return /^(resumo|total|valor|cashback)$/.test(t) ? 'resumo' : '';   // palavra única: só estas (o resto pode ser código de cupom)
+  if (/\bresumo\b/.test(t)) return 'resumo';
+  // valor/total/frete/desconto/cashback só com CONTEXTO de pergunta ("qual o total", "não me disse o valor", "quanto ficou o frete")
+  const pergunta = /\b(qual|quais|quanto|quanta|cade|como ficou|nao (me )?(disse|falou|mostrou|passou|informou)|me (diz|fala|mostra|passa|informa)|mostra|mostrar|ver|posso usar|da pra usar|tem|vai ter)\b/.test(t);
+  const assunto = /\b(valor|total|frete|desconto|descontos|cashback|preco|subtotal)\b/.test(t);
+  return (pergunta && assunto) ? 'resumo' : '';
+}
 function ehPedidoParcelamento(nMsg){
   const t = ' ' + _normNomeProd(nMsg) + ' ';
   // v117: "quantas vezes" / "N vezes" só é parcelamento COM contexto de pagamento ("quantas vezes na semana" é dúvida de uso).
@@ -1090,7 +1115,7 @@ function ehProdutoPromo(item){
   return porNome || porColecao;
 }
 const FIRESTORE_PROJECT = 'pricehub-f0236';
-const FIRESTORE_KEY = 'AIzaSyBxaI82P6OjCoPtBA-kNZZ0-F0RdjYdNhw';
+const FIRESTORE_KEY = process.env.FIRESTORE_KEY || '';
 
 // v114 (02/11/2026): Mounjaro KwikPen 15mg (Caneta - 4 doses - Total 60mg) - Eli Lilly — "a famosa caneta original" —
 // de R$ 1.999 por R$ 1.499, ESTOQUE REDUZIDO, enquanto durar o estoque (sem hora de fim: fim = ''). Lote com validade 02/2028.
@@ -1149,7 +1174,7 @@ _E lembrando: comprando comigo você já ganha *3% de desconto* em todos os prod
 const ADM_NUMEROS = [
   '5511911338515'   // ⚠️ CONFIRA/AJUSTE: números autorizados (só dígitos, com o 55)
 ];
-const ADM_SENHA = 'vfadm2026';        // ⚠️ TROQUE esta senha
+const ADM_SENHA = process.env.ATHENA_ADM_SENHA || '';
 
 function ehNumeroAdm(sid){
   const s = String(sid || '').replace(/\D/g, '');
@@ -1157,7 +1182,7 @@ function ehNumeroAdm(sid){
 }
 // "adm <senha>" — só entra se o número TAMBÉM estiver autorizado.
 function tentaEntrarAdm(sid, mensagem){
-  if (!ehNumeroAdm(sid)) return false;
+  if (!ADM_SENHA || !ehNumeroAdm(sid)) return false;
   const m = String(mensagem || '').trim().toLowerCase();
   return m === 'adm ' + ADM_SENHA.toLowerCase() || m === ADM_SENHA.toLowerCase();
 }
@@ -1528,7 +1553,7 @@ async function contextoPromo(){
     }
   } catch (e) {}
   if (freteGratisAutoAtivo()) {
-    linhas.push('FRETE GRÁTIS AUTOMÁTICO (varejo, sem data de fim): em pedidos A PARTIR DE R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' em produtos, o FRETE é GRÁTIS pra todo o Brasil, em qualquer opção de envio (PAC, SEDEX ou Transportadora). É AUTOMÁTICO no fechamento (aqui na Athena e no site) — o cliente NÃO precisa digitar cupom nenhum; NÃO peça nem mencione o cupom FRETEZERO. NÃO ACUMULA com cupom, promoção nem com o benefício de ' + DESCONTO_ATHENA_PCT + '% da Athena: quando o pedido tem outro benefício, o resumo do pedido mostra as DUAS opções (frete grátis OU o desconto) com o valor de cada uma e o CLIENTE escolhe a que preferir. NUNCA diga que o cliente ganha o frete grátis E o desconto juntos. Única exceção: VALE-COMPRAS (é como dinheiro) funciona junto com o frete grátis. Abaixo de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' o frete é cobrado normalmente. No ATACADO a regra é outra (lá o frete já é grátis). REVENDEDORES: o benefício NÃO é concedido a revendedores, que já têm desconto nos produtos (compram pelo portal de revendedores). SEMPRE que o cliente perguntar de frete grátis, promoção ou desconto, explique isso; se o pedido estiver perto de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ', avise quanto falta pro frete sair de graça. AO LISTAR OS BENEFÍCIOS ("o que tá valendo", "o que você já garante", "benefícios permanentes"), NUNCA ponha os ' + DESCONTO_ATHENA_PCT + '% e o frete grátis lado a lado como se somassem: escreva que é UM OU OUTRO (no resumo do pedido aparecem os dois e o cliente escolhe o melhor). O único que vale JUNTO é o cashback. SEGURO: o seguro grátis contra apreensão e extravio CONTINUA VALENDO com o frete grátis, desde que o envio seja por TRANSPORTADORA; PAC e SEDEX (Correios) NÃO têm seguro, com ou sem frete grátis — o frete grátis não muda nada nisso. Como a Transportadora também sai grátis nesses pedidos, recomende a Transportadora.');
+    linhas.push('FRETE GRÁTIS AUTOMÁTICO (varejo, sem data de fim): em pedidos A PARTIR DE R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' em produtos, o FRETE é GRÁTIS pra todo o Brasil, em qualquer opção de envio (PAC, SEDEX ou Transportadora). É AUTOMÁTICO no fechamento (aqui na Athena e no site) — o cliente NÃO precisa digitar cupom nenhum; NÃO peça nem mencione o cupom FRETEZERO. NÃO ACUMULA com cupom, promoção nem com o benefício de ' + DESCONTO_ATHENA_PCT + '% da Athena: quando o pedido tem outro benefício, o resumo do pedido mostra as DUAS opções (frete grátis OU o desconto) com o valor de cada uma e o CLIENTE escolhe a que preferir. NUNCA diga que o cliente ganha o frete grátis E o desconto juntos. Única exceção: VALE-COMPRAS (é como dinheiro) funciona junto com o frete grátis. Abaixo de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' o frete é cobrado normalmente. No ATACADO a regra é outra (lá o frete já é grátis). REVENDEDORES: o benefício NÃO é concedido a revendedores, que já têm desconto nos produtos (compram pelo portal de revendedores). SEMPRE que o cliente perguntar de frete grátis, promoção ou desconto, explique isso; se o pedido estiver perto de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ', avise quanto falta pro frete sair de graça. AO LISTAR OS BENEFÍCIOS ("o que tá valendo", "o que você já garante", "benefícios permanentes"), NUNCA ponha os ' + DESCONTO_ATHENA_PCT + '% e o frete grátis lado a lado como se somassem: escreva que é UM OU OUTRO (no resumo do pedido aparecem os dois e o cliente escolhe o melhor). O único que vale JUNTO é o cashback. SEGURO: o seguro grátis contra extravio, apreensão e roubo CONTINUA VALENDO com o frete grátis, desde que o envio seja por TRANSPORTADORA; PAC e SEDEX (Correios) NÃO têm seguro, com ou sem frete grátis — o frete grátis não muda nada nisso. Como a Transportadora também sai grátis nesses pedidos, recomende a Transportadora.');
   }
   if (promoDuplo11Ativa()) {   // v118
     linhas.push('PROMOÇÃO ATUAL — DUPLO11 (11.11, SÓ HOJE, quarta 11/11, das 00h até 23h59): 15% OFF em TODO o VAREJO VitaFlow com o cupom DUPLO11, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo VitaFlow, qualquer quantidade. Termina HOJE às 23h59 — faltam ' + tempoRestanteTxt(PROMO_DUPLO11.fim) + '. SEMPRE diga que é só hoje e quanto tempo falta quando falar dela, e incentive a fechar agora (o estoque pode acabar antes). A linha VITABEAUTY (perfumes e cosméticos) e os produtos do ATACADO NÃO participam (no atacado o benefício continua sendo o frete grátis). NÃO acumula com outros cupons nem promoções (nem com os 3%: vale o maior). Hoje o FRETE GRÁTIS AUTOMÁTICO (pedidos a partir de R$ 1.000) está PAUSADO — não ofereça frete grátis no varejo hoje e não fale quando ele volta. Produtos com preço especial já têm o desconto no preço (o cupom não pega neles). O CASHBACK de 3% continua valendo normalmente (pode usar o saldo junto com o cupom e a compra gera cashback sobre o valor pago). Não vale para revendedores. NÃO fale da HALLOWEEN15 (já encerrou).');
@@ -1561,7 +1586,6 @@ async function contextoPromo(){
   if (PROMO_GENESIS.ativa) {
     linhas.push('PROMOÇÃO DE LANÇAMENTO ATIVA AGORA: linha *Gênesis Peptídeos* — "COMPRE 2, LEVE 3": na compra de 2 peptídeos da linha Gênesis, o 3º é GRÁTIS (qualquer produto da linha, pode misturar). Frete grátis acima de R$1.000 com o cupom FRETEZERO. O cliente escolhe o brinde no fechamento (o sistema pergunta). Os produtos são da marca *Gênesis Peptídeos* — NÃO confunda com "Biogenesis", que é outra marca. Pra mostrar a linha, abra a lista buscando "genesis peptideos".');
   }
-  if (LANC_DIAMOND.ativa) linhas.push(contextoDiamond());
   if (SORTEIO.ativa) {
     const _c = sorteioCicloAtual();
     const _d = sorteioDiasRestantes();
@@ -1621,7 +1645,7 @@ Em pedidos *a partir de R$ ${Number(FRETE_GRATIS_AUTO.min).toLocaleString('pt-BR
 
 ✅ É *automático*: sem cupom, aqui comigo ou no site.
 
-🛡️ *SEGURO GRÁTIS* contra apreensão e extravio, nos envios por *Transportadora*.
+🛡️ *SEGURO GRÁTIS* contra extravio, apreensão e roubo, nos envios por *Transportadora*.
 
 _Não acumula com cupons ou outras promoções: se o seu pedido tiver mais de um benefício, eu te mostro as opções e *você escolhe a melhor pra você*._`;
 // Promoção antiga (27 a 30/09): FRETE GRÁTIS acima de R$ 1.000 com o cupom FRETEZERO.
@@ -1701,7 +1725,7 @@ const PROMO_DUPLO11 = { ativa: true, cupom: 'DUPLO11', pct: 15, ini: '2026-11-11
 // ── v125: BLACK FRIDAY — enquanto anunciada:false, a IA só pode dizer que ela ainda não foi anunciada (sem data, sem %, sem promessa). ──
 // O texto do quadro tem a frase "AINDA NÃO ANUNCIOU a Black Friday": é ela que liga a trava de saída da athena-ia(-background).
 const BLACK_FRIDAY = { anunciada: false };
-const MSG_BLACK_NAO_ANUNCIADA_IA = 'A Black Friday da VitaFlow ainda não foi anunciada: datas e descontos ainda não foram divulgados. O anúncio sai primeiro no nosso Grupo VIP e no site.';
+const MSG_BLACK_NAO_ANUNCIADA_IA = 'A Black Friday da VitaFlow ainda não foi anunciada: datas e descontos ainda não foram divulgados. O anúncio sai no site e nos nossos grupos.';
 // ── v125: promoções JÁ ENCERRADAS (a IA conta as que terminaram NESTE MÊS). Promoção nova: acrescentar aqui quando for criada. ──
 const PROMOS_HISTORICO = [
   { nome: 'DEZ10 (10.10 + feriadão)', como: 'cupom DEZ10 — 15% OFF em todo o varejo', quando: '10/10 a 12/10', fim: '2026-10-12T23:59:59-03:00' },
@@ -1853,6 +1877,7 @@ async function anunciarGenesis(session, sid, respond, curto) {
 }
 
 // ── Grupo VIP (WhatsApp + Telegram) ───────────────────────────────────────────
+const GRUPO_WHATSAPP_1 = 'https://chat.whatsapp.com/BNa4tPKWjaZ1cTP4XwXtgM';   // 21/11/2026: Thiago — os 2 VIPs + Telegram
 const GRUPO_WHATSAPP = 'https://chat.whatsapp.com/Bcw7hkVR3ITE5RQtnYzdD7';
 const GRUPO_TELEGRAM = 'https://t.me/referencias_vitaflow';
 
@@ -1881,58 +1906,17 @@ function _becoAssunto(sess) {
     : 'O protocolo dele eu monto certinho *depois da compra*!';
 }
 function msgGrupoVip() {
-  return `🎉 *GRUPOS VIP VITAFLOW* 🎉\n\n` +
-    `Entra nos nossos grupos pra receber *promoções, novidades e ofertas exclusivas* em primeira mão! 🔥\n\n` +
-    `📱 *Grupo no WhatsApp:*\n${GRUPO_WHATSAPP}\n\n` +
-    `✈️ *Grupo no Telegram:*\n${GRUPO_TELEGRAM}\n\n` +
-    `_Dica: entra nos dois pra não perder nada. 😉_\n\n` +
+  return `👥 *GRUPOS DA VITAFLOW*\n\n` +
+    `São *3 grupos*, todos gratuitos:\n\n` +
+    `💎 *VIP #1 (WhatsApp):*\n${GRUPO_WHATSAPP_1}\n\n` +
+    `💎 *VIP #2 (WhatsApp):*\n${GRUPO_WHATSAPP}\n\n` +
+    `✈️ *Telegram:*\n${GRUPO_TELEGRAM}\n\n` +
+    `As promoções não saem primeiro nos grupos — mas, com a *notificação* chegando na hora, quem está nos grupos costuma ficar sabendo antes. 😉\n\n` +
     `_Digite *menu* para voltar ao início._`;
 }
 
-// ── LANÇAMENTO — LINHA DIAMOND (Landerlan) ── criado 14/09/2026 ───────────────
-// Fases: 'previsto' → 'chegou' → 'esgotou'. Pra desligar tudo: ativa:false.
-// Enquanto a fase for 'previsto', o tempo verbal muda sozinho pela DATA (antes / no dia / depois).
-// Trocar a fase = editar aqui e publicar (decisão do Thiago 14/09: opção A; comando ADM fica pra depois).
-// Vale nos 2 caminhos: resposta fixa (msgDiamond, gatilho no pipeline) + IA (contextoDiamond em contextoPromo).
-// 23/09/2026 (v73): DESLIGADO — a linha Diamond já está no SITE (varejo, 6 produtos). Com ativa:false a resposta fixa e o
-// contexto da IA somem; a pergunta cai no catálogo normal ("diamond landerlan" abre a lista real dos produtos).
-const LANC_DIAMOND = { ativa: false, data: '2026-09-14', fase: 'previsto' };
-function _hojeISO_SP(){
-  try { return new Intl.DateTimeFormat('en-CA', { timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date()); }
-  catch (e) { return new Date().toISOString().slice(0, 10); }
-}
-function _diamondDataBR(){ const p = String(LANC_DIAMOND.data || '').split('-'); return p.length === 3 ? `${p[2]}/${p[1]}` : LANC_DIAMOND.data; }
-// Frase de situação no tempo verbal certo (usada na resposta fixa).
-function diamondSituacao(){
-  const d = _diamondDataBR();
-  if (LANC_DIAMOND.fase === 'chegou') return `*chegou!* Lote limitado — apenas *3.000 unidades para toda Ciudad del Este* — e deve esgotar rápido.`;
-  if (LANC_DIAMOND.fase === 'esgotou') return `teve o *primeiro lote esgotado*. Nova reposição ainda sem data; quando voltar, o aviso sai primeiro no Grupo VIP.`;
-  const hoje = _hojeISO_SP();
-  if (hoje < LANC_DIAMOND.data) return `tem chegada prevista pra *${d}*, com apenas *3.000 unidades para toda Ciudad del Este* — deve esgotar no mesmo dia.`;
-  if (hoje === LANC_DIAMOND.data) return `tem chegada prevista pra *hoje (${d})*, com apenas *3.000 unidades para toda Ciudad del Este* — deve esgotar no mesmo dia.`;
-  return `estava prevista pra *${d}* e ainda não tivemos a confirmação da chegada — assim que entrar, o aviso sai primeiro no Grupo VIP. São apenas *3.000 unidades para toda Ciudad del Este*.`;
-}
-function msgDiamond(){
-  return `💎 *LINHA DIAMOND — LANDERLAN*\n\n` +
-    `A linha Diamond Premium Series ${diamondSituacao()}\n\n` +
-    `📦 Por enquanto a Diamond sai *somente no atacado*. Depois que o abastecimento normalizar, entra no site pro varejo.\n\n` +
-    `🔔 Avisos de chegada e reposição saem primeiro no nosso Grupo VIP:\n${GRUPO_WHATSAPP}\n\n` +
-    `_Digite *menu* para voltar ao início._`;
-}
-// Linha que vai pra IA (contextoPromo). Mesma regra de tempo verbal.
-function contextoDiamond(){
-  if (!LANC_DIAMOND.ativa) return '';
-  const d = _diamondDataBR();
-  const hoje = _hojeISO_SP();
-  const lote = 'lote de apenas 3.000 unidades para toda Ciudad del Este, deve esgotar no mesmo dia';
-  let sit;
-  if (LANC_DIAMOND.fase === 'chegou') sit = `JÁ CHEGOU (${lote})`;
-  else if (LANC_DIAMOND.fase === 'esgotou') sit = `o PRIMEIRO LOTE ESGOTOU; nova reposição ainda sem data definida`;
-  else if (hoje < LANC_DIAMOND.data) sit = `chegada PREVISTA para ${d} (ainda NÃO chegou); ${lote}`;
-  else if (hoje === LANC_DIAMOND.data) sit = `chegada PREVISTA para HOJE (${d}), ainda NÃO confirmada — NÃO diga que chegou; ${lote}`;
-  else sit = `estava prevista para ${d} e a chegada AINDA NÃO FOI CONFIRMADA — NÃO diga que chegou; ${lote}`;
-  return `LANÇAMENTO — LINHA DIAMOND DA LANDERLAN (Diamond Premium Series): ${sit}. Neste primeiro momento a linha Diamond é vendida SOMENTE no ATACADO; NÃO está no site nem no varejo ainda — entra no varejo depois que o abastecimento normalizar, sem data definida. Se o cliente perguntar sobre a Diamond ("chegou?", preço, quais produtos, reserva, quando no varejo): passe exatamente essas informações e nada mais. NÃO invente produtos da linha, preço, quantidade por cliente, reserva nem data de varejo. NÃO confundir com produtos que têm "Diamond" no nome de outras marcas, como a Retatrutida Veltrane Diamond — esses são produtos normais do varejo, disponíveis já.`;
-}
+// (22/11/2026: o lançamento da linha Diamond acabou — hoje é produto normal da Landerlan. Bloco LANC_DIAMOND removido;
+//  quem escreve "diamond" cai na busca normal do catálogo.)
 
 // ── Atacado ───────────────────────────────────────────────────────────────────
 const TABELA_ATACADO_URL = 'https://drive.google.com/file/d/1olhYj0OW1cL0Wk0kk6-fct89EJff_1Ip/view';
@@ -2071,9 +2055,12 @@ async function _checarPjcAntesDeFechar(session, sid, respond) {
 // Sai do atacado para o varejo. Pedido de atacado guardado; termo que o atacado não achou é procurado no varejo (uma vez só).
 async function atkIrVarejo(session, sid, respond) {
   const cart = session.carrinhoAtk || [];
-  const na = session.atkNaoAchou || null;
-  const termo = (na && na.t && (Date.now() - (na.ts || 0)) < 30 * 60000) ? String(na.t) : '';
-  const s2 = { ...session, state: 'MENU', atkFila: [], atkNaoAchou: null };
+  // v131: vale também o último termo que o atacado ACHOU (caso real 19/11: "oxandrolona" → "Varejo" → menu genérico).
+  //   Dos dois registros (não achou · achou), usa o MAIS RECENTE que ainda está dentro dos 30 min (revisão do GPT-6).
+  const _vale131 = function (x) { return !!(x && x.t && (Date.now() - (x.ts || 0)) < 30 * 60000); };
+  const _c131 = [session.atkNaoAchou, session.atkUltTermo].filter(_vale131).sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+  const termo = _c131.length ? String(_c131[0].t) : '';
+  const s2 = { ...session, state: 'MENU', atkFila: [], atkNaoAchou: null, atkUltTermo: null };
   await saveSession(sid, s2);
   const pre = cart.length ? '👍 Seu pedido de *atacado* ficou salvo — pra voltar é só digitar *atacado*.\n\n' : '';
   if (termo && reconhecerProduto(norm(termo))) {
@@ -2419,7 +2406,7 @@ async function atkAbrirBusca(session, sid, termo, respond) {
     return respond(`Não encontrei *${termo}* no nosso atacado de hoje. 🤔${_semPjc}\n\nPode ser que ele esteja *esgotado* no momento ou com outro nome. Tenta o *nome do princípio ativo* (ex.: *oxandrolona* no lugar de *anavar*).\n\n1️⃣ Baixar a *tabela completa* (PDF)\n2️⃣ Voltar ao *menu*\n3️⃣ Procurar *${termo}* no *varejo*\n\n_Ou me manda outro *nome de produto*._`);
   }
   const lista = achados.slice(0, 30);
-  await saveSession(sid, { ...session, state: 'ATK_LISTA', atkLista: lista, atkNaoAchou: null });
+  await saveSession(sid, { ...session, state: 'ATK_LISTA', atkLista: lista, atkNaoAchou: null, atkUltTermo: { t: String(termo).slice(0, 80), ts: Date.now() } });   // v131: "varejo" depois de uma busca que ACHOU procura o mesmo termo no varejo
   const mais = achados.length > 30 ? `\n\n_(Mostrei 30 de ${achados.length} resultados — me manda um nome mais específico se precisar.)_` : '';
   const _doisEst = lista.some(function (p) { return p.est === 'cde'; }) && lista.some(function (p) { return p.est === 'pjc'; });
   return respond(`*🏭 Atacado — resultados para "${termo}":*\n\n${formatarListaAtk(lista)}${mais}${_doisEst ? '\n\n_Cada estoque é um *pedido separado* (mínimo de R$ 3.000 em cada)._' : ''}\n\n*Digite o número do produto:* 👇`);
@@ -2636,7 +2623,7 @@ https://vitaflowoficial.com
 
 🔬 Temos também um *Gerador de Protocolos gratuito* — de *peptídeos* e de *hormônios* — no site para te ajudar.
 
-📲 *Entre em nossos grupos* e acompanhe novidades, lançamentos, cupons e ofertas relâmpago em primeira mão:
+📲 *Entre em nossos grupos* e acompanhe novidades, lançamentos, cupons e ofertas relâmpago — com a notificação, você fica sabendo na hora:
 💬 WhatsApp: https://chat.whatsapp.com/Bcw7hkVR3ITE5RQtnYzdD7
 ✈️ Telegram: https://t.me/referencias_vitaflow
 
@@ -2686,7 +2673,7 @@ Quer que eu te mostre os produtos por aqui mesmo? Digite *3*.
 
 const MSG_STELLA_GRUPOS = `Queria te fazer um convite, sem compromisso nenhum. 😊
 
-A gente mantém uma *comunidade de mais de 1.000 pessoas* nos nossos dois grupos, onde mostra o dia a dia de verdade: o que chega, resultado de quem usa, dúvida respondida na hora e promoção que aparece lá primeiro.
+A gente mantém uma *comunidade de mais de 1.000 pessoas* nos nossos dois grupos, onde mostra o dia a dia de verdade: o que chega, resultado de quem usa, dúvida respondida na hora e aviso de promoção chegando na hora, pela notificação.
 
 *Não tem obrigação de comprar nada.* Entra, acompanha uns dias e tira sua própria conclusão — sobre o catálogo, sobre o preço e sobre como a gente atende. É o tipo de coisa que não adianta eu falar, você tem que ver.
 
@@ -2707,7 +2694,7 @@ const MSG_STELLA_ABANDONO = `Oi! 😊 Vi que nossa conversa parou por aqui — s
 
 Só queria te deixar dois atalhos, porque é por eles que muita gente decide:
 
-💬 Nossa *comunidade de mais de 1.000 pessoas* — resultado real, dúvida respondida na hora e promoção em primeira mão:
+💬 Nossa *comunidade de mais de 1.000 pessoas* — resultado real, dúvida respondida na hora e aviso de promoção na hora, pela notificação:
 ${GRUPO_WHATSAPP}
 
 🛒 O *site*, com o catálogo completo e preço atualizado:
@@ -4311,9 +4298,10 @@ FRETE E PRAZOS (use SEMPRE "prazo estimado" ao mencionar entrega):
 - Prazos estimados de entrega por estado (dias úteis, contados a partir da postagem):
   Sudeste: SP e RJ 1 a 6 | MG 2 a 6 | ES 2 a 8 — Sul: PR 2 a 6 | SC 2 a 7 | RS 2 a 5
   Centro-Oeste: DF 3 a 6 | GO 2 a 6 | MS 4 a 8 | MT 4 a 9 — Nordeste: BA 3 a 10 | demais estados 5 a 11 — Norte: 7 a 11
-- Transportadoras disponíveis: Jadlog, J&T Express e Loggi
+- Transportadoras disponíveis: Jadlog, Loggi, J&T Express e Total Express, além dos Correios
+- NÃO compare transportadoras nem diga qual é mais rápida ou melhor. Se o cliente reclamar de uma, disser que prefere outra ou perguntar a melhor, diga que enviamos para mais de 5.000 cidades no Brasil e que cada transportadora tem suas virtudes e seus defeitos em locais diferentes, por isso não dá para apontar uma melhor ou uma pior
 - Modalidades: PAC, SEDEX (Correios) e Transportadora
-- Recomende sempre a Transportadora — inclui seguro grátis contra apreensão e extravio
+- Recomende sempre a Transportadora — inclui seguro grátis contra extravio, apreensão e roubo
 - Correios (PAC/SEDEX) NÃO possuem seguro
 
 REGRA DE OURO — SEMPRE ao final de cada resposta:
@@ -5211,7 +5199,7 @@ async function fecharResumoNormal(session, sid, cupomResultado, respond) {
       freteValorFinal = 0;
       linhaFreteGratis = `🎉 *Frete grátis automático* — pedido a partir de R$ ${reais(FRETE_GRATIS_AUTO.min)}, sem cupom.\n` +
         (/transp/i.test(String(frete.label || ''))
-          ? `🛡️ _O seguro grátis contra apreensão e extravio continua valendo com o frete grátis._\n`
+          ? `🛡️ _O seguro grátis contra extravio, apreensão e roubo continua valendo com o frete grátis._\n`
           : `⚠️ _O frete grátis não muda o seguro: PAC e SEDEX (Correios) não têm o seguro grátis — ele vale só na Transportadora, que também sai com frete grátis._\n`);
     }
   }
@@ -5438,7 +5426,7 @@ async function enviarTelegram(texto) {
 // antes, o recibo ia na resposta do webhook e, como o COLETA fazia trabalho pesado (GAS +
 // Telegram) ANTES de responder, o webhook estourava timeout e o BotConversa descartava o
 // recibo. Enviando por aqui, o recibo chega SEMPRE — independe do timeout.
-const BOTCONVERSA_API_KEY = process.env.BOTCONVERSA_API_KEY || '8c9e69c3-3c9f-4f23-b480-be4a0de29640';   // v123: variável de ambiente primeiro
+const BOTCONVERSA_API_KEY = process.env.BOTCONVERSA_API_KEY || '';
 async function botconversaSubId(sid){
   try {
     const fone = String(sid).replace(/\D/g,'');
@@ -6306,7 +6294,10 @@ function lerListaColada(msg) {
   if (linhas.length < 2 || linhas.length > 25) return [];
   if (ehBlocoDados(msg)) return [];
   // v117: rótulo copiado ("VITAFLOW / TIRZEPATIDE / 60mg 2,4ml") não é lista: até 3 linhas e 6 palavras, sem quantidade no começo das linhas
-  if (linhas.length <= 3 && String(msg || '').split(/\s+/).filter(Boolean).length <= 6 && !linhas.some(function (l) { return /^\d{1,3}\s*(x\s*)?(?!(mg|mcg|ml|ui|iu|g|un|unid)\b)[a-z]/i.test(l.replace(/^[\-•*·>]+\s*/, '')); })) return [];
+  const linhasDeProduto = linhas.every(function (linha) {
+    return /^[\s•*-]*[a-zÀ-ÿ][^\n]*?(?:\s+|-\s*|\s+x\s*)\d+(?:[.,]\d+)?\s*(?:mg|mcg|ml|ui|iu|g|un|unid|unidades?|cx|caixas?|x)?$/i.test(linha.trim());
+  });
+  if (!linhasDeProduto && linhas.length <= 3 && String(msg || '').split(/\s+/).filter(Boolean).length <= 6 && !linhas.some(function (l) { return /^\d{1,3}\s*(x\s*)?(?!(mg|mcg|ml|ui|iu|g|un|unid)\b)[a-z]/i.test(l.replace(/^[\-•*·>]+\s*/, '')); })) return [];
   const out = [];
   linhas.forEach(function (l0) {
     let l = l0.replace(/^[\-•*·>]+\s*/, '').replace(/[*_~]/g, '').trim();
@@ -6318,8 +6309,12 @@ function lerListaColada(msg) {
       m = l.match(/^(\d{1,3})\s*(x|un|unid|unidades?|cx|caixas?)?\s+(.+)$/i);   // "2 produto" / "2x produto"
       if (m && /[a-z]{3,}/i.test(m[3])) { qtd = parseInt(m[1], 10); l = m[3]; }
     }
-    m = l.match(/^(.+?)\s*(?:-\s*)?(?:x\s*)?(\d{1,2})\s*(?:x|un|unid|unidades?|cx|caixas?)?$/i);   // "produto 4" / "produto x2" (sem mg/ml/ui)
-    if (m && !qtd && /[a-z]{3,}/i.test(m[1]) && !/(mg|ml|ui|iu|mcg|g)\s*$/i.test(l)) { qtd = parseInt(m[2], 10); l = m[1]; }
+    // Com marcador, aceita 1 a 99. Sem marcador, preserva números de dois ou mais dígitos no nome.
+    m = l.match(/^(.+?)(\s+-\s*|\s+x\s*|\s+)(\d{1,3})\s*(x|un|unid|unidades?|cx|caixas?)?$/i);
+    if (m && !qtd && /[a-z]{3,}/i.test(m[1])) {
+      const n = Number(m[3]), marcado = /[-x]/i.test(m[2]) || !!m[4];
+      if (n >= 1 && n <= (marcado ? 99 : 9)) { qtd = n; l = m[1]; }
+    }
     const nl = norm(l).replace(/[^a-z0-9 ,.\-]/g, ' ').replace(/\s+/g, ' ').trim();
     if (nl.replace(/[^a-z]/g, '').length < 3) return;
     if (/^(ola|oi|bom dia|boa tarde|boa noite|obrigad|por favor|pfv|segue|segue a lista|lista|pedido|quero|gostaria|total|frete|cep|cpf|nome|endereco|rua|bairro|cidade)\b/.test(nl) && nl.split(' ').length <= 3) return;
@@ -6963,6 +6958,8 @@ exports.handler = async (event) => {
     const _ehNavegacao = /^\s*\d{1,3}\s*$/.test(n) || /^(menu|voltar|volta|sair|cancelar|inicio|come[cç]ar)$/.test(n);
     if (state && _JA_TRATA_DUVIDA.indexOf(state) < 0 && _DADO_LIVRE.indexOf(state) < 0
         && !_ehMidiaMsg && !_ehNavegacao
+        && !(state === 'FRETE_AVULSO' && ufDoTexto(mensagem))
+        && !(state === 'CONFIRMAR' && (intencaoNoFechamento(mensagem) || ehPedidoParcelamento(mensagem)))
         && !(state === 'AGUARDAR_COMPROVANTE' && ehErroNoPix(n))           // v127: erro no Pix vai para o Pix alternativo, não para a IA
         && (ehDuvida(n) || ehPedidoProtocoloCompleto(n))) {
       console.log('[DUVIDA-FORA-DO-MENU] state:', state, '| msg:', String(mensagem).slice(0, 60));
@@ -7275,18 +7272,6 @@ exports.handler = async (event) => {
       // sem pedido elegível (cupom maior, promoção, ou já negociado) → segue o fluxo normal
     }
 
-    // ── LANÇAMENTO DIAMOND (Landerlan) ── só "diamond" + termo de linha/marca/chegada. Produto SEMPRE ganha
-    // ("retatrutida veltrane diamond" é produto normal do varejo). "diamond" solto NÃO dispara (segue pra IA, que tem contextoDiamond).
-    const ehDiamond = LANC_DIAMOND.ativa && !emCheckout && state !== 'ADM'
-      && !['AGUARDAR_COMPROVANTE','COLETA_DADOS','PROTOCOLO'].includes(state)
-      && n.includes('diamond')
-      && /landerlan|linha diamond|diamond premium|lancamento|cheg(ou|a|aram|ando)/.test(n)
-      && !/veltrane|retatrutida|\breta\b/.test(n)
-      && !reconhecerProduto(n);
-    if (ehDiamond) {
-      return respond(msgDiamond());
-    }
-
     // ── Grupo VIP (WhatsApp/Telegram) ── reconhece pergunta sobre grupo/comunidade ──
     const ehGrupo = (n.includes('grupo') || n.includes('comunidade') || n.includes('vip') || n.includes('telegram') ||
       (n.includes('whats') && (n.includes('grupo') || n.includes('vip') || n.includes('comunidade'))))
@@ -7420,6 +7405,11 @@ exports.handler = async (event) => {
       return respond(MSG_CANCELAR_SEM_PEDIDO);
     }
     const ehAtacado = ["atacado","mayoreo","por atacado","compra grande","grande quantidade","tabela de atacado"].some(p => n.includes(p));
+    // v131: pergunta DIRETA sobre cartão no atacado recebia a apresentação inteira do atacado, sem a resposta (caso real 19/11 16:13).
+    //   O atacado fecha pelo mesmo gerarLinkPedido do varejo, então a regra do cartão é a mesma (ligado/desligado pelo painel).
+    if (ehAtacado && !emCheckout && ehPerguntaCartao(n)) {
+      return await responderCartao(session, function (r) { return respond(r + '\n\n🏭 _No *atacado* o pagamento é do mesmo jeito (pedido mínimo de R$ ' + ATACADO_MIN.toLocaleString('pt-BR') + '). Pra montar seu pedido, digite *atacado*._'); });
+    }
     if (ehAtacado && !emCheckout) {
       return await entrarAtacado(session, sid, respond);
     }
@@ -7618,7 +7608,7 @@ exports.handler = async (event) => {
       }
       const freteStr = opts.map((o) => `• *${o.label}* — R$ ${o.valor.toFixed(2).replace('.',',')}`).join('\n');
       await saveSession(sid, { ...session, state:'MENU' });
-      return respond(`🚚 *Opções de frete para ${uf}:*\n\n${freteStr}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra apreensão e extravio.\n\nQuer escolher um produto para comprar? É só digitar *menu* e navegar pelas categorias! 😊`);
+      return respond(`🚚 *Opções de frete para ${uf}:*\n\n${freteStr}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra extravio, apreensão e roubo.\n\nQuer escolher um produto para comprar? É só digitar *menu* e navegar pelas categorias! 😊`);
     }
 
     if (state === 'TRIAGEM') {
@@ -8089,7 +8079,7 @@ exports.handler = async (event) => {
       }
       const freteStr = freteOpcoesTexto(opts);
       await saveSession(sid, { ...session, state:'FRETE', estadoCliente: uf, freteOpcoes: opts });
-      return respond(`*Opções de frete para ${uf}:*\n\n${freteStr}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra apreensão e extravio.\n\n*Digite o número:*`);
+      return respond(`*Opções de frete para ${uf}:*\n\n${freteStr}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra extravio, apreensão e roubo.\n\n*Digite o número:*`);
     }
 
     if (state === 'FRETE') {
@@ -8108,7 +8098,7 @@ exports.handler = async (event) => {
           const _optsN = getFreteOpcoes(_ufNova);
           if (_optsN) {
             await saveSession(sid, { ...session, state:'FRETE', estadoCliente: _ufNova, freteOpcoes: _optsN });
-            return respond(`Trocando pra *${_ufNova}* 👍\n\n*Opções de frete para ${_ufNova}:*\n\n${freteOpcoesTexto(_optsN)}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra apreensão e extravio.\n\n*Digite o número:*`);
+            return respond(`Trocando pra *${_ufNova}* 👍\n\n*Opções de frete para ${_ufNova}:*\n\n${freteOpcoesTexto(_optsN)}\n\n💡 Recomendamos a *Transportadora* — inclui seguro grátis contra extravio, apreensão e roubo.\n\n*Digite o número:*`);
           }
         }
         const _dv = await checkoutDesvio(session, sid, n, respond);
@@ -8379,6 +8369,18 @@ exports.handler = async (event) => {
         await saveSession(sid, { ...session, simulouParcela: true });   // v95: o próximo "2"/"3x" é parcela, não "voltar"
         return respond(simularParcelas(session.total || totalCarrinho(session.carrinho || [])) + `\n\nQuando quiser, digite *1* para *confirmar a compra* (no link você escolhe em quantas vezes) ou *menu* para voltar.`);
       }
+      // v131: perguntou o valor/frete/desconto/cashback → mostra o resumo de novo; quer começar outra compra → pergunta antes de esvaziar.
+      const _int131 = intencaoNoFechamento(mensagem);
+      if (_int131 === 'zerar') {
+        const _car131 = session.carrinho || [];
+        await saveSession(sid, { ...session, state:'RETOMAR_CARRINHO', simulouParcela: false });
+        return respond(`Sem problema! 😊 Você tem *${_car131.length} ${_car131.length>1?'itens':'item'}* no carrinho:\n\n${resumoCarrinho(_car131)}\n\n1️⃣ Continuar essa compra\n2️⃣ Começar uma nova compra (esvaziar o carrinho)`);
+      }
+      if (_int131 === 'resumo') {
+        const _s131 = { ...session, simulouParcela: false };
+        if (_s131.descontoTipo === 'promo') return await mostrarResumoPedido(_s131, sid, respond);
+        return await fecharResumoNormal({ ..._s131, cupomDocId: null, cupomCodigo: null }, sid, _s131.cupomUlt || null, respond);
+      }
       // Opção B: cliente pode digitar um código de cupom aqui (não em promoção/negociação)
       // Só tenta como CUPOM se PARECER um código (uma palavra curta alfanumérica) — assim
       // "frete", "prazo", "quero pagar" etc. NÃO viram "cupom inválido" e o pedido é preservado.
@@ -8413,7 +8415,7 @@ exports.handler = async (event) => {
       }
       // Qualquer outra coisa (pergunta, palavra solta) NÃO perde o carrinho: reafirma o pedido.
       if (session.simulouParcela) await saveSession(sid, { ...session, simulouParcela: false });   // v109
-      return respond(`Seu *pedido está pronto pra fechar*! 🛒\n\nDigite *1* para *confirmar a compra* ou *2* para voltar ao menu.\n\n_Se tiver um cupom de desconto, é só digitar o código agora._`);
+      return respond(`Seu *pedido está pronto pra fechar*! 🛒\n\nDigite *1* para *confirmar a compra* ou *2* para voltar ao menu.\n\n_Quer ver o valor, o frete e os descontos de novo? Digite *resumo*. Se tiver um cupom de desconto, é só digitar o código agora._`);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -8671,7 +8673,7 @@ exports.handler = async (event) => {
         (coleta.cpf ? `• *CPF:* ${coleta.cpf}\n` : '') +
         (coleta.email ? `• *E-mail:* ${coleta.email}\n` : '') +
         `\n📲 *Entre nos nossos grupos oficiais!*\n` +
-        `Fique por dentro de promoções, lançamentos e avisos em primeira mão:\n` +
+        `Fique por dentro de promoções, lançamentos e avisos — com a notificação, você sabe na hora:\n` +
         `💬 Grupo VIP no WhatsApp: ${GRUPO_WHATSAPP}\n` +
         `✈️ Referências no Telegram: ${GRUPO_TELEGRAM}`;
 
