@@ -412,12 +412,7 @@ var T = {
 '🔒 Aviso oficial da VitaFlow só sai *dentro do grupo, pelos administradores*, no site *vitaflowoficial.com* e no e-mail *contato@vitaflowoficial.com*. Mudança de grupo só é anunciada assim — *nunca* por mensagem no privado nem por link de desconhecido.\n⠀\nQualquer link diferente disso = golpe.',
 
   privado:
-'📵 *ESTE NÚMERO AGORA É AUTOMÁTICO*\n⠀\n' +
-'Ele cuida só dos avisos do *Grupo VIP*. *Não faço mais atendimento por aqui* — não leio as mensagens que chegam neste número.\n⠀\n' +
-'💬 *Fale comigo no meu número oficial:*\n*(11) 91133-8515*\n👉 wa.me/5511911338515\n⠀\n' +
-'📲 *Salve esse meu outro contato.* Assim você me acha na hora que precisar.\n⠀\n' +
-'Se preferir:\n🤖 *Athena*, nossa consultora 24h → wa.me/5511926100192\n🌐 Site oficial → *vitaflowoficial.com*\n⠀\n' +
-'Te espero lá! 💚',
+"Olá! Sou a *Stella*, a assistente da VitaFlow que cuida dos avisos dos *Grupos VIP*. 💚 Este número é automático. Para falar com a nossa equipe, escolha a opção que você precisa:\n\n🛒 *Quer comprar?* No nosso site, você encontra todos os produtos da VitaFlow e pode comprar tanto no *varejo* quanto no *atacado*: https://vitaflowoficial.com\n\n💬 *Quer tirar uma dúvida ou comprar pelo WhatsApp?* Fale com a *Athena*, nossa consultora 24h. Ela responde às suas perguntas e ajuda você a fazer o pedido: https://wa.me/5511926100192\n\n📦 *Já fez um pedido?* Se a dúvida é sobre a sua encomenda, o rastreamento ou a entrega, fale com a *Artemis*, nossa assistente de logística: https://wa.me/447537155718",
 
   prazo:
 '⏱️ *PRAZOS DE ENVIO E ENTREGA*\n⠀\n' +
