@@ -11,7 +11,15 @@ function mundo(env, servidor) {       // servidor(corpo) → resposta de mentira
   process.env.FIREBASE_SECRET = 'segredo-de-teste'; Object.assign(process.env, env || {});
   global.fetch = async (url, opts) => {
     url = String(url); opts = opts || {};
-    if (/painel\.vitaflowoficial\.com|servidor\.teste/.test(url)) { M.srv.push({ url, corpo: JSON.parse(opts.body) }); return servidor ? servidor(JSON.parse(opts.body), M) : Promise.reject(new Error('fora do ar')); }
+    if (/painel\.vitaflowoficial\.com|servidor\.teste/.test(url)) {
+      M.srv.push({ url, corpo: JSON.parse(opts.body) });
+      if (!servidor) return Promise.reject(new Error('fora do ar'));
+      const pr = Promise.resolve().then(() => servidor(JSON.parse(opts.body), M));
+      return new Promise((res, rej) => {     // igual ao fetch de verdade: o limite de tempo de quem chama (AbortController) corta a espera
+        if (opts.signal) opts.signal.addEventListener('abort', () => { const e = new Error('This operation was aborted'); e.name = 'AbortError'; rej(e); });
+        pr.then(res, rej);
+      });
+    }
     if (/firebaseio\.com/.test(url)) {
       M.fbCalls++; const cam = url.split('.com/')[1].split('.json')[0];
       if ((opts.method || 'GET') === 'GET') return R(200, JSON.stringify(cam in M.fb ? M.fb[cam] : null), { etag: 'e' + M.etag });
@@ -47,6 +55,23 @@ function mundo(env, servidor) {       // servidor(corpo) → resposta de mentira
   // 4. o servidor pegou o número e a resposta se perdeu: o plano B pega o SEGUINTE (pula, não repete)
   M = mundo({ VF_NUMERO_REPASSE: 'sim' }, (c, m) => { m.fb['vitaflow_seq/' + hoje + '/site'] = 7; m.etag++; return Promise.reject(new Error('aborted')); }); r = await M.post({ tipo: 'S' });
   ok(r.order_nsu === 'VF-' + hoje + '-S008', 'resposta do servidor perdida depois de ele pegar o S007 → aqui sai o S008 (pulado, nunca repetido)', r);
+  // 4b. PREFIXO DIVERGENTE (Codex, PR #6): número bem formado de OUTRO canal não é aceito
+  M = mundo({ VF_NUMERO_REPASSE: 'sim' }, () => R(200, { success: true, order_nsu: 'VF-' + hoje + '-M077', seq: 77 })); r = await M.post({ tipo: 'S' });
+  ok(r.order_nsu === 'VF-' + hoje + '-S001' && r.via === 'netlify', 'pedi S e o servidor devolveu M077 → recusado, sai o S001 daqui', r);
+  M = mundo({ VF_NUMERO_REPASSE: 'sim' }, (c) => R(200, { success: true, order_nsu: 'VF-' + hoje + '-' + c.tipo + '021', seq: 21 })); r = await M.post({ tipo: 'z' });
+  ok(M.srv[0].corpo.tipo === 'S' && r.order_nsu === 'VF-' + hoje + '-S021' && r.via === 'servidor', 'tipo desconhecido vira S aqui e lá (mesma regra do gerador)', r);
+  r = await M.post({ tipo: 'p' }); ok(r.order_nsu === 'VF-' + hoje + '-P021' && r.via === 'servidor', 'tipo em minúscula é normalizado (p → P)', r);
+  // 4c. RESPOSTA TARDIA DE VERDADE (Codex, PR #6): o servidor pega o S007 na hora e só responde aos 7 s; aqui o limite é 5 s
+  {
+    const logs = []; const logOrig = console.log; console.log = (x) => logs.push(String(x));
+    M = mundo({ VF_NUMERO_REPASSE: 'sim' }, (c, m) => { m.fb['vitaflow_seq/' + hoje + '/site'] = 7; m.etag++; return new Promise((res) => setTimeout(() => res(R(200, { success: true, order_nsu: 'VF-' + hoje + '-S007', seq: 7 })), 7000)); });
+    const t0 = Date.now(); r = await M.post({ tipo: 'S' }); const dt = Date.now() - t0;
+    console.log = logOrig;
+    ok(r.order_nsu === 'VF-' + hoje + '-S008' && r.via === 'netlify' && JSON.stringify(r).indexOf('S007') < 0, 'resposta tardia: só o S008 (o devolvido) vai para o pedido; o S007 do servidor fica pulado', r);
+    ok(dt >= 4800 && dt < 6800, 'desistiu do servidor aos ~5 s (não esperou os 7 s)', dt);
+    ok(logs.some(l => /PLANO B \(sem resposta em 5000 ms\) -> VF-\d{4}-S008/.test(l)), 'o plano B ficou no registro com o motivo e o número (conta dos pulados)', logs);
+    ok(M.fb['vitaflow_seq/' + hoje + '/site'] === 8, 'contador ficou em 8: o próximo é o S009');
+  }
   // 5. reservar: respostas de negócio do servidor passam; erro genérico cai no plano B
   M = mundo({ VF_NUMERO_REPASSE: 'sim' }, () => R(200, { success: false, existe: true, numero: 'VF-' + hoje + '-M060', msg: 'Esse número já está na planilha.' })); r = await M.post({ action: 'reservar', numero: 'VF-' + hoje + '-M060' });
   ok(r.success === false && r.existe === true && r.via === 'servidor' && M.fbCalls === 0 && M.srv[0].corpo.action === 'reservar' && M.srv[0].corpo.numero === 'VF-' + hoje + '-M060', 'reservar: "já existe" do servidor é resposta de verdade (não refaz aqui)', r);

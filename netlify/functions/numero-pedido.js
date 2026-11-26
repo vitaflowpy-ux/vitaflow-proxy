@@ -8,8 +8,10 @@
      • Ligada: 'gerar' e 'reservar' são pedidos PRIMEIRO ao servidor (POST, 5 s). Resposta boa do servidor → devolve ela, com via:'servidor'.
        Servidor fora, lento, limitado (429) ou resposta estranha → faz AQUI, exatamente como a v4 (via:'netlify').
      • Por que não repete número: enquanto o servidor estiver no modo 'sinc', ele pega o número com a MESMA trava do Firebase
-       (if-match) que esta função e o Apps Script usam. Se o servidor pegou o número e a resposta se perdeu, o plano B daqui
-       pega o SEGUINTE: fica um número pulado, nunca repetido.
+       (if-match) que esta função e o Apps Script usam. Se o servidor pegou o número e a resposta se perdeu ou chegou depois
+       dos 5 s, o plano B daqui pega o SEGUINTE: fica um número pulado, nunca repetido. Só o número DEVOLVIDO vai para o pedido.
+       Cada plano B fica no registro da função ("PLANO B (motivo) -> número") para a conta dos pulados.
+     • O número do servidor só é aceito se for da LETRA pedida (revisão do Codex, PR #6): número bem formado de outro canal → plano B.
      • ATENÇÃO: antes de o servidor passar para o modo 'banco' (virada final), o plano B daqui tem de ser revisto ou desligado —
        no modo 'banco' o número não nasce da trava do Firebase.
      • 'conferir' (só leitura) e 'ping' continuam aqui. O 'ping' passa a dizer repasse:true|false.
@@ -92,28 +94,35 @@ function resp(obj) { return { statusCode: 200, headers: CORS, body: JSON.stringi
 var SRV_URL = String(process.env.VF_NUMERO_SERVIDOR_URL || 'https://painel.vitaflowoficial.com/api/pub/proxy/numero-pedido').trim();
 var SRV_LIGADO = /^sim$/i.test(String(process.env.VF_NUMERO_REPASSE || '').trim());
 var SRV_MS = 5000;
-var RE_NUMERO_SRV = /^VF-\d{4}-[A-Z]\d{3,4}$/;
+var srvFalha = '';   /* por que a última pergunta ao servidor não valeu (só para o registro do plano B) */
 
 /* Pergunta ao servidor. Devolve o objeto da resposta, ou null = "não deu para confiar: faça aqui, como a v4". */
 async function pedirAoServidor(corpo) {
   try {
     var r = await fetchT(SRV_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) }, SRV_MS);
-    if (!r.ok) { console.log('numero-pedido: servidor respondeu HTTP ' + r.status + ' - fazendo aqui'); return null; }
+    if (!r.ok) { srvFalha = 'HTTP ' + r.status; return null; }
     var j = JSON.parse(await r.text());
-    return (j && typeof j === 'object' && !Array.isArray(j)) ? j : null;
-  } catch (e) { console.log('numero-pedido: servidor nao respondeu (' + (e && e.message) + ') - fazendo aqui'); return null; }
+    if (j && typeof j === 'object' && !Array.isArray(j)) return j;
+    srvFalha = 'resposta que nao e objeto'; return null;
+  } catch (e) { srvFalha = (e && e.name === 'AbortError') ? 'sem resposta em ' + SRV_MS + ' ms' : 'erro: ' + String(e && e.message || e).slice(0, 80); return null; }
 }
 
 /* Só aceita do servidor o que é resposta de verdade. Qualquer outra coisa → null (plano B = v4). */
 async function viaServidor(d) {
-  var j;
+  var j; srvFalha = '';
   if (d.action === 'reservar') {
     j = await pedirAoServidor({ action: 'reservar', numero: String(d.numero || '') });
     /* respostas de negócio do 'reservar': reservou, já existe, formato errado ou salto grande. Erro genérico → plano B. */
-    if (!j || !(j.success === true || j.existe === true || j.erro === 'formato' || j.erro === 'salto')) return null;
+    if (j && !(j.success === true || j.existe === true || j.erro === 'formato' || j.erro === 'salto')) { srvFalha = 'reservar: ' + String(j.erro || 'resposta sem sentido').slice(0, 80); j = null; }
+    if (!j) return null;
   } else {
-    j = await pedirAoServidor({ tipo: String(d.tipo || 'S') });
-    if (!j || j.success !== true || !RE_NUMERO_SRV.test(String(j.order_nsu || ''))) return null;
+    /* a letra é a MESMA que o gerador daqui usaria (tipo desconhecido vira S). O número do servidor só vale se for
+       dessa letra: número bem formado de OUTRO canal é recusado (revisão do Codex, PR #6). */
+    var L = String(d.tipo || 'S').toUpperCase(); if (!COL[L]) L = 'S';
+    j = await pedirAoServidor({ tipo: L });
+    if (j && j.success !== true) { srvFalha = 'servidor disse: ' + String(j.erro || 'sem success').slice(0, 80); j = null; }
+    if (j && !new RegExp('^VF-\\d{4}-' + L + '\\d{3,4}$').test(String(j.order_nsu || ''))) { srvFalha = 'numero de outro canal ou torto (pedi ' + L + ')'; j = null; }
+    if (!j) return null;
   }
   j.via = 'servidor';
   return j;
@@ -382,7 +391,13 @@ async function conferir(d) {
 }
 
 /* v6: com o repasse ligado, o que foi feito AQUI (plano B) sai marcado, para dar para contar nos registros */
-function marcaVia(o) { if (SRV_LIGADO && o && typeof o === 'object') o.via = 'netlify'; return o; }
+function marcaVia(o) {
+  if (!SRV_LIGADO || !o || typeof o !== 'object') return o;
+  o.via = 'netlify';
+  /* registro para a conta dos números pulados: se o servidor chegou a pegar um número e a resposta não valeu aqui, ele fica sem pedido */
+  console.log('numero-pedido: PLANO B (' + (srvFalha || 'servidor nao deu resposta boa') + ') -> ' + String(o.order_nsu || o.numero || (o.success === false ? 'sem numero: ' + (o.erro || '') : '?')));
+  return o;
+}
 
 exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
