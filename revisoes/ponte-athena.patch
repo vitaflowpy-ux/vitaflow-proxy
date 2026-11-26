@@ -1,5 +1,5 @@
 diff --git a/netlify/functions/athena-ia-background.js b/netlify/functions/athena-ia-background.js
-index 182007c..86afe44 100644
+index 182007c..414be22 100644
 --- a/netlify/functions/athena-ia-background.js
 +++ b/netlify/functions/athena-ia-background.js
 @@ -673 +673 @@ function _diaBRT(ms){ return new Date((ms || Date.now()) - 3 * 3600 * 1000).toIS
@@ -19,7 +19,7 @@ index 182007c..86afe44 100644
 @@ -690 +692 @@ async function enviarLongo(phone, texto, apiKey){
 -  if (ultimo && ultimo.ok && _logCtx && _logCtx.assistente === 'Athena') await _logIA(phone, _logCtx.mensagem, texto);   // v124.2
 +  if (ultimo && ultimo.ok && ctx && ctx.assistente === 'Athena') await _logIA(phone, ctx.mensagem, texto, ctx);   // v124.2
-@@ -1600,0 +1603,90 @@ async function blocoAprendido() {
+@@ -1600,0 +1603,92 @@ async function blocoAprendido() {
 +async function consultarAthena2(dados, prazoMs) {
 +  const chave = process.env.BOTCONVERSA_API_KEY;
 +  if (!chave || !(prazoMs > 0)) return null;
@@ -102,7 +102,9 @@ index 182007c..86afe44 100644
 +  if (!r.ok || !r.headers.get('etag')) throw new Error('leitura do carrinho');
 +  const sess = (await r.json()) || {state:'MENU'};
 +  if (sess.ultimoDespachoCompra === body.despachoId && body.despachoId) return api.msgCarrinhoMenu(sess.carrinho);
-+  if (sess.atacado || (sess.state || 'MENU') !== (body.estado_fluxo || 'MENU')) return 'Sua conversa mudou enquanto eu conferia os itens. Digite *carrinho* para ver o pedido atual.';
++  if (sess.atacado || sess.carrinhoAtk?.length) return 'Você tem um pedido de atacado em andamento. Continue pelo menu de atacado.';
++  const estado = sess.state || 'MENU';
++  if (!['MENU','BUSCA_LIVRE','LISTA_PRODUTOS','VB_BUSCA','CARRINHO'].includes(estado) || estado !== (body.estado_fluxo || 'MENU')) return 'Sua conversa mudou enquanto eu conferia os itens. Digite *carrinho* para ver o pedido atual.';
 +  const carrinho = [...(sess.carrinho || []), ...produtos];
 +  const gravacao = await fetch(url, {method:'PUT',headers:{'Content-Type':'application/json','if-match':r.headers.get('etag')},
 +    body:JSON.stringify({...sess,state:'CARRINHO',carrinho,ultimoDespachoCompra:body.despachoId}), ..._optTimeout(3000)});
@@ -110,7 +112,7 @@ index 182007c..86afe44 100644
 +  return api.msgCarrinhoMenu(carrinho);
 +}
 +
-@@ -1603,0 +1696,14 @@ exports.handler = async (event) => {
+@@ -1603,0 +1698,14 @@ exports.handler = async (event) => {
 +    let reservaIncerta = false;
 +    if (body.usarAthena2 === true) {
 +      if (!despachoValido(event)) return {statusCode: 403, body: 'despacho recusado'};
@@ -125,7 +127,7 @@ index 182007c..86afe44 100644
 +        reservaIncerta = true;
 +      }
 +    }
-@@ -1617,0 +1724,31 @@ exports.handler = async (event) => {
+@@ -1617,0 +1726,31 @@ exports.handler = async (event) => {
 +    if (assistente === 'Athena' && body.usarAthena2 === true && process.env.ATHENA2_ATIVA === 'true') {
 +      const resultado = await consultarAthena2({telefone: phone, nome: body.nome || '',
 +        mensagem, subscriber_id: body.subscriber_id || '', estado_fluxo: body.estado_fluxo || '', confirmar_compra_no_worker: true}, 22000);
