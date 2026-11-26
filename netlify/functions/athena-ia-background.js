@@ -670,24 +670,26 @@ async function enviarBotConversa(phone, message, apiKey){
 // v124.2: o que esta chamada está respondendo (a função atende uma chamada por vez) — para o registro da Athena.
 let _logCtx = null;
 function _diaBRT(ms){ return new Date((ms || Date.now()) - 3 * 3600 * 1000).toISOString().slice(0, 10); }
-async function _logIA(phone, msg, texto){
+async function _logIA(phone, msg, texto, ctx){
   try {
     const f = String(phone || '').replace(/\D/g, '');
     if (!f || !String(texto || '').trim()) return;
     const agora = Date.now();
     await fetch(fbUrl('/vitaflow_sync/athena_log/' + _diaBRT(agora) + '.json'), Object.assign({ method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ f: f, s: '', m: String(msg || '').slice(0, 1500), r: String(texto).slice(0, 1500), ts: agora, q: 'Athena-IA' }) }, _optTimeout(2500)));
+      body: JSON.stringify({ f: f, s: '', m: String(msg || '').slice(0, 1500), r: String(texto).slice(0, 1500), ts: agora, q: ctx?.origem || 'Athena-IA', turno: ctx?.turno || null }) }, _optTimeout(2500)));
   } catch (e) {}
 }
 
 // Envia texto possivelmente grande em VÁRIAS mensagens (o WhatsApp recusa mensagem única enorme).
-async function enviarLongo(phone, texto, apiKey){
+async function enviarLongo(phone, texto, apiKey, ctx = _logCtx){
   const partes = partirMensagem(texto, 3800);
   let ultimo = { ok:false, etapa:'vazio', status:0, detalhe:'nada a enviar' };
   for (const p of partes){
-    if (p && p.trim()) ultimo = await enviarBotConversa(phone, p, apiKey);
+    if (!p || !p.trim()) continue;
+    ultimo = await enviarBotConversa(phone, p, apiKey);
+    if (!ultimo.ok) break;
   }
-  if (ultimo && ultimo.ok && _logCtx && _logCtx.assistente === 'Athena') await _logIA(phone, _logCtx.mensagem, texto);   // v124.2
+  if (ultimo && ultimo.ok && ctx && ctx.assistente === 'Athena') await _logIA(phone, ctx.mensagem, texto, ctx);   // v124.2
   return ultimo;
 }
 
@@ -1598,9 +1600,115 @@ async function blocoAprendido() {
   return txt;
 }
 
+async function consultarAthena2(dados, prazoMs) {
+  const chave = process.env.BOTCONVERSA_API_KEY;
+  if (!chave || !(prazoMs > 0)) return null;
+  const corpo = JSON.stringify(dados);
+  const ts = String(Date.now());
+  const assinatura = require('node:crypto').createHmac('sha256', chave).update(ts + '.' + corpo).digest('hex');
+  const controle = new AbortController();
+  const timer = setTimeout(() => controle.abort(), prazoMs);
+  try {
+    const r = await fetch('https://painel.vitaflowoficial.com/api/athena2/responder', {
+      method: 'POST', redirect: 'error', signal: controle.signal, body: corpo,
+      headers: {'Content-Type': 'application/json', 'x-vf-ts': ts, 'x-vf-assinatura': assinatura}
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!d || d.ok !== true || !['responder', 'transferir', 'ficar_quieta'].includes(d.acao)) return null;
+    if (d.acao !== 'ficar_quieta' && (typeof d.resposta !== 'string' || !d.resposta.trim())) return null;
+    return d;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function despachoValido(event) {
+  const headers = event.headers || {};
+  const ts = headers['x-vf-despacho-ts'] || '';
+  const mac = headers['x-vf-despacho-mac'] || '';
+  if (!BOTCONVERSA_KEY || !/^\d{13}$/.test(ts) || !/^[0-9a-f]{64}$/.test(mac)) return false;
+  const crypto = require('node:crypto');
+  const esperado = crypto.createHmac('sha256', BOTCONVERSA_KEY).update('despacho.' + ts + '.' + event.body).digest();
+  if (!crypto.timingSafeEqual(esperado, Buffer.from(mac, 'hex'))) return false;
+  const idadeMs = Date.now() - Number(ts);
+  if (Math.abs(idadeMs) <= 300000) return true;
+  console.warn('[Athena] despacho autenticado fora da janela', {idadeMs});
+  return false;
+}
+
+async function reservarDespacho(dia, id) {
+  const url = fbUrl('/vitaflow_sync/athena_despachos/' + dia + '/' + id + '.json');
+  const dono = require('node:crypto').randomUUID();
+  const body = JSON.stringify({dono, reservadoEm: Date.now()});
+  for (let tentativa = 0; tentativa < 2; tentativa++) {
+    try {
+      const r = await fetch(url, {method:'PUT', headers:{'Content-Type':'application/json','if-match':'null_etag'}, body, ..._optTimeout(2500)});
+      if (r.ok) return 'reservado';
+      if (r.status === 412) {
+        if (tentativa === 0) return 'duplicado';
+        const atual = await r.json();
+        return atual && atual.dono === dono ? 'reservado' : 'duplicado';
+      }
+    } catch {}
+  }
+  try {
+    const r = await fetch(url, _optTimeout(2500));
+    if (r.ok) {
+      const atual = await r.json();
+      if (atual) return atual.dono === dono ? 'reservado' : 'duplicado';
+    }
+  } catch {}
+  return 'incerto';
+}
+
+async function respostaDeCompra(body, resultado, api) {
+  const itens = resultado.itens_confirmados;
+  if (!Array.isArray(itens) || !itens.length) return 'Pode confirmar o produto, a versão e a quantidade que você quer?';
+  const catalogo = await ciCarregar(buscarCacheObj);
+  const produtos = [];
+  for (const item of itens) {
+    if (!item || typeof item.nome !== 'string' || !Number.isSafeInteger(item.qtd) || item.qtd < 1 || item.qtd > 99) return 'Pode confirmar o produto e a quantidade?';
+    const encontrados = catalogo.filter(p => p.nome === item.nome);
+    if (encontrados.length !== 1) return 'Pode confirmar a versão do produto para eu localizar no catálogo?';
+    const [prod] = parseProdutos([encontrados[0].linha]);
+    if (!(prod.preco > 0)) return 'Preciso confirmar o preço desse item antes de montar o carrinho.';
+    produtos.push({...prod, qtd:item.qtd, colecao:encontrados[0].fonte, genesis:api.ehLinhaGenesis(prod.nome)});
+  }
+  const url = fbUrl('/vitaflow_sessions/' + _sessKey(body.phone) + '.json');
+  const r = await fetch(url, {headers:{'X-Firebase-ETag':'true'}, ..._optTimeout(3000)});
+  if (!r.ok || !r.headers.get('etag')) throw new Error('leitura do carrinho');
+  const sess = (await r.json()) || {state:'MENU'};
+  if (sess.ultimoDespachoCompra === body.despachoId && body.despachoId) return api.msgCarrinhoMenu(sess.carrinho);
+  if (sess.atacado || sess.carrinhoAtk?.length) return 'Você tem um pedido de atacado em andamento. Continue pelo menu de atacado.';
+  const estado = sess.state || 'MENU';
+  if (!['MENU','BUSCA_LIVRE','LISTA_PRODUTOS','VB_BUSCA','CARRINHO'].includes(estado) || estado !== (body.estado_fluxo || 'MENU')) return 'Sua conversa mudou enquanto eu conferia os itens. Digite *carrinho* para ver o pedido atual.';
+  const carrinho = [...(sess.carrinho || []), ...produtos];
+  const gravacao = await fetch(url, {method:'PUT',headers:{'Content-Type':'application/json','if-match':r.headers.get('etag')},
+    body:JSON.stringify({...sess,state:'CARRINHO',carrinho,ultimoDespachoCompra:body.despachoId}), ..._optTimeout(3000)});
+  if (!gravacao.ok) throw new Error('gravação do carrinho');
+  return api.msgCarrinhoMenu(carrinho);
+}
+
 exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || '{}');
+    let reservaIncerta = false;
+    if (body.usarAthena2 === true) {
+      if (!despachoValido(event)) return {statusCode: 403, body: 'despacho recusado'};
+      // Versões antigas não enviavam UUID. Usar a impressão do despacho assinado durante a transição.
+      const crypto = require('node:crypto');
+      const id = crypto.createHash('sha256').update(body.despachoId || event.headers['x-vf-despacho-mac']).digest('hex');
+      const dia = new Date(Number(event.headers['x-vf-despacho-ts'])).toISOString().slice(0, 10);
+      const reserva = await reservarDespacho(dia, id);
+      if (reserva === 'duplicado') return {statusCode: 200, body: 'despacho já reservado'};
+      if (reserva === 'incerto') {
+        console.warn('[Athena2] reserva indisponível após duas tentativas');
+        reservaIncerta = true;
+      }
+    }
     const phone = body.phone;
     const assistente = (body.assistente || 'Athena');   // "Athena" ou "Stella"
     const apiKey = keyDoAssistente(assistente);          // key da companhia certa
@@ -1614,6 +1722,37 @@ exports.handler = async (event) => {
     const contexto = (body.contexto || '').toString().trim(); // o que o cliente está VENDO agora (lista aberta)
     console.log('[IA] START | phone:', phone, '| assistente:', assistente, '| mensagem:', mensagem, '| contexto:', contexto ? 'sim' : 'nao');
     if (!phone || !mensagem) { console.log('[IA] no-op: faltou phone ou mensagem'); return { statusCode: 200, body: 'no-op' }; }
+
+    if (assistente === 'Athena' && body.usarAthena2 === true && process.env.ATHENA2_ATIVA === 'true') {
+      const resultado = await consultarAthena2({telefone: phone, nome: body.nome || '',
+        mensagem, subscriber_id: body.subscriber_id || '', estado_fluxo: body.estado_fluxo || '', confirmar_compra_no_worker: true}, 22000);
+      if (resultado && resultado.acao === 'ficar_quieta') return {statusCode: 200, body: 'silêncio solicitado'};
+      if (resultado) {
+        const api = require('./botconversa.js').ponteAthena;
+        let texto = resultado.resposta;
+        if (reservaIncerta && (resultado.acao === 'transferir' || resultado.intencao === 'comprar')) {
+          texto = 'Não consegui confirmar essa operação. Para falar com a equipe, digite *atendente*. Para conferir seu pedido, digite *carrinho*.';
+        } else if (resultado.acao === 'transferir') {
+          const avisado = await api.enviarTelegram('🔔 CLIENTE QUER HUMANO\n📱 ' + phone + '\n💬 ' + mensagem);
+          if (avisado) {
+            try {
+              const r = await fetch(fbUrl('/vitaflow_sync/athena_humano/' + _diaBRT() + '/' + _sessKey(phone) + '.json'),
+                {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ts:Date.now()}),..._optTimeout(2500)});
+              if (!r.ok) throw new Error();
+            } catch { console.warn('[Athena2] equipe avisada, registro de transferência pendente'); }
+          } else texto = 'Não consegui confirmar o chamado à equipe. Digite *atendente* para tentar novamente.';
+        } else if (resultado.intencao === 'comprar') {
+          try { texto = await respostaDeCompra(body, resultado, api); }
+          catch { texto = 'Não consegui confirmar a atualização. Digite *carrinho* para conferir seu pedido.'; }
+        }
+        const envio = await enviarLongo(phone, texto, apiKey, {assistente, mensagem, turno:resultado.turno, origem:'Athena-2.0'});
+        return {statusCode:200, body:envio.ok ? 'resposta aceita' : 'envio não confirmado'};
+      }
+      if (reservaIncerta) {
+        const envio = await enviarLongo(phone, 'Estou com uma instabilidade. Pode repetir sua mensagem em instantes?', apiKey, {assistente, mensagem});
+        return {statusCode:200, body:envio.ok ? 'aviso de instabilidade aceito' : 'envio não confirmado'};
+      }
+    }
 
     // Memória: carrega o que já foi conversado com esse cliente.
     const historico = await lerHistorico(phone);
