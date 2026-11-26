@@ -6294,10 +6294,10 @@ function lerListaColada(msg) {
   if (linhas.length < 2 || linhas.length > 25) return [];
   if (ehBlocoDados(msg)) return [];
   // v117: rótulo copiado ("VITAFLOW / TIRZEPATIDE / 60mg 2,4ml") não é lista: até 3 linhas e 6 palavras, sem quantidade no começo das linhas
-  const apresentacoesSeparadas = linhas.every(function (linha) {
-    return /[a-z]{2,}\s+[a-z][a-z\s-]*\s+\d+(?:[.,]\d+)?\s*(?:mg|mcg|ml|ui|iu|g)?$/i.test(linha.trim());
+  const linhasDeProduto = linhas.every(function (linha) {
+    return /^[\s•*-]*[a-zÀ-ÿ][^\n]*?(?:\s+|-\s*|\s+x\s*)\d+(?:[.,]\d+)?\s*(?:mg|mcg|ml|ui|iu|g|un|unid|unidades?|cx|caixas?|x)?$/i.test(linha.trim());
   });
-  if (!apresentacoesSeparadas && linhas.length <= 3 && String(msg || '').split(/\s+/).filter(Boolean).length <= 6 && !linhas.some(function (l) { return /^\d{1,3}\s*(x\s*)?(?!(mg|mcg|ml|ui|iu|g|un|unid)\b)[a-z]/i.test(l.replace(/^[\-•*·>]+\s*/, '')); })) return [];
+  if (!linhasDeProduto && linhas.length <= 3 && String(msg || '').split(/\s+/).filter(Boolean).length <= 6 && !linhas.some(function (l) { return /^\d{1,3}\s*(x\s*)?(?!(mg|mcg|ml|ui|iu|g|un|unid)\b)[a-z]/i.test(l.replace(/^[\-•*·>]+\s*/, '')); })) return [];
   const out = [];
   linhas.forEach(function (l0) {
     let l = l0.replace(/^[\-•*·>]+\s*/, '').replace(/[*_~]/g, '').trim();
@@ -6309,8 +6309,12 @@ function lerListaColada(msg) {
       m = l.match(/^(\d{1,3})\s*(x|un|unid|unidades?|cx|caixas?)?\s+(.+)$/i);   // "2 produto" / "2x produto"
       if (m && /[a-z]{3,}/i.test(m[3])) { qtd = parseInt(m[1], 10); l = m[3]; }
     }
-    m = l.match(/^(.+?)\s*(?:-\s*)?(?:x\s*)?(\d{1,2})\s*(?:x|un|unid|unidades?|cx|caixas?)?$/i);   // "produto 4" / "produto x2" (sem mg/ml/ui)
-    if (m && !qtd && !apresentacoesSeparadas && /[a-z]{3,}/i.test(m[1]) && !/(mg|ml|ui|iu|mcg|g)\s*$/i.test(l)) { qtd = parseInt(m[2], 10); l = m[1]; }
+    // Com marcador, aceita 1 a 99. Sem marcador, preserva números de dois ou mais dígitos no nome.
+    m = l.match(/^(.+?)(\s+-\s*|\s+x\s*|\s+)(\d{1,3})\s*(x|un|unid|unidades?|cx|caixas?)?$/i);
+    if (m && !qtd && /[a-z]{3,}/i.test(m[1])) {
+      const n = Number(m[3]), marcado = /[-x]/i.test(m[2]) || !!m[4];
+      if (n >= 1 && n <= (marcado ? 99 : 9)) { qtd = n; l = m[1]; }
+    }
     const nl = norm(l).replace(/[^a-z0-9 ,.\-]/g, ' ').replace(/\s+/g, ' ').trim();
     if (nl.replace(/[^a-z]/g, '').length < 3) return;
     if (/^(ola|oi|bom dia|boa tarde|boa noite|obrigad|por favor|pfv|segue|segue a lista|lista|pedido|quero|gostaria|total|frete|cep|cpf|nome|endereco|rua|bairro|cidade)\b/.test(nl) && nl.split(' ').length <= 3) return;
