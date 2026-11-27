@@ -1,5 +1,13 @@
 // botconversa.js — VitaFlow Athena v4.2 — menu-driven + Promoção Relâmpago + reconhecimento por texto
 
+// v132 (26/11/2026, noite — Thiago: "vamos organizar a black friday de amanhã" · 15% · só sexta 27/11 · cupom BLACKVF · frete pausado e atacado
+//   fora · VitaBeauty fora, igual ao DUPLO11 · "COMO QUE PODE SER ULTIMO DIA SE SERÁ APENAS 1 DIA?" → "SÓ HOJE", sem "último dia"):
+//   • BLACK_FRIDAY.anunciada = true → sai do quadro a frase "AINDA NÃO ANUNCIOU a Black Friday" e a trava travarBlackInventada da
+//     athena-ia(-background) desliga sozinha (nada muda nesses 2 arquivos).
+//   • PROMO_BLACKVF (clone da DUPLO11): 15% no varejo VitaFlow com o cupom BLACKVF, 27/11 00h a 23h59. Opção 8 / "promo", menu, saudação,
+//     quadro da IA (antes das 00h: "começa sexta 00h"), dica do cupom de boas-vindas, CUPOM_INICIO, FRETE_GRATIS_AUTO.pausas e PROMOS_HISTORICO.
+//   ⚠️ A MESMA promoção existe no carrinho do site (main-cart-footer.liquid) e a pausa do frete no Orçamento. Resto = v131.
+
 // v131 (+ 21/11/2026, noite — Thiago: "pode pegar tudo que tem na artemis e na stella e passar para a athena"): seguro "contra extravio, apreensão e
 //   roubo" nos textos do frete/resumo; prompt do fluxo com Total Express e a resposta das 5.000 cidades; Black Friday sem "sai primeiro no Grupo VIP".
 //   + 22/11 (Thiago): bloco do lançamento Diamond REMOVIDO ("diamond" cai na busca normal — hoje é produto normal da Landerlan); resposta de
@@ -1559,7 +1567,11 @@ async function contextoPromo(){
   if (freteGratisAutoAtivo()) {
     linhas.push('FRETE GRÁTIS AUTOMÁTICO (varejo, sem data de fim): em pedidos A PARTIR DE R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' em produtos, o FRETE é GRÁTIS pra todo o Brasil, em qualquer opção de envio (PAC, SEDEX ou Transportadora). É AUTOMÁTICO no fechamento (aqui na Athena e no site) — o cliente NÃO precisa digitar cupom nenhum; NÃO peça nem mencione o cupom FRETEZERO. NÃO ACUMULA com cupom, promoção nem com o benefício de ' + DESCONTO_ATHENA_PCT + '% da Athena: quando o pedido tem outro benefício, o resumo do pedido mostra as DUAS opções (frete grátis OU o desconto) com o valor de cada uma e o CLIENTE escolhe a que preferir. NUNCA diga que o cliente ganha o frete grátis E o desconto juntos. Única exceção: VALE-COMPRAS (é como dinheiro) funciona junto com o frete grátis. Abaixo de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ' o frete é cobrado normalmente. No ATACADO a regra é outra (lá o frete já é grátis). REVENDEDORES: o benefício NÃO é concedido a revendedores, que já têm desconto nos produtos (compram pelo portal de revendedores). SEMPRE que o cliente perguntar de frete grátis, promoção ou desconto, explique isso; se o pedido estiver perto de R$ ' + reais(FRETE_GRATIS_AUTO.min) + ', avise quanto falta pro frete sair de graça. AO LISTAR OS BENEFÍCIOS ("o que tá valendo", "o que você já garante", "benefícios permanentes"), NUNCA ponha os ' + DESCONTO_ATHENA_PCT + '% e o frete grátis lado a lado como se somassem: escreva que é UM OU OUTRO (no resumo do pedido aparecem os dois e o cliente escolhe o melhor). O único que vale JUNTO é o cashback. SEGURO: o seguro grátis contra extravio, apreensão e roubo CONTINUA VALENDO com o frete grátis, desde que o envio seja por TRANSPORTADORA; PAC e SEDEX (Correios) NÃO têm seguro, com ou sem frete grátis — o frete grátis não muda nada nisso. Como a Transportadora também sai grátis nesses pedidos, recomende a Transportadora.');
   }
-  if (promoDuplo11Ativa()) {   // v118
+  if (promoBlackvfAtiva()) {   // v132
+    linhas.push('PROMOÇÃO ATUAL — BLACKVF (BLACK FRIDAY, SÓ HOJE, sexta 27/11, das 00h até 23h59): 15% OFF em TODO o VAREJO VitaFlow com o cupom BLACKVF, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo VitaFlow, qualquer quantidade. Termina HOJE às 23h59 — faltam ' + tempoRestanteTxt(PROMO_BLACKVF.fim) + '. SEMPRE diga que é só hoje e quanto tempo falta quando falar dela, e incentive a fechar agora (o estoque pode acabar antes). É a ÚNICA promoção da Black Friday: NÃO existe Cyber Monday, Black Week nova, outro cupom nem outra porcentagem — não invente. A linha VITABEAUTY (perfumes e cosméticos) e os produtos do ATACADO NÃO participam (no atacado o benefício continua sendo o frete grátis). NÃO acumula com outros cupons nem promoções (nem com os 3%: vale o maior). Hoje o FRETE GRÁTIS AUTOMÁTICO (pedidos a partir de R$ 1.000) está PAUSADO — não ofereça frete grátis no varejo hoje e não fale quando ele volta. Produtos com preço especial já têm o desconto no preço (o cupom não pega neles). Não vale para revendedores.');
+  } else if (blackvfAntes()) {   // v132: anúncio antes das 00h de 27/11
+    linhas.push('BLACK FRIDAY ANUNCIADA — BLACKVF: na SEXTA 27/11, das 00h até 23h59 (um dia só), 15% OFF em todo o VAREJO VitaFlow com o cupom BLACKVF. Ainda NÃO começou: o cupom só vale a partir de sexta 27/11 à 00h (antes disso ele é recusado). A linha VitaBeauty e o atacado NÃO participam; não acumula com outros cupons nem promoções; na sexta o frete grátis automático fica pausado. Não existe Cyber Monday nem outra porcentagem — não invente.');
+  } else if (promoDuplo11Ativa()) {   // v118
     linhas.push('PROMOÇÃO ATUAL — DUPLO11 (11.11, SÓ HOJE, quarta 11/11, das 00h até 23h59): 15% OFF em TODO o VAREJO VitaFlow com o cupom DUPLO11, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo VitaFlow, qualquer quantidade. Termina HOJE às 23h59 — faltam ' + tempoRestanteTxt(PROMO_DUPLO11.fim) + '. SEMPRE diga que é só hoje e quanto tempo falta quando falar dela, e incentive a fechar agora (o estoque pode acabar antes). A linha VITABEAUTY (perfumes e cosméticos) e os produtos do ATACADO NÃO participam (no atacado o benefício continua sendo o frete grátis). NÃO acumula com outros cupons nem promoções (nem com os 3%: vale o maior). Hoje o FRETE GRÁTIS AUTOMÁTICO (pedidos a partir de R$ 1.000) está PAUSADO — não ofereça frete grátis no varejo hoje e não fale quando ele volta. Produtos com preço especial já têm o desconto no preço (o cupom não pega neles). O CASHBACK de 3% continua valendo normalmente (pode usar o saldo junto com o cupom e a compra gera cashback sobre o valor pago). Não vale para revendedores. NÃO fale da HALLOWEEN15 (já encerrou).');
   } else if (promoHalloweenAtiva()) {
     linhas.push('PROMOÇÃO ATUAL — HALLOWEEN15 (Halloween, SÓ HOJE, sexta 31/10, das 00h até 23h59): 15% OFF em TODO o site (VAREJO) com o cupom HALLOWEEN15, digitado pelo cliente no fechamento (aqui comigo ou no site). Vale para qualquer produto do varejo, qualquer quantidade. Termina HOJE às 23h59 — faltam ' + tempoRestanteTxt(PROMO_HALLOWEEN.fim) + '. SEMPRE diga que é só hoje e quanto tempo falta quando falar dela, e incentive a fechar agora (o estoque pode acabar antes). Os produtos do ATACADO NÃO participam (no atacado o benefício continua sendo o frete grátis). NÃO acumula com outros cupons nem promoções (nem com os 3%: vale o maior). Hoje o FRETE GRÁTIS AUTOMÁTICO (pedidos a partir de R$ 1.000) está PAUSADO — não ofereça frete grátis no varejo hoje e não fale quando ele volta. Produtos com preço especial já têm o desconto no preço (o cupom não pega neles). Não vale para revendedores.');
@@ -1637,7 +1649,8 @@ const FRETE_GRATIS_AUTO = { ativo: true, min: 1000,
             { de: '2026-10-15T00:00:00-03:00', ate: '2026-10-15T23:59:59-03:00', motivo: 'PROF15' },
             { de: '2026-10-31T00:00:00-03:00', ate: '2026-10-31T23:59:59-03:00', motivo: 'HALLOWEEN15' },   // v113
             { de: '2026-11-11T00:00:00-03:00', ate: '2026-11-11T23:59:59-03:00', motivo: 'DUPLO11' },   // v118
-            { de: '2026-11-20T00:00:00-03:00', ate: '2026-11-22T23:59:59-03:00', motivo: 'BLACKWEEK' } ] };   // v130
+            { de: '2026-11-20T00:00:00-03:00', ate: '2026-11-22T23:59:59-03:00', motivo: 'BLACKWEEK' },   // v130
+            { de: '2026-11-27T00:00:00-03:00', ate: '2026-11-27T23:59:59-03:00', motivo: 'BLACKVF' } ] };   // v132
 function freteGratisAutoPausa(){
   const agora = Date.now();
   return (FRETE_GRATIS_AUTO.pausas || []).find(p => agora >= new Date(p.de).getTime() && agora <= new Date(p.ate).getTime()) || null;
@@ -1728,7 +1741,10 @@ _Alguns produtos já saem com preço especial — nesses o cupom não é necess�
 const PROMO_DUPLO11 = { ativa: true, cupom: 'DUPLO11', pct: 15, ini: '2026-11-11T00:00:00-03:00', fim: '2026-11-11T23:59:59-03:00' };
 // ── v125: BLACK FRIDAY — enquanto anunciada:false, a IA só pode dizer que ela ainda não foi anunciada (sem data, sem %, sem promessa). ──
 // O texto do quadro tem a frase "AINDA NÃO ANUNCIOU a Black Friday": é ela que liga a trava de saída da athena-ia(-background).
-const BLACK_FRIDAY = { anunciada: false };
+const BLACK_FRIDAY = { anunciada: true };   // v132: anunciada (BLACKVF, só 27/11)
+// ── v132: BLACKVF — Black Friday: 15% OFF em todo o varejo VitaFlow com o cupom BLACKVF, SÓ na sexta 27/11 (00h a 23h59) ──
+// Liga e desliga sozinha pela data. VitaBeauty e atacado NÃO participam. Frete grátis automático pausado no dia (FRETE_GRATIS_AUTO.pausas).
+const PROMO_BLACKVF = { ativa: true, cupom: 'BLACKVF', pct: 15, ini: '2026-11-27T00:00:00-03:00', fim: '2026-11-27T23:59:59-03:00' };
 const MSG_BLACK_NAO_ANUNCIADA_IA = 'A Black Friday da VitaFlow ainda não foi anunciada: datas e descontos ainda não foram divulgados. O anúncio sai no site e nos nossos grupos.';
 // ── v125: promoções JÁ ENCERRADAS (a IA conta as que terminaram NESTE MÊS). Promoção nova: acrescentar aqui quando for criada. ──
 const PROMOS_HISTORICO = [
@@ -1738,6 +1754,7 @@ const PROMOS_HISTORICO = [
   { nome: 'Promoção relâmpago da caneta Mounjaro KwikPen', como: 'preço especial no produto, sem cupom', quando: 'encerrada em 10/11', fim: '2026-11-10T23:59:59-03:00' },
   { nome: 'DUPLO11 (11.11)', como: 'cupom DUPLO11 — 15% OFF em todo o varejo (VitaBeauty e atacado fora)', quando: '11/11', fim: PROMO_DUPLO11.fim },
   { nome: 'Promoção relâmpago COMBO 5 caixas de TG 10mg por R$ 1.999', como: 'preço especial no combo, sem cupom', quando: 'encerrada em 14/11', fim: '2026-11-14T23:59:59-03:00' },
+  { nome: 'BLACKVF (Black Friday)', como: 'cupom BLACKVF — 15% OFF em todo o varejo (VitaBeauty e atacado fora)', quando: '27/11', fim: PROMO_BLACKVF.fim },   // v132
 ];
 function mesBR(ms){
   try { return new Intl.DateTimeFormat('en-CA', { timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit' }).format(new Date(ms)).slice(0, 7); }
@@ -1773,6 +1790,26 @@ _Alguns produtos já saem com preço especial — nesses o cupom não é necess�
 }
 // v118: a relâmpago (Mounjaro) tem prioridade na opção 8 / "promo" — no dia da DUPLO11 ela entra ANTES, na mesma resposta.
 function comDuplo11(msg){ return promoDuplo11Ativa() ? msgPromoDuplo11() + `\n\n━━━━━━━━━━\n\n` + msg : msg; }
+// v132: BLACKVF (Black Friday, só 27/11) — mesmo modelo da DUPLO11
+function promoBlackvfAtiva(){ return PROMO_BLACKVF.ativa && Date.now() >= new Date(PROMO_BLACKVF.ini).getTime() && Date.now() <= new Date(PROMO_BLACKVF.fim).getTime(); }
+function blackvfAntes(){ return PROMO_BLACKVF.ativa && Date.now() < new Date(PROMO_BLACKVF.ini).getTime(); }
+function blackvfTermina(){ return `*SÓ HOJE* — termina *hoje às 23h59* (faltam ${tempoRestanteTxt(PROMO_BLACKVF.fim)})`; }
+function msgPromoBlackvf(){
+  return `🖤 *BLACK FRIDAY — 15% OFF EM TODO O VAREJO VITAFLOW!* 🖤
+
+Hoje é *Black Friday* e a VitaFlow te dá *15% de desconto* em qualquer produto do varejo! 🔥
+
+🏷️ É só usar o cupom *BLACKVF* no fechamento (aqui comigo ou no site).
+
+⏰ *SÓ HOJE!* Termina *hoje (sexta, 27/11) às 23h59* — faltam *${tempoRestanteTxt(PROMO_BLACKVF.fim)}*.
+
+⏳ Não deixe para a última hora: o estoque pode acabar antes.
+
+🚫 *A linha VitaBeauty e os produtos do atacado não participam desta promoção.*
+
+_Alguns produtos já saem com preço especial — nesses o cupom não é necessário. Não acumula com outros cupons nem promoções._`;
+}
+function comBlackvf(msg){ return promoBlackvfAtiva() ? msgPromoBlackvf() + `\n\n━━━━━━━━━━\n\n` + msg : msg; }
 // "2 dias, 5 h e 12 min" / "5 h e 12 min" / "12 min" até o fim (texto para o cliente)
 function tempoRestanteTxt(fimIso){
   let ms = new Date(fimIso).getTime() - Date.now();
@@ -1819,12 +1856,15 @@ function msgPromoAtual(){
   // v92: promoção relâmpago (com hora de fim) — normalmente a opção 8 já abre a lista dela (abrirPromo); aqui é a reserva.
   const _rel = promoAtiva();
   if (_rel) {
-    return comBlackWeek(comDuplo11(``)) + `⚡ *${_rel.titulo}*${_rel.validade ? ' — ' + _rel.validade : ''}! 🔥\n\n` +
+    return comBlackWeek(comBlackvf(comDuplo11(``))) + `⚡ *${_rel.titulo}*${_rel.validade ? ' — ' + _rel.validade : ''}! 🔥\n\n` +
       _rel.produtos.map(p => `• *${p.nome}* — ~de R$ ${reais(p.de)}~ por *R$ ${reais(p.por)}*`).join('\n') +
       (_rel.obs ? `\n\n_${_rel.obs}_` : '') +   // v114
       `\n\n👉 ${_rel.link}`;
   }
   if (semanaClienteAtiva()) return msgPromoBlackWeek();   // v130: Black Week primeiro
+  if (promoBlackvfAtiva()) {   // v132
+    return msgPromoBlackvf() + (SORTEIO.ativa ? `\n\n━━━━━━━━━━\n\n` + msgSorteio() : '');
+  }
   if (promoDuplo11Ativa()) {   // v118
     return msgPromoDuplo11() + (SORTEIO.ativa ? `\n\n━━━━━━━━━━\n\n` + msgSorteio() : '');
   }
@@ -2518,6 +2558,12 @@ function buildMenuPrincipal() {
 
 🚚 *FRETE GRÁTIS ATIVO!* Acima de *R$ 1.000* com o cupom *FRETEZERO* — só até *quarta (30/09) às 23h59*. Digite *promo* ou escolha a *opção 8*. 🔥`;
   }
+  // v132: BLACKVF (só 27/11) — aviso com o tempo que falta
+  if (promoBlackvfAtiva()) {
+    menu += `
+
+🖤 *BLACK FRIDAY: 15% OFF em todo o varejo VitaFlow* com o cupom *BLACKVF* — ${blackvfTermina()}. Não vale na linha VitaBeauty nem no atacado. Digite *promo* ou escolha a *opção 8*.`;
+  }
   // v118: DUPLO11 (só 11/11) — aviso com o tempo que falta
   if (promoDuplo11Ativa()) {
     menu += `
@@ -2586,6 +2632,7 @@ function buildTriagem() {
   const promo = promoAtiva();
   if (promo) m += `\n\n🚨 *${promo.titulo} ATIVA!* (dentro da opção *1* → Promoção do momento) ⚡`;
   // v99: DEZ10 na saudação
+  if (promoBlackvfAtiva()) m += `\n\n🖤 *BLACK FRIDAY: 15% OFF em todo o varejo VitaFlow* com o cupom *BLACKVF* — ${blackvfTermina()}! _(não vale na linha VitaBeauty nem no atacado)_`;   // v132
   if (promoDuplo11Ativa()) m += `\n\n⚡ *11.11: 15% OFF em todo o varejo VitaFlow* com o cupom *DUPLO11* — ${duplo11Termina()}! _(não vale na linha VitaBeauty nem no atacado)_`;   // v118
   if (promoHalloweenAtiva()) m += `\n\n🎃 *HALLOWEEN: 15% OFF em todo o site* com o cupom *HALLOWEEN15* — ${halloweenTermina()}! _(não vale no atacado)_`;   // v113
   if (promoProf15Ativa()) m += `\n\n✏️ *DIA DO PROFESSOR: 15% OFF em todo o site* com o cupom *PROF15* — ${prof15Termina()}! _(não vale no atacado)_`;   // v104
@@ -2873,7 +2920,10 @@ function msgCupomBoasVindas(cupom){
   linhas.push(`Vale em *todos os nossos canais de vendas*.`);
   // Quando há promoção MAIOR no ar, é desonesto deixar o cliente usar o cupom pior.
   // A gente avisa e transforma isso em motivo pra uma SEGUNDA compra dentro da validade.
-  if (typeof promoDuplo11Ativa === 'function' && promoDuplo11Ativa()) {   // v118
+  if (typeof promoBlackvfAtiva === 'function' && promoBlackvfAtiva()) {   // v132
+    linhas.push('');
+    linhas.push(`💡 *Dica:* hoje é *Black Friday* com *15% OFF* (cupom *BLACKVF*, ${blackvfTermina()}) e é melhor que o seu. Aproveita ela agora — e o seu cupom de boas-vindas fica guardado pra uma *segunda compra* dentro da validade. 😉`);
+  } else if (typeof promoDuplo11Ativa === 'function' && promoDuplo11Ativa()) {   // v118
     linhas.push('');
     linhas.push(`💡 *Dica:* hoje é *11.11* com *15% OFF* (cupom *DUPLO11*, ${duplo11Termina()}) e é melhor que o seu. Aproveita ela agora — e o seu cupom de boas-vindas fica guardado pra uma *segunda compra* dentro da validade. 😉`);
   } else if (typeof promoHalloweenAtiva === 'function' && promoHalloweenAtiva()) {   // v113
@@ -4169,7 +4219,7 @@ async function tratarTextoLivre(session, sid, nMsg, menuStr, respond) {
         return await responderComIA(sid, nMsg, contextoLista(session), respond);
       }
       const _mRel = await abrirPromo(session, sid);
-      if (_mRel) return respond(_citaRel ? _mRel : comBlackWeek(comDuplo11(_mRel)));   // v118: pediu "promo" sem citar o produto da relâmpago → DUPLO11 antes
+      if (_mRel) return respond(_citaRel ? _mRel : comBlackWeek(comBlackvf(comDuplo11(_mRel))));   // v118: pediu "promo" sem citar o produto da relâmpago → DUPLO11 antes
     }
   }
   // Dúvida/pergunta (protocolo, como usar, dose, "?"...) → a IA RESPONDE, mesmo que cite um
@@ -4942,7 +4992,8 @@ async function _buscarCupomDoc(cod) {
 const CUPOM_INICIO = { DEZ10: { ini: '2026-10-10T00:00:00-03:00', txt: '10/10 (sábado) à 00h' },
                        PROF15: { ini: '2026-10-15T00:00:00-03:00', txt: '15/10 (quinta) à 00h' },
                        HALLOWEEN15: { ini: '2026-10-31T00:00:00-03:00', txt: '31/10 (sexta) à 00h' },   // v113
-                       DUPLO11: { ini: '2026-11-11T00:00:00-03:00', txt: '11/11 (quarta) à 00h' } };   // v118
+                       DUPLO11: { ini: '2026-11-11T00:00:00-03:00', txt: '11/11 (quarta) à 00h' },   // v118
+                       BLACKVF: { ini: '2026-11-27T00:00:00-03:00', txt: '27/11 (sexta) à 00h' } };   // v132
 async function validarCupom(codigo, subtotalProdutos) {
   try {
     const cod = (codigo || '').trim().toUpperCase();
@@ -7155,7 +7206,7 @@ exports.handler = async (event) => {
     if (ehPromo && !emCheckout) {
       if (PROMO_GENESIS.ativa) return await anunciarGenesis(session, sid, respond);
       const msg = await abrirPromo(session, sid);     // se a Relâmpago for reativada, ela tem prioridade
-      if (msg) return respond(comBlackWeek(comDuplo11(msg)));   // v118 · v130
+      if (msg) return respond(comBlackWeek(comBlackvf(comDuplo11(msg))));   // v118 · v130
       if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
       await saveSession(sid, { ...session, state:'MENU' });
       return respond(msgPromoAtual() + '\n\n0️⃣ Voltar ao menu');
@@ -7724,7 +7775,7 @@ exports.handler = async (event) => {
       if (num === 8) {
         if (PROMO_GENESIS.ativa) return await anunciarGenesis(session, sid, respond);
         const msg = await abrirPromo(session, sid);   // Relâmpago tem prioridade se for reativada
-        if (msg) return respond(comBlackWeek(comDuplo11(msg)));   // v118 · v130
+        if (msg) return respond(comBlackWeek(comBlackvf(comDuplo11(msg))));   // v118 · v130
         if (PROMO_PRODUTO.ativa) return respond(await anunciarLancamento(session, sid));
         return respond(msgPromoAtual() + '\n\n0️⃣ Voltar ao menu');
       }
