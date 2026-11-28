@@ -1,6 +1,11 @@
 'use strict';
 /* =============================================================================
-   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v13  ·  17/11/2026
+   conta-cliente.js — MINHA CONTA VITAFLOW (Fase 1)  ·  v14  ·  28/11/2026
+   v14 (28/11, Thiago: "quero que coloque uma opção para o cliente voltar e pagar a chave pix gerada para ele… os pedidos 'aguardando
+       pagamento' ficam presos e o cliente não tem mais acesso" — um dos lugares escolhidos por ele é a Minha Conta): 'minha_conta' devolve
+       também `pendentes` = [{ pedido, data, valor }] — pedidos do SITE (S/W) da conta ainda AGUARDANDO PAGAMENTO (no máximo 5, mais novos
+       primeiro). A página confere cada um na função pagar-pedido (prazo, cashback, substituído) e só mostra o botão do que ainda pode ser pago.
+       Nada mais muda: a lista de pedidos, o cashback e o resto continuam só com pedido pago.
    v13 (Thiago, 16/11: o sorteio acabou na VitaFlow): 'minha_conta' não lê mais o vitaflow_sorteio — sorteio: null e kpis.numeros 0
        (a página v15 não mostra mais a aba nem o quadro); e-mails de criar/confirmar a conta falam de cashback no lugar dos números da sorte.
    v12 (04/11 — cashback no lugar do sorteio, pedido do Thiago): 'minha_conta' devolve `cashback` { ativo, pct, dias, saldo, lotes,
@@ -606,11 +611,17 @@ async function montarConta(u, agora, soCompra) {
     Object.keys(obj || {}).forEach(function (k) { var l = obj[k]; if (cpf11(cel(l, I.cpf)) === cpfsBase[j]) minhas[k] = l; });
   });
   conta.emails = [conta.email];
-  var normais = [], reenvios = [], dsDoIdx = [], todosDoDia = {};
+  var normais = [], reenvios = [], dsDoIdx = [], todosDoDia = {}, pendentes = [];   /* v14: pendentes */
   Object.keys(minhas).forEach(function (k) {
     var l = minhas[k];
     var ped = cel(l, I.ped); if (!ped || ped.indexOf(',') >= 0) return;
-    if (R.naoPagou(cel(l, I.status), cel(l, 12))) return;            /* só pedido pago (igual à busca por e-mail do rastreio) */
+    if (R.naoPagou(cel(l, I.status), cel(l, 12))) {                  /* só pedido pago (igual à busca por e-mail do rastreio) */
+      /* v14: pedido do site aguardando pagamento → "pagar agora" (a página confere na função pagar-pedido) */
+      var pfP = prefixo(ped);
+      if ((pfP === 'S' || pfP === 'W') && up(cel(l, I.status)).indexOf('AGUARDANDO PAGAMENTO') >= 0 && up(cel(l, I._hdr.indexOf('OBSERVACAO') >= 0 ? I._hdr.indexOf('OBSERVACAO') : 17)).indexOf('ATHENA (EM ABERTO)') !== 0)
+        pendentes.push({ pedido: ped, data: cel(l, I.data), valor: parseValor(cel(l, I.valor)) });
+      return;
+    }
     var pf = prefixo(ped);
     var item = { k: k, pedido: ped, linha: l, nome: cel(l, I.nome), data: cel(l, I.data), v: ehRevendedor(ped) };
     var dia = diaDoNumero(ped);
@@ -901,6 +912,7 @@ async function montarConta(u, agora, soCompra) {
       desde: dDesde ? (MESES[dDesde.getUTCMonth()] + ' de ' + dDesde.getUTCFullYear()) : '', como_respondido: !!(u.como && u.como.opcao) },
     kpis: { pedidos: nPedidos, total: Math.round(totalGasto * 100) / 100, numeros: sorteio ? sorteio.atual.numeros.length : 0 },
     grupos: lista, produtos: listaProd, sorteio: sorteio, cupons: cupons, cashback: cashback,
+    pendentes: pendentes.sort(function (a, b) { return a.pedido < b.pedido ? 1 : -1; }).slice(0, 5),   /* v14 */
     dados: { nome: nomeBonito(nomeConta), email: conta.email, cpf: mascararCpf(ult ? cel(ult, I.cpf) : ''),
       telefone: telFinal, enderecos: listaEnd, cadastro: cadSaida }
   };

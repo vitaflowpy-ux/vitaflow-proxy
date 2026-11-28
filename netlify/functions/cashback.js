@@ -1,6 +1,13 @@
 'use strict';
 /* =============================================================================
-   cashback.js — CASHBACK VITAFLOW  ·  v3  ·  06/11/2026
+   cashback.js — CASHBACK VITAFLOW  ·  v4  ·  28/11/2026
+   v4 (28/11, Thiago: "os pedidos 'aguardando pagamento' ficam presos… o cashback fica preso e não aparece mais para o cliente nos outros que
+       ele faz" → decisão dele: "se o cliente fizer outro pedido, o cashback preso no pedido não pago volta na hora para ele usar, e o pedido
+       antigo… não pode mais ser pago"): a reserva de pedido NÃO PAGO com mais de 20 min (a mesma regra que a v1 já usava para soltar na
+       hora de reservar de novo) passa a contar como DISPONÍVEL no saldo — no carrinho, na Athena, na Minha Conta e no Orçamento. Antes o
+       saldo descontava a reserva presa, o carrinho mostrava zero e nem chegava a reservar (só o Apps Script soltava, depois de 73 h).
+       · adm_reservar (Orçamento) também solta as reservas presas (> 20 min) do CPF, igual ao 'reservar'.
+       · A reserva solta assim fica com motivo 'nova_reserva': a função pagar-pedido não deixa mais pagar aquele pedido antigo.
    v3 (06/11, bloco 31 do painel único): as ações de ADMIN também aceitam o LOGIN DO PAINEL ÚNICO — {tokenPainel, apikey} no lugar do
        idToken (JWT do banco novo, role authenticated, conferido em api.vitaflowoficial.com/auth/v1/user, igual à função painel-firebase;
        "sim" guardado 10 min). O Orçamento dentro do painel usa isso para consultar e usar o cashback na venda. admin = 'painel:' + e-mail.
@@ -132,6 +139,16 @@ async function lerCliente(cpf, email, tel) {
   return { autorizado: ok, creditos: cr, usos: us };
 }
 
+/* v4: reserva de pedido não pago com mais de 20 min conta como livre (pedido novo solta) — só para o CÁLCULO; quem grava 'liberado' é a reserva nova */
+function semReservasPresas(usos, agora) {
+  var o = {};
+  Object.keys(usos || {}).forEach(function (x) {
+    var u = usos[x];
+    o[x] = (u && u.status === 'reservado' && (agora - (Number(u.em) || 0)) > RESERVA_TROCA_MS) ? Object.assign({}, u, { status: 'liberado' }) : u;
+  });
+  return o;
+}
+
 function semReserva(usos, pedido) {
   var k = chave(String(pedido || '').trim().toUpperCase()), o = {};
   Object.keys(usos || {}).forEach(function (x) { o[x] = usos[x]; });
@@ -154,7 +171,7 @@ async function cpfDoTelefone(tel, agora) {
   var melhor = '', maior = -1;
   for (var i = 0; i < cpfs.length; i++) {
     var cl = await lerCliente(cpfs[i], '', tel);
-    var sd = cl.autorizado ? cbCalcular(cl.creditos, cl.usos, agora).saldo : 0;
+    var sd = cl.autorizado ? cbCalcular(cl.creditos, semReservasPresas(cl.usos, agora), agora).saldo : 0;   /* v4 */
     if (sd > maior) { maior = sd; melhor = cpfs[i]; }
   }
   return melhor;
@@ -172,7 +189,7 @@ async function acaoSaldo(b, agora) {
   if (cpf.length !== 11) return { ok: true, saldo: 0, lotes: [] };
   var cl = await lerCliente(cpf, b.email, b.telefone);
   if (!cl.autorizado) return { ok: true, saldo: 0, lotes: [] };
-  var usos = b.ignorar ? semReserva(cl.usos, b.ignorar) : cl.usos;
+  var usos = semReservasPresas(b.ignorar ? semReserva(cl.usos, b.ignorar) : cl.usos, agora);   /* v4: + reservas presas (> 20 min) */
   var o = saida(cbCalcular(cl.creditos, usos, agora));
   o.pct = cfg.pct; o.dias = cfg.dias;
   return o;
@@ -283,12 +300,17 @@ async function acaoAdmReservar(b, agora, uid) {
   var usos = (await fbGet(RAIZ + '/usos/' + cpf)) || {};
   var k = chave(pedido);
   if (usos[k] && (usos[k].status === 'reservado' || usos[k].status === 'usado')) return { ok: true, valor: Number(usos[k].valor) || 0, ja: true };
+  var mud = {};
+  Object.keys(usos).forEach(function (x) {   /* v4: pedido novo solta as reservas presas (> 20 min) deste CPF, igual ao 'reservar' */
+    var u = usos[x];
+    if (!u || u.status !== 'reservado' || x === k || (agora - (Number(u.em) || 0)) <= RESERVA_TROCA_MS) return;
+    mud[x + '/status'] = 'liberado'; mud[x + '/motivo'] = 'nova_reserva'; mud[x + '/atualizado'] = agora;
+    usos[x] = Object.assign({}, u, { status: 'liberado' });
+  });
   var calc = cbCalcular(cr, usos, agora);
   var valor = Math.min(pedir, calc.saldo);
-  if (valor > 0) {
-    var mud = {}; mud[k] = { pedido: pedido, valor: valor, em: agora, status: 'reservado', canal: 'orcamento', admin: uid };
-    await fbPatch(RAIZ + '/usos/' + cpf, mud);
-  }
+  if (valor > 0) mud[k] = { pedido: pedido, valor: valor, em: agora, status: 'reservado', canal: 'orcamento', admin: uid };
+  if (Object.keys(mud).length) await fbPatch(RAIZ + '/usos/' + cpf, mud);
   return { ok: true, valor: valor, saldo: calc.saldo };
 }
 async function acaoAdmLiberar(b, agora) {
@@ -312,7 +334,7 @@ async function resumoConta(cpfs, agora) {
     catch (e) { return { cr: {}, us: {} }; }
   }));
   lidos.forEach(function (x) {
-    var calc = cbCalcular(x.cr, x.us, agora);
+    var calc = cbCalcular(x.cr, semReservasPresas(x.us, agora), agora);   /* v4 */
     out.saldo += calc.saldo;
     calc.lotes.forEach(function (l) { out.lotes.push({ valor: l.valor, expira: l.expira, validade: ddmmaaaa(l.expira) }); });
     Object.keys(x.cr).forEach(function (k) {
