@@ -1,6 +1,22 @@
 'use strict';
 /* =============================================================================
-   numero-pedido.js — NÚMERO DO PEDIDO SEM APPS SCRIPT (VitaFlow)  ·  v4  ·  12/11/2026  (v3 = 27/10, v2 = 15/10, v1 = 30/09/2026)
+   numero-pedido.js — NÚMERO DO PEDIDO SEM APPS SCRIPT (VitaFlow)  ·  v6  ·  26/11/2026  (v4 = 12/11, v3 = 27/10, v2 = 15/10, v1 = 30/09/2026)
+
+   v6 (26/11/2026 — etapa D, passo D2; Thiago: "a prioridade 000001 é acabar de vez com o google"): REPASSE AO SERVIDOR.
+     (A v5 é a do servidor: /opt/vitaflow/funcoes/proxy/numero-pedido.js — número com a trava do Firebase e o banco acompanhando.)
+     • SÓ LIGA com a variável de ambiente VF_NUMERO_REPASSE=sim neste site. SEM ela a função é IGUAL à v4 (mesclar não muda nada).
+     • Ligada: 'gerar' e 'reservar' são pedidos PRIMEIRO ao servidor (POST, 5 s). Resposta boa do servidor → devolve ela, com via:'servidor'.
+       Servidor fora, lento, limitado (429) ou resposta estranha → faz AQUI, exatamente como a v4 (via:'netlify').
+     • Por que não repete número: enquanto o servidor estiver no modo 'sinc', ele pega o número com a MESMA trava do Firebase
+       (if-match) que esta função e o Apps Script usam. Se o servidor pegou o número e a resposta se perdeu ou chegou depois
+       dos 5 s, o plano B daqui pega o SEGUINTE: fica um número pulado, nunca repetido. Só o número DEVOLVIDO vai para o pedido.
+       Cada plano B fica no registro da função ("PLANO B (motivo) -> número") para a conta dos pulados.
+     • O número do servidor só é aceito se for da LETRA pedida (revisão do Codex, PR #6): número bem formado de outro canal → plano B.
+     • ATENÇÃO: antes de o servidor passar para o modo 'banco' (virada final), o plano B daqui tem de ser revisto ou desligado —
+       no modo 'banco' o número não nasce da trava do Firebase.
+     • 'conferir' (só leitura) e 'ping' continuam aqui. O 'ping' passa a dizer repasse:true|false.
+     • Desligar: apagar a variável VF_NUMERO_REPASSE (ou pôr outro valor) e publicar de novo o site.
+     Variável opcional: VF_NUMERO_SERVIDOR_URL (padrão https://painel.vitaflowoficial.com/api/pub/proxy/numero-pedido).
 
    v4 (12/11/2026 — Thiago: "quero, pode fazer"; caso VF-1011-R003: o Orçamento mostrou "Venda registrada", o recibo foi
      para o cliente e a linha nunca entrou na planilha): action 'conferir' = SÓ LEITURA, diz se o número já está no
@@ -73,6 +89,44 @@ var CORS = {
 };
 
 function resp(obj) { return { statusCode: 200, headers: CORS, body: JSON.stringify(obj) }; }
+
+/* ===== v6: repasse ao servidor (só com VF_NUMERO_REPASSE=sim) ===== */
+var SRV_URL = String(process.env.VF_NUMERO_SERVIDOR_URL || 'https://painel.vitaflowoficial.com/api/pub/proxy/numero-pedido').trim();
+var SRV_LIGADO = /^sim$/i.test(String(process.env.VF_NUMERO_REPASSE || '').trim());
+var SRV_MS = 5000;
+var srvFalha = '';   /* por que a última pergunta ao servidor não valeu (só para o registro do plano B) */
+
+/* Pergunta ao servidor. Devolve o objeto da resposta, ou null = "não deu para confiar: faça aqui, como a v4". */
+async function pedirAoServidor(corpo) {
+  try {
+    var r = await fetchT(SRV_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) }, SRV_MS);
+    if (!r.ok) { srvFalha = 'HTTP ' + r.status; return null; }
+    var j = JSON.parse(await r.text());
+    if (j && typeof j === 'object' && !Array.isArray(j)) return j;
+    srvFalha = 'resposta que nao e objeto'; return null;
+  } catch (e) { srvFalha = (e && e.name === 'AbortError') ? 'sem resposta em ' + SRV_MS + ' ms' : 'erro: ' + String(e && e.message || e).slice(0, 80); return null; }
+}
+
+/* Só aceita do servidor o que é resposta de verdade. Qualquer outra coisa → null (plano B = v4). */
+async function viaServidor(d) {
+  var j; srvFalha = '';
+  if (d.action === 'reservar') {
+    j = await pedirAoServidor({ action: 'reservar', numero: String(d.numero || '') });
+    /* respostas de negócio do 'reservar': reservou, já existe, formato errado ou salto grande. Erro genérico → plano B. */
+    if (j && !(j.success === true || j.existe === true || j.erro === 'formato' || j.erro === 'salto')) { srvFalha = 'reservar: ' + String(j.erro || 'resposta sem sentido').slice(0, 80); j = null; }
+    if (!j) return null;
+  } else {
+    /* a letra é a MESMA que o gerador daqui usaria (tipo desconhecido vira S). O número do servidor só vale se for
+       dessa letra: número bem formado de OUTRO canal é recusado (revisão do Codex, PR #6). */
+    var L = String(d.tipo || 'S').toUpperCase(); if (!COL[L]) L = 'S';
+    j = await pedirAoServidor({ tipo: L });
+    if (j && j.success !== true) { srvFalha = 'servidor disse: ' + String(j.erro || 'sem success').slice(0, 80); j = null; }
+    if (j && !new RegExp('^VF-\\d{4}-' + L + '\\d{3,4}$').test(String(j.order_nsu || ''))) { srvFalha = 'numero de outro canal ou torto (pedi ' + L + ')'; j = null; }
+    if (!j) return null;
+  }
+  j.via = 'servidor';
+  return j;
+}
 
 function fbUrl(caminho) {
   return FB_BASE + '/' + caminho + '.json' + (FB_SECRET ? '?auth=' + encodeURIComponent(FB_SECRET) : '');
@@ -336,6 +390,15 @@ async function conferir(d) {
   return saida;
 }
 
+/* v6: com o repasse ligado, o que foi feito AQUI (plano B) sai marcado, para dar para contar nos registros */
+function marcaVia(o) {
+  if (!SRV_LIGADO || !o || typeof o !== 'object') return o;
+  o.via = 'netlify';
+  /* registro para a conta dos números pulados: se o servidor chegou a pegar um número e a resposta não valeu aqui, ele fica sem pedido */
+  console.log('numero-pedido: PLANO B (' + (srvFalha || 'servidor nao deu resposta boa') + ') -> ' + String(o.order_nsu || o.numero || (o.success === false ? 'sem numero: ' + (o.erro || '') : '?')));
+  return o;
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
   var d = {};
@@ -344,12 +407,17 @@ exports.handler = async function (event) {
   } else {
     d = event.queryStringParameters || {};
   }
+  /* v6: com VF_NUMERO_REPASSE=sim, 'gerar' e 'reservar' vão primeiro ao servidor; sem resposta boa, segue aqui como a v4 */
+  if (SRV_LIGADO && d.action !== 'conferir' && d.action !== 'ping') {
+    var s = await viaServidor(d);
+    if (s) return resp(s);
+  }
   if (!FB_SECRET) return resp({ success: false, erro: 'FIREBASE_SECRET nao configurada' });
   try {
-    if (d.action === 'reservar') return resp(await reservar(d.numero));
+    if (d.action === 'reservar') return resp(marcaVia(await reservar(d.numero)));
     if (d.action === 'conferir') return resp(await conferir(d));   /* v4: só leitura (+ aviso) */
-    if (d.action === 'ping') return resp({ success: true, hoje: hojeDDMM(), banco: !!DB_KEY });
-    return resp(await gerar(d.tipo));
+    if (d.action === 'ping') return resp({ success: true, hoje: hojeDDMM(), banco: !!DB_KEY, repasse: SRV_LIGADO });
+    return resp(marcaVia(await gerar(d.tipo)));
   } catch (e) {
     return resp({ success: false, erro: String(e && e.message || e) });
   }
@@ -358,4 +426,4 @@ exports.handler = async function (event) {
 /* só para teste local (node) */
 exports._t = { hojeDDMM: hojeDDMM, pad3: pad3, reservar: reservar, gerar: gerar, atualizarContador: atualizarContador,
   gerarFirebase: gerarFirebase, gerarBanco: gerarBanco, reservarFirebase: reservarFirebase,
-  conferir: conferir, ontemDDMM: ontemDDMM };
+  conferir: conferir, ontemDDMM: ontemDDMM, viaServidor: viaServidor };

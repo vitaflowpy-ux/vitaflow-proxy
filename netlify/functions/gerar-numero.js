@@ -33,9 +33,15 @@ exports.handler = async function(event, context) {
     clearTimeout(timeout);
 
     const text = await res.text();
-    let data;
-    try { data = JSON.parse(text); }
-    catch(e) { data = { order_nsu: text.trim() }; }
+    let data = null;
+    try { data = JSON.parse(text); } catch(e) { data = null; }
+    // 26/11/2026: antes, quando o Apps Script devolvia uma página de erro, o TEXTO DO ERRO saía como order_nsu com HTTP 200
+    // (quem chamava usava aquilo como número do pedido). Agora só passa adiante um número de verdade; o resto é erro 502.
+    if (!data || typeof data !== 'object' || Array.isArray(data)) data = { order_nsu: String(text || '').trim() };   // formato antigo: só o texto do número
+    const numero = String(data.order_nsu || '').trim();
+    if (!res.ok || !/^VF-\d{4}-[A-Z]X?\d{1,4}$/.test(numero)) {
+      return { statusCode: 502, headers, body: JSON.stringify({ error: 'o Apps Script não devolveu um número de pedido válido', status: res.status }) };
+    }
 
     return { statusCode: 200, headers, body: JSON.stringify(data) };
 
